@@ -7,10 +7,12 @@ for downstream analysis of pre-segmented, pre-aligned spatial data.
 
 Submodules
 ----------
-io  — data readers (Xenium, OME-TIFF)
-pp  — preprocessing (QC, normalization, IF intensity extraction)
-tl  — analysis tools (spatial graph, clustering, spatial statistics)
-pl  — plotting (spatial scatter, image overlay, violin)
+io       — data readers (Xenium, MERSCOPE, CosMx, OME-TIFF, H&E)
+pp       — preprocessing (QC, normalization, IF intensity extraction)
+tl       — analysis tools (spatial graph, clustering, spatial statistics)
+pl       — plotting (spatial scatter, image overlay, violin)
+seg      — cell re-segmentation (Voronoi tessellation)
+pipeline — composable analysis recipes (filter_xenium, …)
 
 Typical workflow
 ----------------
@@ -25,7 +27,7 @@ Typical workflow
 >>>
 >>> # 3. QC + normalization  (pass mdata directly — default modality is 'xenium')
 >>> ab.pp.calculate_qc_metrics(mdata)
->>> ab.pp.filter_cells(mdata, min_counts=10, max_pct_control_probe=20.0)
+>>> ab.pp.filter_cells(mdata, min_counts=10, max_pct_control=5.0)
 >>> ab.pp.normalize_total(mdata)
 >>> ab.pp.log1p(mdata)
 >>>
@@ -34,7 +36,7 @@ Typical workflow
 >>> ab.tl.cluster(mdata, resolution=0.5)
 >>>
 >>> # 5. Visualise
->>> ab.pl.spatial_scatter(mdata, color="leiden")
+>>> ab.pl.points(mdata, color="leiden")
 """
 
 import mudata
@@ -43,8 +45,19 @@ import mudata
 # from individual modalities. Use mdata.pull_obs()/pull_var() explicitly.
 mudata.set_options(pull_on_update=False)
 
-from astrolabe import io, pp, tl, pl
+from astrolabe import io, pp, tl, pl, seg, pipeline
+from astrolabe._summary import summary, Summary
+from astrolabe._gpu import gpu, gpu_enabled, to_gpu, to_cpu, use_gpu
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+    __version__ = _pkg_version("astrolabe")
+except PackageNotFoundError:
+    __version__ = "0.0.0+dev"
 
-__all__ = ["io", "pp", "tl", "pl", "__version__"]
+__all__ = [
+    "io", "pp", "tl", "pl", "seg", "pipeline",
+    "summary", "Summary",
+    "gpu", "gpu_enabled", "to_gpu", "to_cpu", "use_gpu",
+    "__version__",
+]

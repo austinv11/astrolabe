@@ -47,7 +47,7 @@ import pandas as pd
 import scipy.sparse as sp
 
 from astrolabe._shapes import arrow, circle, rectangle
-from astrolabe._utils import ImageSpec, _resolve_adata, _transform_coords
+from astrolabe._utils import ImageSpec, _resolve_adata, _transform_coords, with_adata
 
 if TYPE_CHECKING:
     pass
@@ -75,6 +75,11 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_CONTINUOUS_CMAP = "viridis"
 _DEFAULT_CATEGORICAL_CMAP = "tab20"
+
+_BOUNDARY_DEFAULT_COLORS: dict[str, str] = {
+    "cell_boundaries": "lightsalmon",
+    "nucleus_boundaries": "cyan",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -722,10 +727,10 @@ def points(
     )
 
 
+@with_adata
 def image(
-    data: ad.AnnData | md.MuData,
+    adata: ad.AnnData,
     *,
-    modality: str | None = None,
     image_key: str | None = None,
     library_id: str | None = None,
     channel: int | str | None = None,
@@ -779,8 +784,6 @@ def image(
     -------
     SpatialPanel
     """
-    adata = _resolve_adata(data, modality)
-
     spatial_uns: dict = adata.uns.get("spatial", {})
     if library_id is None:
         ids = list(spatial_uns.keys())
@@ -832,10 +835,10 @@ def image(
     )
 
 
+@with_adata
 def boundaries(
-    data: ad.AnnData | md.MuData,
+    adata: ad.AnnData,
     *,
-    modality: str | None = None,
     boundaries_key: str = "cell_boundaries",
     spatial_key: str = "spatial",
     color: str | None = None,
@@ -895,8 +898,6 @@ def boundaries(
     -------
     SpatialPanel
     """
-    adata = _resolve_adata(data, modality)
-
     if boundaries_key not in adata.obsm:
         raise KeyError(
             f"obsm['{boundaries_key}'] not found.  "
@@ -904,12 +905,17 @@ def boundaries(
             "or pass boundaries_key='nucleus_boundaries' for nucleus outlines."
         )
 
+    # Apply key-based default color when no explicit color/data mapping is given.
+    effective_color = color
+    if effective_color is None:
+        effective_color = _BOUNDARY_DEFAULT_COLORS.get(boundaries_key)
+
     lay = Layer(
         kind="boundaries",
         adata=adata,
         spatial_key=spatial_key,
         boundaries_key=boundaries_key,
-        color=color,
+        color=effective_color,
         linewidth=linewidth,
         fill_alpha=fill_alpha,
         alpha=alpha,
@@ -973,7 +979,9 @@ def raster(
         :class:`pyarrow.Table`, or :class:`pandas.DataFrame`.
     color
         Gene name or ``obs`` column to aggregate per bin.
-        ``None`` renders density (cell count).
+        ``None`` renders density (cell count).  Categorical columns (e.g.
+        ``color='leiden'``) are supported: each bin shows the dominant
+        category, coloured by *palette* the same way as :func:`points`.
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
     spatial_key
@@ -1173,21 +1181,76 @@ def annotation(
 # ---------------------------------------------------------------------------
 
 
+_LIBRARY_ID_KEY = "library_id"
+
+
+def _check_single_library(adata: ad.AnnData) -> None:
+    """Raise a clear error when cells from multiple libraries are present.
+
+    Spatial coordinates are independent per Xenium run — each run starts its
+    own µm coordinate frame from (0, 0).  Plotting cells from different runs
+    on the same axes overlays unrelated tissue sections without any warning,
+    which is almost never the desired behaviour.
+
+    This check fires for ``'points'``, ``'boundaries'``, and ``'raster'``
+    layers.  It is skipped for ``'image'`` (which already requires an explicit
+    ``library_id=``) and ``'annotation'`` (no cell data).
+    """
+    if _LIBRARY_ID_KEY not in adata.obs.columns:
+        return
+    libs = adata.obs[_LIBRARY_ID_KEY].unique()
+    if len(libs) <= 1:
+        return
+    lib_list = sorted(str(l) for l in libs)
+    first = lib_list[0]
+    panels_example = " | \\\n    ".join(
+        f'ab.pl.points(adata[adata.obs["{_LIBRARY_ID_KEY}"] == "{lid}"], color)'
+        for lid in lib_list
+    )
+    raise ValueError(
+        f"This AnnData contains cells from {len(libs)} libraries: {lib_list}.\n"
+        f"Each Xenium run has its own independent µm coordinate frame — plotting "
+        f"them together overlays unrelated tissue sections on the same axes.\n\n"
+        f"Filter to a single sample first:\n"
+        f'    adata_sub = adata[adata.obs["{_LIBRARY_ID_KEY}"] == "{first}"]\n\n'
+        f"or display each sample as a separate panel:\n"
+        f"    {panels_example}"
+    )
+
+
 def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
     """Draw all layers of *panel* onto *ax*, then apply title and frame."""
+    # Shared legend entry list — image channel entries and default-color boundary
+    # outline entries are both collected here so they appear in one combined legend
+    # rather than two overlapping add_artist() calls.
+    shared_legend: list[tuple[Any, str]] = []
+
     for lay in panel.layers:
         if lay.kind == "points":
             _draw_points_layer(ax, lay)
         elif lay.kind == "image":
-            _draw_image_layer(ax, lay)
+            _draw_image_layer(ax, lay, shared_legend)
         elif lay.kind == "boundaries":
-            _draw_boundary_layer(ax, lay)
+            _draw_boundary_layer(ax, lay, shared_legend)
         elif lay.kind == "raster":
             _draw_raster_layer(ax, lay)
         elif lay.kind == "annotation":
             _draw_annotation_layer(ax, lay)
         else:
             log.warning("Unknown layer kind %r; skipping.", lay.kind)
+
+    if shared_legend:
+        handles = [h for h, _ in shared_legend]
+        labels = [lb for _, lb in shared_legend]
+        combined = _Legend(
+            ax, handles, labels,
+            bbox_to_anchor=(1.01, 1),
+            loc="upper left",
+            frameon=False,
+            fontsize=8,
+        )
+        combined.set_clip_on(False)
+        ax.add_artist(combined)
 
     # Auto-zoom to crop region stored by pp.crop()
     bounds = next(
@@ -1231,6 +1294,7 @@ def _render_figure_panel(
 
 def _draw_points_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     adata = lay.adata
+    _check_single_library(adata)
     coords = adata.obsm[lay.spatial_key]
     n_cells = len(coords)
     size = lay.size if lay.size is not None else max(0.5, 120_000 / n_cells)
@@ -1352,6 +1416,32 @@ def _load_tiff_level(
         raw = raw[tuple(slices)]   # view (no copy for C-contiguous stride)
 
     return raw, ch_ax
+
+
+def _apply_filter_chain(
+    raw: np.ndarray,
+    filters: list,
+    ch_ax: int,
+) -> np.ndarray:
+    """Apply each filter in *filters* independently to every channel of *raw*.
+
+    *raw* is expected to be ``(C, Y, X)`` after ``_load_tiff_level`` (ch_ax==0).
+    Each filter receives a 2-D float32 channel and must return float32.
+    """
+    raw = raw.astype(np.float32)
+    if raw.ndim == 2:
+        ch = raw
+        for f in filters:
+            ch = f(ch)
+        return ch
+    n_ch = raw.shape[ch_ax]  # ch_ax is always 0 here
+    channels = []
+    for i in range(n_ch):
+        ch = raw[i].astype(np.float32)
+        for f in filters:
+            ch = f(ch)
+        channels.append(ch)
+    return np.stack(channels, axis=0)
 
 
 def _select_level_and_crop(
@@ -1616,26 +1706,42 @@ def _draw_annotation_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     ax.autoscale_view()
 
 
-def _draw_image_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+def _draw_image_layer(
+    ax: matplotlib.axes.Axes,
+    lay: Layer,
+    legend_entries: list | None = None,
+) -> None:
     if lay.dark_bg:
         ax.set_facecolor("black")
 
     lib_uns = lay.adata.uns["spatial"][lay.library_id]
     spec: ImageSpec = lib_uns["images"][lay.image_key]
 
-    # Select pyramid level from pre-computed metadata — no file I/O here.
-    level_idx = spec.select_pyramid_level(_MAX_IMAGE_DIM)
-
-    log.debug(
-        "Image '%s/%s': using pyramid level %d of %d (target ≤ %dpx)",
-        lay.library_id, lay.image_key, level_idx, spec.n_levels, _MAX_IMAGE_DIM,
-    )
-
-    raw, ch_ax = _load_tiff_level(spec.path, spec.dimension_order, level_idx)
-
     # Full-resolution shape for physical extent (from metadata, not from loaded array).
     h_full, w_full = spec.full_shape[-2], spec.full_shape[-1]
     extent = _compute_extent(spec, h_full, w_full)
+
+    # Crop-aware level selection: if spatial_bounds are set (after ab.pp.crop), pick the
+    # finest pyramid level where the *visible crop region* fits within _MAX_IMAGE_DIM px.
+    bounds_uns = lay.adata.uns.get("spatial_bounds")
+    crop_pixels: tuple[int, int, int, int] | None = None
+    if bounds_uns is not None:
+        level_idx, crop_pixels = _select_level_and_crop(spec, extent, bounds_uns)
+        # Narrow the rendering extent to the cropped µm viewport.
+        extent = [bounds_uns["xmin"], bounds_uns["xmax"], bounds_uns["ymin"], bounds_uns["ymax"]]
+    else:
+        level_idx = spec.select_pyramid_level(_MAX_IMAGE_DIM)
+
+    log.debug(
+        "Image '%s/%s': using pyramid level %d of %d (target ≤ %dpx, crop=%s)",
+        lay.library_id, lay.image_key, level_idx, spec.n_levels, _MAX_IMAGE_DIM, crop_pixels,
+    )
+
+    raw, ch_ax = _load_tiff_level(spec.path, spec.dimension_order, level_idx, crop=crop_pixels)
+
+    # Apply per-channel image filters (filter_chain set by ab.pp.add_image_filter).
+    if spec.filter_chain:
+        raw = _apply_filter_chain(raw, spec.filter_chain, ch_ax)
 
     # Apply lazy pixel transforms (rotate/flip stored in transform_chain).
     if spec.transform_chain:
@@ -1698,26 +1804,22 @@ def _draw_image_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             ch_names = list(spec.channel_names)
         else:
             ch_names = [f"Ch{i}" for i in range(n_ch)]
-        handles = [
-            mpatches.Patch(
-                color=tuple(float(v) for v in _CHANNEL_COLORS_RGB[i % len(_CHANNEL_COLORS_RGB)]),
-                label=ch_names[i],
-            )
-            for i in range(n_ch)
-        ]
-        ch_legend = _Legend(
-            ax, handles, [h.get_label() for h in handles],
-            bbox_to_anchor=(1.01, 1),
-            loc="upper left",
-            frameon=False,
-            fontsize=8,
-        )
-        ch_legend.set_clip_on(False)
-        ax.add_artist(ch_legend)
+        if legend_entries is not None:
+            for i in range(n_ch):
+                handle = mpatches.Patch(
+                    color=tuple(float(v) for v in _CHANNEL_COLORS_RGB[i % len(_CHANNEL_COLORS_RGB)]),
+                    label=ch_names[i],
+                )
+                legend_entries.append((handle, ch_names[i]))
 
 
-def _draw_boundary_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+def _draw_boundary_layer(
+    ax: matplotlib.axes.Axes,
+    lay: Layer,
+    legend_entries: list | None = None,
+) -> None:
     adata = lay.adata
+    _check_single_library(adata)
     raw = adata.obsm[lay.boundaries_key]
 
     # Vectorised extraction: avoid a Python loop over n_cells.
@@ -1743,19 +1845,30 @@ def _draw_boundary_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         return
 
     rasterized = len(valid_polys) > 10_000
-    color_values, is_categorical = _resolve_color_values(adata, lay.color)
+
+    # Allow lay.color to be a literal matplotlib color string (e.g. 'steelblue', '#ff0000').
+    # If it doesn't resolve to an obs column or gene, check whether it's a valid color first.
+    literal_color: str | None = None
+    try:
+        color_values, is_categorical = _resolve_color_values(adata, lay.color)
+    except KeyError:
+        if lay.color is not None and mcolors.is_color_like(lay.color):
+            color_values, is_categorical = None, False
+            literal_color = lay.color
+        else:
+            raise
 
     if is_categorical and color_values is not None:
         unique_cats = sorted(set(color_values[valid_indices]))
         cat_colors = _build_cat_colors(unique_cats, lay.palette, lay.na_color)
-        edge_c = [cat_colors.get(str(color_values[i]), lay.na_color) for i in valid_indices]
-        face_c = [(*mcolors.to_rgb(c), lay.fill_alpha) for c in edge_c]
+        base_c = [mcolors.to_rgb(cat_colors.get(str(color_values[i]), lay.na_color)) for i in valid_indices]
+        edge_c = [(*rgb, lay.alpha) for rgb in base_c]
+        face_c = [(*rgb, lay.fill_alpha) for rgb in base_c]
         col = PolyCollection(
             valid_polys,
             facecolors=face_c,
             edgecolors=edge_c,
             linewidths=lay.linewidth,
-            alpha=lay.alpha,
             rasterized=rasterized,
         )
         ax.add_collection(col)
@@ -1779,14 +1892,14 @@ def _draw_boundary_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             else mcolors.Normalize(vmin=vmin, vmax=vmax)
         )
         cmap_fn = plt.get_cmap(lay.cmap or _DEFAULT_CONTINUOUS_CMAP)
-        edge_c = [cmap_fn(norm(v)) for v in vals]
-        face_c = [(*mcolors.to_rgba(c)[:3], lay.fill_alpha) for c in edge_c]
+        mapped = [mcolors.to_rgba(cmap_fn(norm(v))) for v in vals]
+        edge_c = [(*c[:3], lay.alpha) for c in mapped]
+        face_c = [(*c[:3], lay.fill_alpha) for c in mapped]
         col = PolyCollection(
             valid_polys,
             facecolors=face_c,
             edgecolors=edge_c,
             linewidths=lay.linewidth,
-            alpha=lay.alpha,
             rasterized=rasterized,
         )
         ax.add_collection(col)
@@ -1794,15 +1907,26 @@ def _draw_boundary_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         sm.set_array([])
         plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
     else:
+        edge_color = literal_color if literal_color is not None else "#555555"
+        face_rgb = mcolors.to_rgb(edge_color) if literal_color is not None else (0.0, 0.0, 0.0)
+        edge_rgba = (*mcolors.to_rgb(edge_color), lay.alpha)
         col = PolyCollection(
             valid_polys,
-            facecolors=[(0.0, 0.0, 0.0, lay.fill_alpha)],
-            edgecolors="#555555",
+            facecolors=[(*face_rgb, lay.fill_alpha)],
+            edgecolors=[edge_rgba],
             linewidths=lay.linewidth,
-            alpha=lay.alpha,
             rasterized=rasterized,
         )
         ax.add_collection(col)
+        if legend_entries is not None:
+            label = lay.boundaries_key.replace("_", " ").title()
+            handle = mpatches.Patch(
+                facecolor="none",
+                edgecolor=edge_color,
+                linewidth=1.5,
+                label=label,
+            )
+            legend_entries.append((handle, label))
 
     if lay.spatial_key in adata.obsm:
         coords = adata.obsm[lay.spatial_key]
@@ -1814,6 +1938,7 @@ def _draw_boundary_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
 
 def _draw_raster_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     adata = lay.adata
+    _check_single_library(adata)
     coords = adata.obsm[lay.spatial_key]
     x = coords[:, 0].astype(np.float64)
     y = coords[:, 1].astype(np.float64)

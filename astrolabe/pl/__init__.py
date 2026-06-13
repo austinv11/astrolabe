@@ -25,6 +25,16 @@ raster
     an image; colour by density, expression, or category.
 violin
     Per-cluster violin plots (wraps scanpy).
+dotplot
+    Dot plot of gene expression across cluster groups; returns FigurePanel for composition.
+embedding_scatter
+    Scatter plot of any 2-D embedding (UMAP, PCA, spatial_umap) coloured by obs or gene.
+volcano_plot
+    Volcano plot (log₂FC vs −log₁₀p) from rank_genes_groups results.
+paga_plot
+    PAGA trajectory graph (wraps scanpy); returns FigurePanel.
+ripley_plot
+    Ripley's L(d) − d curve plot from tl.ripley_l results.
 
 Classes
 -------
@@ -47,6 +57,7 @@ as_panel
     Explicitly wrap a Figure as a FigurePanel.
 """
 
+from astrolabe._shapes import merge_polygons
 from astrolabe.pl._spatial import (
     FigurePanel,
     PlotGrid,
@@ -64,13 +75,31 @@ from astrolabe.pl._spatial import (
     rectangle,
     vstack,
 )
+from astrolabe.pl._filters import CLAHEFilter, FFTFilter, GaussianFilter
+from astrolabe.pl._napari import view_napari
 from astrolabe.pl._qc_plots import (
     cell_area_histogram,
     nucleus_area_histogram,
     gene_qv_scatter,
+    mean_variance_plot,
     genes_per_cell_histogram,
     transcripts_per_cell_histogram,
     violin,
+    dotplot,
+    heatmap,
+    embedding_scatter,
+    volcano_plot,
+    paga_plot,
+    ripley_plot,
+    intensity_histogram,
+    intensity_histograms,
+    scatter_gate,
+    moran_plot,
+    nhood_enrichment_plot,
+    co_occurrence_plot,
+    centrality_scores_plot,
+    expression_by_distance_plot,
+    ligrec_plot,
 )
 
 __all__ = [
@@ -84,6 +113,7 @@ __all__ = [
     "rectangle",
     "circle",
     "arrow",
+    "merge_polygons",
     # Composable classes
     "SpatialPanel",
     "PlotGrid",
@@ -93,11 +123,33 @@ __all__ = [
     "hstack",
     "vstack",
     "as_panel",
-    # QC
+    # QC / expression / embeddings
     "violin",
+    "dotplot",
+    "heatmap",
+    "embedding_scatter",
+    "volcano_plot",
+    "paga_plot",
+    "ripley_plot",
     "gene_qv_scatter",
+    "mean_variance_plot",
     "cell_area_histogram",
     "nucleus_area_histogram",
     "genes_per_cell_histogram",
     "transcripts_per_cell_histogram",
+    "intensity_histogram",
+    "intensity_histograms",
+    "scatter_gate",
+    "moran_plot",
+    "nhood_enrichment_plot",
+    "co_occurrence_plot",
+    "centrality_scores_plot",
+    "expression_by_distance_plot",
+    "ligrec_plot",
+    # Image filters
+    "GaussianFilter",
+    "CLAHEFilter",
+    "FFTFilter",
+    # Interactive viewer (requires napari: uv add napari)
+    "view_napari",
 ]

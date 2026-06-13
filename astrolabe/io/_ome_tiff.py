@@ -402,6 +402,13 @@ def _build_var(
         channels_within_round = np.tile(
             np.arange(n_channels_per_round, dtype=np.int32), n_rounds
         )
+        if len(rounds) != n_channels:
+            log.warning(
+                "round_axis=%d gives %d rounds × %d ch/round = %d, "
+                "but image has %d channels; skipping var['round'] / var['channel'].",
+                round_axis, n_rounds, n_channels_per_round,
+                n_rounds * n_channels_per_round, n_channels,
+            )
         if len(rounds) == n_channels:
             var_df["round"] = rounds
             var_df["channel"] = channels_within_round

@@ -10,6 +10,8 @@ rotate
     Rotate cell coordinates (and image transform chain) CCW by a given angle.
 flip
     Mirror cell coordinates (and image transform chain) along x, y, or both axes.
+estimate_stain_matrix
+    Re-estimate the H&E stain deconvolution matrix for an already-loaded image.
 """
 
 from __future__ import annotations
@@ -20,12 +22,12 @@ from typing import TYPE_CHECKING, Literal
 import anndata as ad
 import numpy as np
 
-from astrolabe._utils import ImageSpec, _transform_coords, with_adata
+from astrolabe._utils import ImageFilter, ImageSpec, _transform_coords, with_adata
 
 if TYPE_CHECKING:
     pass
 
-__all__ = ["crop", "rotate", "flip"]
+__all__ = ["crop", "rotate", "flip", "add_image_filter", "estimate_stain_matrix"]
 
 log = logging.getLogger(__name__)
 
@@ -160,8 +162,8 @@ def crop(
     region: np.ndarray,
     *,
     spatial_key: str = "spatial",
-    inplace: bool = True,
-) -> tuple[ad.AnnData, np.ndarray] | None:
+    inplace: bool = False,
+) -> ad.AnnData | None:
     """Filter cells to those whose centroids fall inside *region*.
 
     Cell coordinates are updated eagerly.  Images are **not** modified —
@@ -179,12 +181,12 @@ def crop(
     spatial_key
         Key in ``obsm`` for cell centroids.
     inplace
+        If ``False`` (default), return the filtered :class:`~anndata.AnnData`.
         If ``True``, modify in place and return ``None``.
-        If ``False``, return ``(filtered_adata, boolean_mask)``.
 
     Returns
     -------
-    None or tuple[AnnData, ndarray]
+    None or AnnData
     """
     if spatial_key not in adata.obsm:
         raise KeyError(
@@ -206,15 +208,14 @@ def crop(
         "ymin": float(region[:, 1].min()),
         "ymax": float(region[:, 1].max()),
     }
-    adata.uns["spatial_bounds"] = bounds
-
     if inplace:
+        adata.uns["spatial_bounds"] = bounds
         adata._inplace_subset_obs(mask)
         return None
     else:
         subset = adata[mask].copy()
         subset.uns["spatial_bounds"] = bounds
-        return subset, mask
+        return subset
 
 
 @with_adata
@@ -224,7 +225,7 @@ def rotate(
     *,
     center: tuple[float, float] | None = None,
     spatial_key: str = "spatial",
-    inplace: bool = True,
+    inplace: bool = False,
 ) -> ad.AnnData | None:
     """Rotate spatial coordinates counter-clockwise by *angle_deg* degrees.
 
@@ -244,8 +245,8 @@ def rotate(
     spatial_key
         Key in ``obsm`` for cell centroids.
     inplace
+        If ``False`` (default), return the modified copy.
         If ``True``, modify in place and return ``None``.
-        If ``False``, return the modified copy.
 
     Returns
     -------
@@ -279,7 +280,7 @@ def flip(
     *,
     center: tuple[float, float] | None = None,
     spatial_key: str = "spatial",
-    inplace: bool = True,
+    inplace: bool = False,
 ) -> ad.AnnData | None:
     """Mirror spatial coordinates along one or both axes.
 
@@ -303,8 +304,8 @@ def flip(
     spatial_key
         Key in ``obsm`` for cell centroids.
     inplace
+        If ``False`` (default), return the modified copy.
         If ``True``, modify in place and return ``None``.
-        If ``False``, return the modified copy.
 
     Returns
     -------
@@ -329,3 +330,112 @@ def flip(
         _apply_coord_transform(out, M, spatial_key, boundaries_keys)
         _append_image_transform(out, M)
         return out
+
+
+@with_adata
+def add_image_filter(
+    adata: ad.AnnData,
+    filter: ImageFilter,
+    *,
+    image_key: str | None = None,
+    library_id: str | None = None,
+) -> None:
+    """Append *filter* to the pixel-processing pipeline of matching images.
+
+    Filters are stored in :attr:`~astrolabe._utils.ImageSpec.filter_chain`
+    and applied per-channel (2-D) at render time, after pixel data is loaded
+    from disk and before per-channel normalisation.  Multiple calls stack
+    filters in order.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    filter
+        Any :class:`~astrolabe._utils.ImageFilter` — callable that accepts
+        and returns a 2-D ``float32`` NumPy array.
+    image_key
+        Key in ``uns['spatial'][lib]['images']`` to target.
+        ``None`` targets all image keys in each matched library.
+    library_id
+        Library to target.  ``None`` targets all libraries.
+    modality
+        Modality to resolve when *data* is :class:`~mudata.MuData`.
+        Falls back to ``uns['default_modality']`` if not given.
+
+    Examples
+    --------
+    >>> import astrolabe as ab
+    >>> ab.pp.add_image_filter(mdata, ab.pl.GaussianFilter(sigma=1.5))
+    >>> ab.pp.add_image_filter(mdata, ab.pl.CLAHEFilter(clip_limit=0.02))
+    >>> ab.pp.add_image_filter(mdata, ab.pl.FFTFilter(cutoff=0.05, fov_size_px=220))
+    >>> ab.pl.image(mdata).show()   # filters applied lazily at render time
+    """
+    spatial = adata.uns.get("spatial", {})
+    for lib, lib_data in spatial.items():
+        if library_id is not None and lib != library_id:
+            continue
+        for key, spec in lib_data.get("images", {}).items():
+            if image_key is not None and key != image_key:
+                continue
+            if isinstance(spec, ImageSpec):
+                spec.filter_chain.append(filter)
+
+
+@with_adata
+def estimate_stain_matrix(
+    adata: ad.AnnData,
+    *,
+    image_key: str = "full",
+    method: Literal["ruifrok", "macenko"] = "macenko",
+    library_id: str | None = None,
+) -> None:
+    """Re-estimate the H&E stain deconvolution matrix for an already-loaded image.
+
+    Updates :attr:`~astrolabe._utils.ImageSpec.stain_matrix` in place on every
+    matching :class:`~astrolabe._utils.ImageSpec` found in
+    ``uns['spatial'][*]['images'][image_key]``.  Use this after
+    :func:`~astrolabe.io.read_he` when the default ``'ruifrok'`` matrix gives
+    poor channel separation for a specific slide.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` holding H&E image
+        metadata in ``uns['spatial']``.
+    image_key
+        Key in ``uns['spatial'][lib]['images']`` whose spec to update.
+        Default ``'full'``.
+    method
+        ``'macenko'`` (default) — SVD-based estimation from slide pixels.
+        ``'ruifrok'`` — restore the published Ruifrok-Johnston matrix.
+    library_id
+        Library to target.  ``None`` updates all libraries.
+    modality
+        Modality to resolve when *data* is :class:`~mudata.MuData`.
+
+    Examples
+    --------
+    >>> ab.io.read_he("slide.tif", mdata=mdata)           # loaded with ruifrok (default)
+    >>> ab.pp.estimate_stain_matrix(mdata, modality="he") # re-estimate with macenko
+    >>> ab.pl.image(mdata, modality="he").show()
+    """
+    from astrolabe.io._he import _estimate_stain_matrix
+
+    spatial = adata.uns.get("spatial", {})
+    updated = 0
+    for lib, lib_data in spatial.items():
+        if library_id is not None and lib != library_id:
+            continue
+        spec = lib_data.get("images", {}).get(image_key)
+        if not isinstance(spec, ImageSpec):
+            continue
+        spec.stain_matrix = _estimate_stain_matrix(spec, method=method)
+        # Propagate to any alias specs (level_k entries share the same object)
+        updated += 1
+    if updated == 0:
+        log.warning(
+            "estimate_stain_matrix: no ImageSpec found at image_key=%r "
+            "(library_id=%r). Check modality and image_key arguments.",
+            image_key, library_id,
+        )

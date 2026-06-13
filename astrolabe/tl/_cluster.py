@@ -11,6 +11,7 @@ from typing import Literal
 import anndata as ad
 import scanpy as sc
 
+from astrolabe._gpu import _require_rapids, gpu_enabled
 from astrolabe._utils import with_adata
 
 __all__ = ["cluster"]
@@ -38,8 +39,11 @@ def cluster(
 
     Parameters
     ----------
-    adata
-        AnnData with connectivity graph in ``obsp``.
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with
+        connectivity graph in ``obsp``.
+    modality
+        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     method
         Clustering algorithm.  ``'leiden'`` is strongly preferred for
         spatial data due to its resolution-limit-free formulation.
@@ -66,6 +70,21 @@ def cluster(
     >>> mdata["xenium"].obs["leiden"]
     """
     key_added = key_added or method
+
+    if gpu_enabled() and method in ("leiden", "louvain"):
+        rsc = _require_rapids()
+        fn = rsc.tl.leiden if method == "leiden" else rsc.tl.louvain
+        fn(
+            adata,
+            resolution=resolution,
+            neighbors_key=neighbors_key,
+            key_added=key_added,
+            random_state=random_state,
+            **kwargs,
+        )
+        n_clusters = adata.obs[key_added].nunique()
+        log.info("cluster (%s GPU, res=%.2f): %d clusters", method, resolution, n_clusters)
+        return
 
     if method == "leiden":
         sc.tl.leiden(

@@ -7,15 +7,27 @@ from __future__ import annotations
 import functools
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, TypeVar
+from typing import Callable, Protocol, TypeVar, runtime_checkable
 
 import anndata as ad
 import mudata as md
 import numpy as np
 
-__all__: list[str] = ["with_adata", "ImageSpec"]
+__all__: list[str] = ["with_adata", "ImageSpec", "ImageFilter"]
 
 _F = TypeVar("_F", bound=Callable)
+
+
+@runtime_checkable
+class ImageFilter(Protocol):
+    """Protocol for per-channel image filters stored in :attr:`ImageSpec.filter_chain`.
+
+    A filter is any callable that accepts a 2-D ``float32`` NumPy array
+    (one image channel) and returns a ``float32`` array of the same shape.
+    """
+
+    def __call__(self, channel: np.ndarray) -> np.ndarray:
+        ...
 
 
 @dataclass
@@ -62,6 +74,19 @@ class ImageSpec:
     """Sequence of 3×3 float64 µm-space affine matrices appended by
     :func:`~astrolabe.pp.rotate` / :func:`~astrolabe.pp.flip`.
     Applied in order (index 0 first) when computing image extent at render time."""
+
+    filter_chain: list = field(default_factory=list)
+    """Sequence of :class:`ImageFilter` callables appended by
+    :func:`~astrolabe.pp.add_image_filter`.  Applied per-channel in order
+    after pixel data is loaded from disk and before normalisation."""
+
+    stain_matrix: np.ndarray | None = None
+    """Optional ``(3, 3)`` float64 deconvolution matrix for H&E images.
+    Maps optical-density-space RGB → stain concentrations ``[H, E, residual]``
+    via ``concentrations_hw3 = od_hw3 @ stain_matrix``.
+    Set by :func:`~astrolabe.io.read_he`; ``None`` for all other image types.
+    Consumed by :func:`~astrolabe.pp.extract_if_intensities` which applies
+    pixel-level deconvolution before per-cell averaging; **not** applied at render time."""
 
     @property
     def n_levels(self) -> int:

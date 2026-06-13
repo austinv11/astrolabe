@@ -59,12 +59,18 @@ def extract_if_intensities(
     dtype: str = "float32",
     batch_size: int = 512,
 ) -> None:
-    """Extract per-cell IF intensities from cell boundary polygons.
+    """Extract per-cell intensities from cell boundary polygons.
 
-    Reads the lazy dask image from ``mdata[if_key].uns``, iterates over
-    cells in ``mdata[xenium_key]`` using their boundary polygons stored in
+    Reads the image from ``mdata[if_key].uns``, iterates over cells in
+    ``mdata[xenium_key]`` using boundary polygons stored in
     ``obsm['cell_boundaries']``, and fills ``mdata[if_key].X`` with a dense
     ``(n_cells, n_channels)`` matrix.
+
+    Also handles H&E images loaded with :func:`~astrolabe.io.read_he`: when the
+    image's :attr:`~astrolabe._utils.ImageSpec.stain_matrix` is set, pixel-level
+    stain deconvolution is applied before averaging so that ``X`` contains
+    per-cell hematoxylin / eosin / residual concentrations rather than raw RGB.
+    Use ``if_key='he'`` (or whatever key was passed to ``read_he``).
 
     After this call, ``mdata[if_key]`` has the same ``obs_names`` as
     ``mdata[xenium_key]`` and the two modalities are aligned.
@@ -147,41 +153,96 @@ def extract_if_intensities(
         )
     spec: ImageSpec = images[image_key]
 
+    result = _extract_intensities_from_spec(
+        xen_adata.obsm["cell_boundaries"],
+        spec,
+        reduction=reduction,
+        channel_axis=channel_axis,
+        affine=affine,
+        batch_size=batch_size,
+    )
+
     # ------------------------------------------------------------------ #
-    # Resolve channel axis and image dimensions from ImageSpec metadata   #
+    # Store result and align obs                                          #
     # ------------------------------------------------------------------ #
+    new_obs = pd.DataFrame(index=xen_adata.obs_names.copy())
+    new_obs.index.name = "cell_id"
+
+    if_adata_filled = ad.AnnData(
+        X=result.astype(dtype),
+        obs=new_obs,
+        var=if_adata.var.copy(),
+        uns=if_adata.uns.copy(),
+    )
+    for k, v in if_adata.obsm.items():
+        if_adata_filled.obsm[k] = v
+
+    mdata.mod[if_key] = if_adata_filled
+    mdata.update()
+
+    log.info("extract_if_intensities: done. mdata['%s'].X shape = %s", if_key, result.shape)
+
+
+# ---------------------------------------------------------------------------
+# Shared extraction core
+# ---------------------------------------------------------------------------
+
+
+def _extract_intensities_from_spec(
+    boundaries: "ak.Array",
+    spec: ImageSpec,
+    *,
+    reduction: str = "mean",
+    channel_axis: int | None = None,
+    affine: np.ndarray | None = None,
+    batch_size: int = 512,
+) -> np.ndarray:
+    """Extract per-cell mean intensities for all channels.
+
+    Parameters
+    ----------
+    boundaries
+        Awkward ragged array of shape ``(n_cells,)`` where each entry is an
+        ``(n_verts, 2)`` float32 polygon in µm.
+    spec
+        :class:`~astrolabe._utils.ImageSpec` for the image to sample.
+    reduction
+        Pixel aggregation: ``'mean'``, ``'median'``, ``'sum'``, ``'max'``,
+        or ``'min'``.
+    channel_axis
+        Channel axis in the raw array.  Inferred from
+        ``spec.dimension_order`` when ``None``.
+    affine
+        ``(3, 3)`` µm → pixel affine override.  Falls back to
+        ``spec.registration_affine`` then ``1 / spec.pixel_size_um``.
+    batch_size
+        Cells per tile read.
+
+    Returns
+    -------
+    np.ndarray
+        ``(n_cells, n_channels)`` float32 intensity matrix.
+    """
+    n_cells = len(boundaries)
     if channel_axis is None:
         channel_axis = _resolve_channel_axis(spec.dimension_order, len(spec.full_shape))
     n_channels = spec.full_shape[channel_axis]
-
-    # ------------------------------------------------------------------ #
-    # Resolve coordinate transform: microns → pixels                     #
-    # ------------------------------------------------------------------ #
-    M = _resolve_affine(affine, spec)  # (3, 3) float64
-
-    # ------------------------------------------------------------------ #
-    # Extract intensities                                                 #
-    # ------------------------------------------------------------------ #
-    boundaries = xen_adata.obsm["cell_boundaries"]  # ak.Array of (n_verts, 2)
-    n_cells = xen_adata.n_obs
-    result = np.zeros((n_cells, n_channels), dtype=np.float32)
-
+    M = _resolve_affine(affine, spec)
     reduction_fn = _get_reduction(reduction)
 
-    # Full-resolution spatial extents for bounds checking (from metadata, no pixel read)
     ndim = len(spec.full_shape)
     spatial_axes = [i for i in range(ndim) if i != channel_axis]
     img_height = spec.full_shape[spatial_axes[-2]] if len(spatial_axes) >= 2 else spec.full_shape[spatial_axes[-1]]
     img_width = spec.full_shape[spatial_axes[-1]]
 
+    result = np.zeros((n_cells, n_channels), dtype=np.float32)
+
     log.info(
-        "Extracting IF intensities for %d cells × %d channels (%s image shape=%s)",
-        n_cells, n_channels, image_key, spec.full_shape,
+        "Extracting intensities: %d cells × %d channels (image shape=%s)",
+        n_cells, n_channels, spec.full_shape,
     )
 
-    # Open a transient zarr handle for random tile access; closed on exit.
     with spec.open_zarr() as z:
-        # Navigate to the full-resolution array (level 0)
         if hasattr(z, "keys"):
             level_keys = sorted([k for k in z.keys() if str(k).isdigit()], key=int)
             img_arr = z[level_keys[0]] if level_keys else z
@@ -194,16 +255,14 @@ def extract_if_intensities(
 
             all_verts = []
             for i in range(len(batch_boundaries)):
-                verts = np.asarray(batch_boundaries[i])  # (n_verts, 2) in µm
+                verts = np.asarray(batch_boundaries[i])
                 if len(verts) > 0:
                     all_verts.append(verts)
 
             if not all_verts:
                 continue
 
-            all_verts_arr = np.vstack(all_verts)
-            px_verts = _transform_coords(all_verts_arr, M)
-
+            px_verts = _transform_coords(np.vstack(all_verts), M)
             row_min = max(0, int(np.floor(px_verts[:, 1].min())))
             row_max = min(img_height - 1, int(np.ceil(px_verts[:, 1].max())))
             col_min = max(0, int(np.floor(px_verts[:, 0].min())))
@@ -213,7 +272,6 @@ def extract_if_intensities(
                 continue
 
             tile = _read_tile(img_arr, channel_axis, row_min, row_max + 1, col_min, col_max + 1)
-            # tile shape: (n_channels, tile_h, tile_w)
 
             for i in range(len(batch_boundaries)):
                 cell_idx = batch_start + i
@@ -224,38 +282,19 @@ def extract_if_intensities(
                 px = _transform_coords(verts_um, M)
                 rows_px = np.clip(px[:, 1] - row_min, 0, row_max - row_min).astype(np.float64)
                 cols_px = np.clip(px[:, 0] - col_min, 0, col_max - col_min).astype(np.float64)
-
                 rr, cc = sk_polygon(rows_px, cols_px, shape=(row_max - row_min + 1, col_max - col_min + 1))
-
                 if len(rr) == 0:
                     continue
+                if getattr(spec, "stain_matrix", None) is not None:
+                    result[cell_idx] = _deconvolve_cell_pixels(
+                        tile[:, rr, cc], spec.stain_matrix
+                    )
+                else:
+                    result[cell_idx] = reduction_fn(tile[:, rr, cc], axis=1).astype(np.float32)
 
-                cell_pixels = tile[:, rr, cc]  # (n_channels, n_pixels)
-                result[cell_idx] = reduction_fn(cell_pixels, axis=1).astype(np.float32)
+            log.debug("_extract_intensities_from_spec: batch %d–%d", batch_start, batch_end)
 
-            log.debug("extract_if_intensities: processed batch %d–%d", batch_start, batch_end)
-
-    # ------------------------------------------------------------------ #
-    # Store result and align obs                                          #
-    # ------------------------------------------------------------------ #
-    new_obs = pd.DataFrame(index=xen_adata.obs_names.copy())
-    new_obs.index.name = "cell_id"
-
-    if_adata_filled = ad.AnnData(
-        X=result,
-        obs=new_obs,
-        var=if_adata.var.copy(),
-        uns=if_adata.uns.copy(),
-    )
-    # Copy any obsm that may have been set
-    for k, v in if_adata.obsm.items():
-        if_adata_filled.obsm[k] = v
-
-    mdata.mod[if_key] = if_adata_filled
-    # Propagate shared obs_names to MuData index
-    mdata.update()
-
-    log.info("extract_if_intensities: done. mdata['%s'].X shape = %s", if_key, result.shape)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -272,11 +311,10 @@ def _resolve_channel_axis(dimension_order: str, ndim: int) -> int:
     order = dimension_order.upper()
     if "C" in order:
         return order.index("C")
-    # Fallback heuristics when no channel axis is declared
     if ndim == 3:
-        return 0  # assume CYX
+        return 0
     if ndim == 4:
-        return 1  # assume CZYX
+        return 1
     return 0
 
 
@@ -329,8 +367,6 @@ def _read_tile(
     """Extract a spatial tile from a zarr/numpy array and return (n_channels, H, W)."""
     ndim = image.ndim
     slices = [slice(None)] * ndim
-    # Determine spatial axes: all axes except channel_axis
-    # We assume the last two non-channel axes are (Y, X)
     spatial_axes = [i for i in range(ndim) if i != channel_axis]
     y_axis = spatial_axes[-2] if len(spatial_axes) >= 2 else spatial_axes[-1]
     x_axis = spatial_axes[-1]
@@ -338,20 +374,17 @@ def _read_tile(
     slices[y_axis] = slice(row_min, row_max)
     slices[x_axis] = slice(col_min, col_max)
 
-    tile = np.asarray(image[tuple(slices)])  # materialise (works for zarr and numpy)
+    tile = np.asarray(image[tuple(slices)])
 
-    # Move channel axis to position 0: → (n_channels, H, W)
     if tile.ndim == 2:
-        tile = tile[np.newaxis]  # single channel image
+        tile = tile[np.newaxis]
     else:
         tile = np.moveaxis(tile, channel_axis if channel_axis < tile.ndim else 0, 0)
 
-    # Collapse any extra leading dimensions (e.g. T=1, Z=1)
     while tile.ndim > 3:
         if tile.shape[1] == 1:
             tile = tile[:, 0]
         else:
-            # Multi-Z: take max projection
             tile = tile.max(axis=1)
 
     return tile.astype(np.float64)
@@ -371,3 +404,38 @@ def _get_reduction(name: str):
             f"reduction must be one of {list(options.keys())}, got {name!r}"
         )
     return options[name]
+
+
+def _deconvolve_cell_pixels(
+    rgb_pixels: np.ndarray,
+    stain_matrix: np.ndarray,
+) -> np.ndarray:
+    """Apply H&E stain deconvolution to a cell's pixels and return mean concentrations.
+
+    Parameters
+    ----------
+    rgb_pixels
+        ``(3, n_pixels)`` float64 array of RGB values extracted from one cell.
+        Values may be in 0–255 (uint8 origin) or 0–1 range.
+    stain_matrix
+        ``(3, 3)`` deconvolution matrix: ``conc = od @ M`` where *od* is
+        optical-density-space RGB.  Convention matches
+        :attr:`~astrolabe._utils.ImageSpec.stain_matrix`.
+
+    Returns
+    -------
+    np.ndarray
+        ``(3,)`` float32 mean stain concentrations [H, E, residual].
+    """
+    eps = 1e-6
+    # Normalise to [0, 1] — handles both uint8-derived (0-255) and float (0-1) inputs
+    rgb = rgb_pixels.astype(np.float64)
+    if rgb.max() > 1.0:
+        rgb = rgb / 255.0
+    rgb = np.clip(rgb, eps, 1.0)
+
+    # OD-space: (3, n_pixels) → transpose to (n_pixels, 3)
+    od = (-np.log10(rgb)).T  # (n_pixels, 3)
+    stains = od @ stain_matrix  # (n_pixels, 3)
+    stains = np.clip(stains, 0.0, None)
+    return stains.mean(axis=0).astype(np.float32)  # (3,)

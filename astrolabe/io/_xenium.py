@@ -54,7 +54,7 @@ import copy
 
 from astrolabe.io._ome_tiff import _extract_image_spec
 
-__all__ = ["read_xenium", "read_xenium_transcripts"]
+__all__ = ["read_xenium", "read_xenium_transcripts", "extract_morphology_intensities"]
 
 log = logging.getLogger(__name__)
 
@@ -387,6 +387,135 @@ def read_xenium_transcripts(
     mdata_copy = copy.deepcopy(mdata)
     mdata_copy["xenium"].uns["transcripts"] = table
     return mdata_copy
+
+
+def extract_morphology_intensities(
+    mdata: md.MuData,
+    *,
+    xenium_key: str = "xenium",
+    morphology_key: str = "morphology",
+    image_key: str = "morphology",
+    boundaries_key: str = "cell_boundaries",
+    library_id: str | None = None,
+    reduction: str = "mean",
+    batch_size: int = 512,
+) -> None:
+    """Extract per-cell morphology image intensities and store as a new modality.
+
+    Requires ``morphology_image=True`` when calling :func:`read_xenium` so that
+    the :class:`~astrolabe._utils.ImageSpec` is available.
+
+    Creates ``mdata[morphology_key]`` with:
+
+    * ``X`` — ``(n_cells, n_channels)`` float32 per-cell mean intensities.
+    * ``obs_names`` — aligned with ``mdata[xenium_key].obs_names``.
+    * ``var_names`` — channel names from the ImageSpec, or ``['ch0', 'ch1', …]``
+      when names are absent.
+    * ``obsm['spatial']`` — copied from the Xenium modality.
+
+    Parameters
+    ----------
+    mdata
+        :class:`~mudata.MuData` returned by :func:`read_xenium`.
+    xenium_key
+        Key for the Xenium modality.
+    morphology_key
+        Key under which the new morphology modality will be stored.
+    image_key
+        Key of the image inside ``uns['spatial'][library_id]['images']``.
+        Defaults to ``'morphology'``, matching :func:`read_xenium`.
+    boundaries_key
+        Which boundary polygon set to use: ``'cell_boundaries'`` (default)
+        or ``'nucleus_boundaries'``.
+    library_id
+        Spatial library identifier.  Inferred automatically when the Xenium
+        modality has exactly one library.
+    reduction
+        Per-cell pixel aggregation: ``'mean'``, ``'median'``, ``'sum'``,
+        ``'max'``, or ``'min'``.
+    batch_size
+        Cells per tile-read batch.
+
+    Raises
+    ------
+    KeyError
+        If the morphology image or boundary key are absent.
+    """
+    from astrolabe.pp._if import _extract_intensities_from_spec
+
+    if xenium_key not in mdata.mod:
+        raise KeyError(
+            f"Modality '{xenium_key}' not found in MuData. "
+            f"Available modalities: {list(mdata.mod.keys())}"
+        )
+    xen_adata = mdata[xenium_key]
+
+    if boundaries_key not in xen_adata.obsm:
+        raise KeyError(
+            f"obsm['{boundaries_key}'] not found in the '{xenium_key}' modality.  "
+            "Re-run read_xenium with load_boundaries=True."
+        )
+
+    # Resolve library_id
+    spatial_uns: dict = xen_adata.uns.get("spatial", {})
+    if library_id is None:
+        ids = list(spatial_uns.keys())
+        if len(ids) != 1:
+            raise ValueError(
+                f"Cannot infer library_id; found {ids}. Pass library_id explicitly."
+            )
+        library_id = ids[0]
+
+    images = spatial_uns[library_id].get("images", {})
+    if image_key not in images:
+        raise KeyError(
+            f"Image key '{image_key}' not found in uns['spatial']['{library_id}']['images'].  "
+            f"Available: {list(images.keys())}.  "
+            "Ensure read_xenium was called with morphology_image=True."
+        )
+
+    spec = images[image_key]
+
+    result = _extract_intensities_from_spec(
+        xen_adata.obsm[boundaries_key],
+        spec,
+        reduction=reduction,
+        batch_size=batch_size,
+    )
+
+    # Build var: channel names from ImageSpec or generic fallback
+    n_channels = result.shape[1]
+    if spec.channel_names and len(spec.channel_names) == n_channels:
+        var_names = list(spec.channel_names)
+    else:
+        var_names = [f"ch{i}" for i in range(n_channels)]
+
+    morph_obs = pd.DataFrame(index=xen_adata.obs_names.copy())
+    morph_obs.index.name = xen_adata.obs_names.name or "cell_id"
+
+    morph_var = pd.DataFrame(index=pd.Index(var_names, name="channel"))
+
+    morph_adata = ad.AnnData(X=result, obs=morph_obs, var=morph_var)
+
+    if "spatial" in xen_adata.obsm:
+        morph_adata.obsm["spatial"] = xen_adata.obsm["spatial"].copy()
+
+    morph_adata.uns["spatial"] = {
+        library_id: {
+            "coordinate_unit": "microns",
+            "images": {image_key: spec},
+            "source_path": spatial_uns[library_id].get("source_path", ""),
+        }
+    }
+    morph_adata.uns["boundaries_key"] = boundaries_key
+
+    mdata.mod[morphology_key] = morph_adata
+    mdata.update()
+
+    log.info(
+        "extract_morphology_intensities: created '%s' modality — %d cells × %d channels",
+        morphology_key, morph_adata.n_obs, morph_adata.n_vars,
+    )
 
 
 # ---------------------------------------------------------------------------

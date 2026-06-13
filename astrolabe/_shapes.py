@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["rectangle", "circle", "arrow"]
+__all__ = ["rectangle", "circle", "arrow", "merge_polygons"]
 
 
 def rectangle(
@@ -138,3 +138,40 @@ def arrow(
         dtype=np.float64,
     )
     return pts
+
+
+def merge_polygons(polys: list[np.ndarray]) -> np.ndarray:
+    """Return the exterior boundary of the union of multiple polygons.
+
+    Uses shapely for the polygon union.  If the result is a MultiPolygon
+    (non-contiguous components), the largest component by area is returned.
+
+    Parameters
+    ----------
+    polys
+        List of ``(N, 2)`` float arrays in µm.  Open or closed polygons are
+        both accepted; the closing vertex is ignored by shapely.
+
+    Returns
+    -------
+    np.ndarray
+        Closed ``(M, 2)`` float64 polygon (exterior of the union).
+
+    Raises
+    ------
+    ValueError
+        If no polygon in *polys* has at least 3 vertices.
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    geoms = [Polygon(p[:, :2]) for p in polys if p is not None and len(p) >= 3]
+    if not geoms:
+        raise ValueError("No valid polygon (≥ 3 vertices) found in polys.")
+
+    merged = unary_union(geoms)
+
+    if merged.geom_type == "MultiPolygon":
+        merged = max(merged.geoms, key=lambda g: g.area)
+
+    return np.array(merged.exterior.coords, dtype=np.float64)
