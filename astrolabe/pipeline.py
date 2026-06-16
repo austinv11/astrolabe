@@ -35,6 +35,8 @@ import logging
 import anndata as ad
 import mudata as md
 
+from astrolabe._constants import UNS_DEFAULT_MODALITY_KEY
+
 __all__ = ["filter_cells", "filter_xenium", "filter_merscope", "filter_cosmx"]
 
 log = logging.getLogger(__name__)
@@ -78,7 +80,7 @@ def filter_cells(
        optional area bounds, and (if set) *max_pct_control*.
     3. :func:`~astrolabe.pp.filter_genes` — keep genes detected in at least
        *min_cells* cells.
-    4. Spatial isolation filter — builds a k=*isolation_k* nearest-neighbour
+    4. Spatial isolation filter — builds a k=*isolation_k* nearest-neighbor
        graph on ``obsm['spatial']`` and removes isolated or edge cells.
        Disabled by passing ``max_neighbor_dist_um=None`` and
        ``min_neighbor_dist_um=None``.
@@ -107,12 +109,12 @@ def filter_cells(
         Maximum percentage of counts from control probes per cell.
         ``None`` skips this filter (appropriate for non-Xenium data).
     isolation_k
-        Number of nearest spatial neighbours for the isolation filter.
+        Number of nearest spatial neighbors for the isolation filter.
     max_neighbor_dist_um
-        Remove cells whose *k*-th nearest neighbour exceeds this distance
+        Remove cells whose *k*-th nearest neighbor exceeds this distance
         in µm.  ``None`` disables this threshold.
     min_neighbor_dist_um
-        Remove cells whose nearest neighbour exceeds this distance in µm.
+        Remove cells whose nearest neighbor exceeds this distance in µm.
         ``None`` disables this threshold.
     spatial_key
         ``obsm`` key for cell centroid coordinates.
@@ -140,7 +142,7 @@ def filter_cells(
 
     adata = _resolve_adata(data, modality)
     mod_key = modality or (
-        data.uns.get("default_modality") if isinstance(data, md.MuData) else None
+        data.uns.get(UNS_DEFAULT_MODALITY_KEY) if isinstance(data, md.MuData) else None
     )
 
     log.info("filter_cells: %d cells × %d genes", adata.n_obs, adata.n_vars)
@@ -244,13 +246,13 @@ def filter_xenium(
     max_cell_area
         Maximum cell area in µm².
     isolation_k
-        Number of nearest spatial neighbours for the isolation filter.
+        Number of nearest spatial neighbors for the isolation filter.
     max_neighbor_dist_um
-        Maximum distance to the *k*-th nearest spatial neighbour in µm.
+        Maximum distance to the *k*-th nearest spatial neighbor in µm.
     min_neighbor_dist_um
-        Remove cells whose nearest neighbour exceeds this distance (µm).
-        Threshold applies to the 1st neighbour; cf. *max_neighbor_dist_um*
-        which uses the k-th neighbour.
+        Remove cells whose nearest neighbor exceeds this distance (µm).
+        Threshold applies to the 1st neighbor; cf. *max_neighbor_dist_um*
+        which uses the k-th neighbor.
     spatial_key
         ``obsm`` key for cell centroids.
     min_cells
@@ -274,10 +276,10 @@ def filter_xenium(
 
     if not isinstance(mdata, md.MuData):
         raise TypeError(
-            f"filter_xenium expects a MuData; got {type(mdata).__name__}."
+            f"filter_xenium expects a MuData; got {type(mdata).__name__}"
         )
     if xenium_key not in mdata.mod:
-        raise KeyError(f"Modality '{xenium_key}' not found in mdata.")
+        raise KeyError(f"Modality '{xenium_key}' not found in mdata")
 
     if not inplace:
         mdata = mdata.copy()
@@ -367,13 +369,13 @@ def filter_merscope(
     max_cell_area
         Maximum cell area in µm².
     isolation_k
-        Number of nearest spatial neighbours for the isolation filter.
+        Number of nearest spatial neighbors for the isolation filter.
     max_neighbor_dist_um
-        Maximum distance to the *k*-th nearest spatial neighbour in µm.
+        Maximum distance to the *k*-th nearest spatial neighbor in µm.
     min_neighbor_dist_um
-        Remove cells whose nearest neighbour exceeds this distance (µm).
-        Threshold applies to the 1st neighbour; cf. *max_neighbor_dist_um*
-        which uses the k-th neighbour.
+        Remove cells whose nearest neighbor exceeds this distance (µm).
+        Threshold applies to the 1st neighbor; cf. *max_neighbor_dist_um*
+        which uses the k-th neighbor.
     spatial_key
         ``obsm`` key for cell centroids.
     min_cells
@@ -397,10 +399,10 @@ def filter_merscope(
 
     if not isinstance(mdata, md.MuData):
         raise TypeError(
-            f"filter_merscope expects a MuData; got {type(mdata).__name__}."
+            f"filter_merscope expects a MuData; got {type(mdata).__name__}"
         )
     if merscope_key not in mdata.mod:
-        raise KeyError(f"Modality '{merscope_key}' not found in mdata.")
+        raise KeyError(f"Modality '{merscope_key}' not found in mdata")
 
     if not inplace:
         mdata = mdata.copy()
@@ -498,13 +500,13 @@ def filter_cosmx(
     max_cell_area
         Maximum cell area in µm².
     isolation_k
-        Number of nearest spatial neighbours for the isolation filter.
+        Number of nearest spatial neighbors for the isolation filter.
     max_neighbor_dist_um
-        Maximum distance to the *k*-th nearest spatial neighbour in µm.
+        Maximum distance to the *k*-th nearest spatial neighbor in µm.
     min_neighbor_dist_um
-        Remove cells whose nearest neighbour exceeds this distance (µm).
-        Threshold applies to the 1st neighbour; cf. *max_neighbor_dist_um*
-        which uses the k-th neighbour.
+        Remove cells whose nearest neighbor exceeds this distance (µm).
+        Threshold applies to the 1st neighbor; cf. *max_neighbor_dist_um*
+        which uses the k-th neighbor.
     spatial_key
         ``obsm`` key for cell centroids.
     min_cells
@@ -528,10 +530,10 @@ def filter_cosmx(
 
     if not isinstance(mdata, md.MuData):
         raise TypeError(
-            f"filter_cosmx expects a MuData; got {type(mdata).__name__}."
+            f"filter_cosmx expects a MuData; got {type(mdata).__name__}"
         )
     if cosmx_key not in mdata.mod:
-        raise KeyError(f"Modality '{cosmx_key}' not found in mdata.")
+        raise KeyError(f"Modality '{cosmx_key}' not found in mdata")
 
     if not inplace:
         mdata = mdata.copy()

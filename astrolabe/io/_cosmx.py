@@ -39,14 +39,14 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
+
 __all__ = ["read_cosmx"]
 
 log = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = "0.1"
-
-# Default CosMx pixel size (µm per pixel); can be overridden by the caller.
-_DEFAULT_PIXEL_SIZE_UM = 0.18
+# CosMx pixel edge length is 120 nm = 0.12028 µm (NanoString SMI ReadMe).
+_DEFAULT_PIXEL_SIZE_UM = 0.12028
 
 # Gene names with these prefixes are negative control probes.
 _CONTROL_PREFIXES = ("NegPrb", "Negative", "SystemControl", "FalseCode")
@@ -76,8 +76,9 @@ def read_cosmx(
         ``*_polygons.csv`` and store them in ``obsm['cell_boundaries']``.
         Set ``False`` to skip for faster loading.
     pixel_size_um
-        Microns per pixel. Default is ``0.18`` (standard CosMx SMI).
-        Used to convert global pixel coordinates to microns.
+        Microns per pixel. Default is ``0.12028`` (120 nm pixel edge length
+        per NanoString SMI ReadMe). Used to convert global pixel coordinates
+        to microns.
     dtype
         NumPy dtype for ``X``.  ``'float32'`` is the default.
 
@@ -168,15 +169,15 @@ def read_cosmx(
             "source_path": str(path),
         }
     }
-    adata.uns["astrolabe_schema_version"] = _SCHEMA_VERSION
+    adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 
     # ------------------------------------------------------------------ #
     # 6. Wrap in MuData                                                   #
     # ------------------------------------------------------------------ #
     mdata = md.MuData({"cosmx": adata})
     mdata.uns["spatial"] = adata.uns["spatial"]
-    mdata.uns["astrolabe_schema_version"] = _SCHEMA_VERSION
-    mdata.uns["default_modality"] = "cosmx"
+    mdata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
+    mdata.uns[UNS_DEFAULT_MODALITY_KEY] = "cosmx"
 
     log.info("Loaded %d cells × %d genes (%d control probes)", adata.n_obs, adata.n_vars, n_ctrl)
     return mdata
@@ -227,7 +228,7 @@ def _attach_obs(
 
     meta_aligned = meta_df.reindex(adata.obs_names)
 
-    # Global centroid columns (in pixels) — normalise to various naming conventions
+    # Global centroid columns (in pixels) — normalize to various naming conventions
     x_col = next(
         (c for c in ("CenterX_global_px", "x_global_px", "x_centroid_global_px", "CenterX_local_px")
          if c in meta_aligned.columns),

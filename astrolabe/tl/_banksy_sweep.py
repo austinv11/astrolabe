@@ -61,7 +61,7 @@ def banksy_sweep(
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     lambda_params
-        λ values to sweep.  Each controls the self-vs-neighbourhood weight.
+        λ values to sweep.  Each controls the self-vs-neighborhood weight.
     resolutions
         Leiden resolution values to sweep for each λ.
     n_pcs

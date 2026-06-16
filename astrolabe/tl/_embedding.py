@@ -118,7 +118,7 @@ def pca(
         from sklearn.decomposition import PCA as _PCA
 
         if use_rep not in adata.obsm:
-            raise KeyError(f"obsm['{use_rep}'] not found.")
+            raise KeyError(f"obsm['{use_rep}'] not found")
         X_in = np.asarray(adata.obsm[use_rep], dtype=np.float32)
         n_comps_eff = min(n_comps, X_in.shape[0] - 1, X_in.shape[1] - 1)
         embedding = _PCA(
@@ -225,16 +225,16 @@ def spatial_umap(
     key_added: str = "X_spatial_umap",
     **kwargs,
 ) -> None:
-    """UMAP embedding using a weighted mix of expression and spatial neighbourhoods.
+    """UMAP embedding using a weighted mix of expression and spatial neighborhoods.
 
-    Blends the transcriptomic neighbourhood graph (from ``sc.pp.neighbors``)
-    with the spatial neighbourhood graph (from :func:`~astrolabe.tl.spatial_neighbors`)
+    Blends the transcriptomic neighborhood graph (from ``sc.pp.neighbors``)
+    with the spatial neighborhood graph (from :func:`~astrolabe.tl.spatial_neighbors`)
     before running UMAP.  The result captures both cell-type identity and
-    tissue organisation — cells of the same type that are also spatially
+    tissue organization — cells of the same type that are also spatially
     co-localised cluster more tightly than cells that share identity but
     are scattered across the tissue.
 
-    Both neighbour graphs must exist in ``obsp`` before calling this function.
+    Both neighbor graphs must exist in ``obsp`` before calling this function.
     Run :func:`~astrolabe.tl.spatial_neighbors` and ``sc.pp.neighbors``
     (after :func:`~astrolabe.tl.pca`) first.
 
@@ -242,7 +242,7 @@ def spatial_umap(
     ----------
     data
         :class:`~anndata.AnnData` or :class:`~mudata.MuData` with both
-        neighbourhood graphs in ``obsp``.
+        neighborhood graphs in ``obsp``.
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     alpha
@@ -250,10 +250,10 @@ def spatial_umap(
         ``alpha=1`` is a pure spatial layout; ``alpha=0.5`` (default) gives
         equal weight to both graphs.
     expr_neighbors_key
-        Key in ``uns`` for the transcriptomic neighbourhood graph written
+        Key in ``uns`` for the transcriptomic neighborhood graph written
         by ``sc.pp.neighbors``.  Default ``'neighbors'``.
     spatial_neighbors_key
-        Key in ``uns`` for the spatial neighbourhood graph written by
+        Key in ``uns`` for the spatial neighborhood graph written by
         :func:`~astrolabe.tl.spatial_neighbors`.  Default
         ``'spatial_neighbors'``.
     min_dist
@@ -286,15 +286,15 @@ def spatial_umap(
             raise KeyError(
                 f"uns['{key}'] not found. "
                 + (
-                    "Run sc.pp.neighbors() first."
+                    "Run sc.pp.neighbors() first"
                     if key == expr_neighbors_key
-                    else f"Run ab.tl.spatial_neighbors() first."
+                    else "Run ab.tl.spatial_neighbors() first"
                 )
             )
         conn_key = meta.get("connectivities_key", f"{key}_connectivities")
         if conn_key not in adata.obsp:
             raise KeyError(
-                f"obsp['{conn_key}'] not found (expected from uns['{key}'])."
+                f"obsp['{conn_key}'] not found (expected from uns['{key}'])"
             )
         return adata.obsp[conn_key].astype(np.float32)
 
@@ -304,10 +304,10 @@ def spatial_umap(
     if conn_expr.shape != conn_spatial.shape:
         raise ValueError(
             f"Expression ({conn_expr.shape}) and spatial ({conn_spatial.shape}) "
-            "connectivity matrices have different shapes."
+            "connectivity matrices have different shapes"
         )
 
-    # ── Row-normalise so both graphs are on the same scale ────────────────────
+    # ── Row-normalize so both graphs are on the same scale ───────────────────
     def _row_norm(mat: sp.spmatrix) -> sp.spmatrix:
         row_sums = np.asarray(mat.sum(axis=1), dtype=np.float32).ravel()
         row_sums[row_sums == 0] = 1.0

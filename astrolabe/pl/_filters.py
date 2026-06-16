@@ -1,10 +1,12 @@
 """
 Image filter classes for per-channel pixel processing.
 
-Filters are stored in ``ImageSpec.filter_chain`` and applied lazily at render
-time after pixel data is loaded from disk and before normalisation.  Each
-filter is a callable ``(channel_2d: np.ndarray) -> np.ndarray`` that takes
-and returns a 2-D ``float32`` array.
+Filters are stored in ``ImageSpec.filter_chain`` and applied per-channel in
+two places: lazily at render time (``pl.image``, before normalization) and
+eagerly at analysis time (``pp.extract_if_intensities``, before per-cell
+reduction and stain deconvolution).  Each filter is a callable
+``(channel_2d: np.ndarray) -> np.ndarray`` that takes and returns a 2-D
+``float32`` array.
 
 Classes
 -------
@@ -46,25 +48,29 @@ class GaussianFilter:
 
 @dataclass
 class CLAHEFilter:
-    """Contrast-Limited Adaptive Histogram Equalisation (CLAHE).
+    """Contrast-Limited Adaptive Histogram Equalization (CLAHE).
 
     Enhances local contrast while limiting noise amplification.  The channel
-    is normalised to ``[0, 1]`` for processing (as required by
+    is normalized to ``[0, 1]`` for processing (as required by
     ``skimage.exposure.equalize_adapthist``) then rescaled back to the
     original intensity range.
 
     Parameters
     ----------
     clip_limit
-        Normalised clip limit in ``[0, 1]`` (skimage convention).  Higher
+        Normalized clip limit in ``[0, 1]`` (skimage convention).  Higher
         values allow stronger contrast enhancement.
     kernel_size
-        Size of the contextual region for histogram equalisation.  Can be
+        Size of the contextual region for histogram equalization.  Can be
         an ``int`` (square tiles) or ``(rows, cols)`` tuple.
     """
 
     clip_limit: float = 0.01
     kernel_size: int | tuple[int, int] = 64
+
+    def __post_init__(self) -> None:
+        if isinstance(self.kernel_size, list):
+            self.kernel_size = tuple(self.kernel_size)
 
     def __call__(self, channel: np.ndarray) -> np.ndarray:
         from skimage.exposure import equalize_adapthist

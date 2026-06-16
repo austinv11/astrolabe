@@ -25,8 +25,11 @@ uns
 
 Notes
 -----
-- The image on disk is always stored as RGB.  Stain separation is applied lazily
-  at render time via ``ImageSpec.stain_matrix``.
+- The image on disk is always stored as RGB.  ``ImageSpec.stain_matrix`` drives
+  stain deconvolution in two places: lazily at render time (``pl.image``), and
+  eagerly at analysis time via ``pp.extract_if_intensities(mdata, if_key='he')``
+  which fills ``mdata['he'].X`` with per-cell ``[hematoxylin, eosin, residual]``
+  concentrations suitable for downstream analysis.
 - ``pixel_size_um`` is inferred from tifffile resolution tags when present and
   must be supplied manually via the ``pixel_size_um`` parameter for files that
   lack embedded metadata (e.g. plain TIFF exports from slide scanners).
@@ -46,13 +49,12 @@ import numpy as np
 import pandas as pd
 import tifffile
 
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
 from astrolabe._utils import ImageSpec
 
 __all__ = ["read_he"]
 
 log = logging.getLogger(__name__)
-
-_SCHEMA_VERSION = "0.1"
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ def read_he(
     pixel_size_um: float | None = None,
     affine: np.ndarray | None = None,
     separate_stains: bool = True,
-    method: Literal["ruifrok", "macenko"] = "ruifrok",
+    method: Literal["ruifrok", "macenko"] = "macenko",
     mdata: "md.MuData | None" = None,
     mdata_key: str = "he",
 ) -> ad.AnnData:
@@ -76,8 +78,10 @@ def read_he(
     The image is stored as an :class:`~astrolabe._utils.ImageSpec` path
     descriptor; no pixel data is kept in memory.  When *separate_stains* is
     ``True`` (default), a stain deconvolution matrix is estimated and stored on
-    the spec so that hematoxylin, eosin, and residual channels are produced
-    lazily at render time.
+    the spec.  The matrix is used in two ways: (1) lazily at render time by
+    ``pl.image`` to display hematoxylin / eosin / residual pseudo-channels, and
+    (2) eagerly by ``pp.extract_if_intensities(mdata, if_key='he')`` to fill
+    ``mdata['he'].X`` with per-cell stain concentrations for analysis.
 
     Parameters
     ----------
@@ -171,7 +175,7 @@ def read_he(
                 "source_path": str(path),
             }
         },
-        "astrolabe_schema_version": _SCHEMA_VERSION,
+        UNS_SCHEMA_VERSION_KEY: SCHEMA_VERSION,
     }
 
     adata = ad.AnnData(obs=obs, var=var_df, uns=uns)
@@ -187,7 +191,7 @@ def read_he(
     if mdata is not None:
         mdata.mod[mdata_key] = adata
         mdata.uns.setdefault("spatial", {}).update(uns["spatial"])
-        mdata.uns.setdefault("default_modality", mdata_key)
+        mdata.uns.setdefault(UNS_DEFAULT_MODALITY_KEY, mdata_key)
 
     return adata
 
@@ -212,7 +216,7 @@ def _extract_he_spec(
             pixel_size_um = _infer_pixel_size(tif)
 
         # Map the 'S' (samples / RGB components) axis to 'C' so the renderer
-        # treats the three colour channels as independent image channels.
+        # treats the three color channels as independent image channels.
         dim_order = raw_axes.replace("S", "C")
 
     full_shape = level_shapes[0]
@@ -315,7 +319,7 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     with tifffile.TiffFile(spec.path) as tif:
         raw: np.ndarray = tif.series[0].levels[level_idx].asarray()
 
-    # Normalise axes: ensure result is (H, W, 3) uint8/float
+    # Normalize axes: ensure result is (H, W, 3) uint8/float
     axes = spec.dimension_order.upper()  # 'CYX' or 'YXC' etc. (S→C already done)
     if "C" in axes:
         c_ax = axes.index("C")
@@ -370,7 +374,7 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     else:
         he = np.stack([v2, v1, np.cross(v2, v1)])
 
-    # Normalise rows to unit length
+    # Normalize rows to unit length
     norms = np.linalg.norm(he, axis=1, keepdims=True)
     norms = np.where(norms > 0, norms, 1.0)
     he = he / norms

@@ -83,7 +83,7 @@ _BOUNDARY_DEFAULT_COLORS: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Layer — pure data, zero behaviour
+# Layer — pure data, zero behavior
 # ---------------------------------------------------------------------------
 
 
@@ -143,8 +143,8 @@ class Layer:
 
     # --- annotation-specific ---
     shapes: list | None = None          # list of (n_verts, 2) ndarray in µm
-    annotation_color: str = "white"     # stroke colour
-    annotation_fill: str | None = None  # fill colour; None = transparent
+    annotation_color: str = "white"     # stroke color
+    annotation_fill: str | None = None  # fill color; None = transparent
 
     # --- image-specific: scale bar ---
     scale_bar: bool | dict = False  # False | True | dict of kwargs
@@ -296,8 +296,8 @@ class SpatialPanel(_Renderable):
         if not isinstance(other, SpatialPanel):
             raise TypeError(
                 f"+ stacks layers onto the same axes and requires two SpatialPanel "
-                f"objects; got {type(other).__name__!r}.  "
-                f"Use | for side-by-side layout or / for stacked layout."
+                f"objects; got {type(other).__name__!r}. "
+                f"Use | for side-by-side layout or / for stacked layout"
             )
         return SpatialPanel(
             layers=list(self.layers) + list(other.layers),
@@ -345,6 +345,36 @@ class FigurePanel(_Renderable):
 
     figure: matplotlib.figure.Figure
     figsize: tuple[float, float] | None = None
+
+    @classmethod
+    def from_obj(
+        cls,
+        obj: Any,
+        figsize: tuple[float, float] | None = None,
+    ) -> "FigurePanel":
+        """Wrap *obj* as a :class:`FigurePanel`.
+
+        Handles the common return types from scanpy plotting functions:
+        ``matplotlib.figure.Figure``, ``matplotlib.axes.Axes``, list of Axes,
+        objects with a ``.get_axes()`` method (DotPlot, Heatmap, etc.), objects
+        with a ``.figure`` attribute, and falls back to ``plt.gcf()``.
+        """
+        if isinstance(obj, matplotlib.figure.Figure):
+            return cls(figure=obj, figsize=figsize)
+        if isinstance(obj, matplotlib.axes.Axes):
+            return cls(figure=obj.get_figure(), figsize=figsize)
+        if isinstance(obj, list) and obj and isinstance(obj[0], matplotlib.axes.Axes):
+            return cls(figure=obj[0].get_figure(), figsize=figsize)
+        if hasattr(obj, "get_axes"):
+            axes_dict = obj.get_axes()
+            if axes_dict:
+                return cls(
+                    figure=next(iter(axes_dict.values())).get_figure(),
+                    figsize=figsize,
+                )
+        if hasattr(obj, "figure") and isinstance(obj.figure, matplotlib.figure.Figure):
+            return cls(figure=obj.figure, figsize=figsize)
+        return cls(figure=plt.gcf(), figsize=figsize)
 
     def to_figure(
         self,
@@ -438,9 +468,9 @@ def _coerce(obj: Any) -> _Renderable:
     if isinstance(obj, _Renderable):
         return obj
     raise TypeError(
-        f"Cannot use {type(obj).__name__!r} in a plot layout.  "
+        f"Cannot use {type(obj).__name__!r} in a plot layout. "
         "Expected a SpatialPanel, PlotGrid, FigurePanel, "
-        "matplotlib.figure.Figure, or matplotlib.axes.Axes."
+        "matplotlib.figure.Figure, or matplotlib.axes.Axes"
     )
 
 
@@ -509,7 +539,7 @@ def layer(*panels: SpatialPanel) -> SpatialPanel:
     >>> ab.pl.layer(ab.pl.image(mdata), ab.pl.points(mdata, "leiden"))
     """
     if len(panels) < 1:
-        raise ValueError("layer() requires at least one panel.")
+        raise ValueError("layer() requires at least one panel")
     return functools.reduce(operator.add, panels)
 
 
@@ -534,7 +564,7 @@ def hstack(*items: Any) -> PlotGrid:
     >>> ab.pl.hstack(ab.pl.points(mdata, "EPCAM"), violin_fig)
     """
     if len(items) < 1:
-        raise ValueError("hstack() requires at least one item.")
+        raise ValueError("hstack() requires at least one item")
     return functools.reduce(operator.or_, [_coerce(it) for it in items])
 
 
@@ -557,7 +587,7 @@ def vstack(*items: Any) -> PlotGrid:
     >>> ab.pl.vstack(ab.pl.points(mdata, "leiden"), violin_fig)
     """
     if len(items) < 1:
-        raise ValueError("vstack() requires at least one item.")
+        raise ValueError("vstack() requires at least one item")
     return functools.reduce(operator.truediv, [_coerce(it) for it in items])
 
 
@@ -589,7 +619,7 @@ def as_panel(
     if not isinstance(fig, (matplotlib.figure.Figure, matplotlib.axes.Axes)):
         raise TypeError(
             f"as_panel() expects a matplotlib Figure or Axes, "
-            f"got {type(fig).__name__!r}."
+            f"got {type(fig).__name__!r}"
         )
     result = _coerce(fig)
     assert isinstance(result, FigurePanel)
@@ -700,8 +730,8 @@ def points(
 
     if spatial_key not in adata.obsm:
         raise KeyError(
-            f"obsm['{spatial_key}'] not found.  "
-            "Ensure read_xenium() was called or obsm['spatial'] exists."
+            f"obsm['{spatial_key}'] not found. "
+            "Ensure read_xenium() was called or obsm['spatial'] exists"
         )
 
     lay = Layer(
@@ -789,8 +819,8 @@ def image(
         ids = list(spatial_uns.keys())
         if len(ids) != 1:
             raise ValueError(
-                f"Cannot infer library_id from {ids}.  "
-                "Pass library_id explicitly."
+                f"Cannot infer library_id from {ids}. "
+                "Pass library_id explicitly"
             )
         library_id = ids[0]
 
@@ -798,7 +828,7 @@ def image(
     images = lib_uns.get("images", {})
     if not images:
         raise KeyError(
-            f"No images loaded for library '{library_id}'.  "
+            f"No images loaded for library '{library_id}'. "
             "Load one first:\n"
             "  ab.io.read_ome_tiff('path/to/image.ome.tif', mdata=data)\n"
             "  # or: ab.io.read_xenium(..., morphology_image=True)"
@@ -807,7 +837,7 @@ def image(
         image_key = "full" if "full" in images else next(iter(images))
     elif image_key not in images:
         raise KeyError(
-            f"Image key '{image_key}' not found.  "
+            f"Image key '{image_key}' not found. "
             f"Available keys: {list(images.keys())}"
         )
 
@@ -900,9 +930,9 @@ def boundaries(
     """
     if boundaries_key not in adata.obsm:
         raise KeyError(
-            f"obsm['{boundaries_key}'] not found.  "
+            f"obsm['{boundaries_key}'] not found. "
             "Re-run ab.io.read_xenium() with load_boundaries=True, "
-            "or pass boundaries_key='nucleus_boundaries' for nucleus outlines."
+            "or pass boundaries_key='nucleus_boundaries' for nucleus outlines"
         )
 
     # Apply key-based default color when no explicit color/data mapping is given.
@@ -1046,7 +1076,7 @@ def raster(
 
     if spatial_key not in adata.obsm:
         raise KeyError(
-            f"obsm['{spatial_key}'] not found."
+            f"obsm['{spatial_key}'] not found"
         )
 
     lay = Layer(
@@ -1075,7 +1105,7 @@ def raster(
 
 
 # ---------------------------------------------------------------------------
-# Table → AnnData normalisation
+# Table → AnnData normalization
 # ---------------------------------------------------------------------------
 
 
@@ -1096,15 +1126,15 @@ def _table_to_adata(data: Any, x_col: str, y_col: str) -> ad.AnnData:
     if not isinstance(data, pd.DataFrame):
         raise TypeError(
             f"_table_to_adata expects a pyarrow.Table or pandas.DataFrame, "
-            f"got {type(data).__name__!r}."
+            f"got {type(data).__name__!r}"
         )
 
     for col in (x_col, y_col):
         if col not in data.columns:
             raise KeyError(
-                f"Column '{col}' not found in table.  "
-                f"Available columns: {list(data.columns)}.  "
-                f"Set x_col/y_col explicitly if your table uses different names."
+                f"Column '{col}' not found in table. "
+                f"Available columns: {list(data.columns)}. "
+                f"Set x_col/y_col explicitly if your table uses different names"
             )
 
     coords = data[[x_col, y_col]].to_numpy(dtype=np.float32)
@@ -1141,9 +1171,9 @@ def annotation(
         Use :func:`rectangle`, :func:`circle`, or :func:`arrow` to generate
         common shapes.
     color
-        Edge colour of the annotation polygons.
+        Edge color of the annotation polygons.
     fill_color
-        Fill colour.  ``None`` = no fill (outline only).
+        Fill color.  ``None`` = no fill (outline only).
     linewidth
         Edge line width in points.
     alpha
@@ -1190,7 +1220,7 @@ def _check_single_library(adata: ad.AnnData) -> None:
     Spatial coordinates are independent per Xenium run — each run starts its
     own µm coordinate frame from (0, 0).  Plotting cells from different runs
     on the same axes overlays unrelated tissue sections without any warning,
-    which is almost never the desired behaviour.
+    which is almost never the desired behavior.
 
     This check fires for ``'points'``, ``'boundaries'``, and ``'raster'``
     layers.  It is skipped for ``'image'`` (which already requires an explicit
@@ -1780,7 +1810,7 @@ def _draw_image_layer(
     else:
         ch_idx = _resolve_channel_index(lay.channel, lay.adata)
         if ch_idx >= n_ch:
-            raise IndexError(f"channel={ch_idx} is out of range; image has {n_ch} channel(s).")
+            raise IndexError(f"channel={ch_idx} is out of range; image has {n_ch} channel(s)")
         img_display = _prep(ch_slices[ch_idx])
         cmap = lay.image_cmap
 
@@ -2168,7 +2198,7 @@ def _resolve_color_values(
         return col.to_numpy(dtype=np.float64), False
 
     raise KeyError(
-        f"'{col_name}' not found in var_names or obs columns.  "
+        f"'{col_name}' not found in var_names or obs columns. "
         f"Available obs columns: {list(adata.obs.columns)}"
     )
 

@@ -30,7 +30,7 @@ def paga(
 ) -> None:
     """Partition-based graph abstraction (PAGA) trajectory inference.
 
-    Abstracts the cell neighbourhood graph into a cluster-level connectivity
+    Abstracts the cell neighborhood graph into a cluster-level connectivity
     graph, enabling trajectory and lineage inference at coarser resolution.
 
     Wraps :func:`scanpy.tl.paga`.  Results are stored in ``uns['paga']``
@@ -40,7 +40,7 @@ def paga(
     .. note::
         Run :func:`astrolabe.tl.cluster` (Leiden) and ``sc.pp.neighbors``
         (or :func:`astrolabe.tl.spatial_neighbors`) before calling this
-        function.  PAGA requires a transcriptomic neighbourhood graph for
+        function.  PAGA requires a transcriptomic neighborhood graph for
         meaningful trajectories; pass ``neighbors_key='spatial_neighbors'``
         to use the spatial graph instead.
 
@@ -48,13 +48,13 @@ def paga(
     ----------
     data
         :class:`~anndata.AnnData` or :class:`~mudata.MuData` with a
-        precomputed neighbourhood graph.
+        precomputed neighborhood graph.
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     groupby
         ``obs`` column with cluster labels (e.g. ``'leiden'``).
     neighbors_key
-        Key in ``uns`` pointing to the neighbourhood graph used to abstract
+        Key in ``uns`` pointing to the neighborhood graph used to abstract
         trajectories.  Defaults to ``'neighbors'`` (the transcriptomic graph
         built by ``sc.pp.neighbors``).
     threshold
@@ -111,7 +111,7 @@ def dpt(
     ``obs[key_added]``.
 
     .. note::
-        Requires a transcriptomic neighbourhood graph.  Run
+        Requires a transcriptomic neighborhood graph.  Run
         ``sc.pp.neighbors(adata)`` (after :func:`astrolabe.tl.pca`) before
         calling this function.
 
@@ -128,7 +128,7 @@ def dpt(
     ----------
     data
         :class:`~anndata.AnnData` or :class:`~mudata.MuData` with a
-        precomputed neighbourhood graph.
+        precomputed neighborhood graph.
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     root_cell
@@ -140,7 +140,7 @@ def dpt(
         Value in ``obs[root_obs_key]`` identifying the root cell group.
         The first matching cell is used as the root.
     neighbors_key
-        Key in ``uns`` pointing to the neighbourhood graph.
+        Key in ``uns`` pointing to the neighborhood graph.
     n_dcs
         Number of diffusion components to compute.
     n_branchings
@@ -169,13 +169,13 @@ def dpt(
         if root_obs_key not in adata.obs.columns:
             raise KeyError(
                 f"obs column '{root_obs_key}' not found. "
-                "Run ab.tl.cluster() or ab.tl.annotate_clusters() first."
+                "Run ab.tl.cluster() or ab.tl.annotate_clusters() first"
             )
         matches = (adata.obs[root_obs_key].astype(str) == str(root_obs_val)).values
         if not matches.any():
             raise ValueError(
                 f"No cells found where obs['{root_obs_key}'] == {root_obs_val!r}. "
-                f"Available values: {sorted(adata.obs[root_obs_key].unique().tolist())}"
+                f"Available values: {sorted(adata.obs[root_obs_key].unique().tolist())!r}"
             )
         adata.uns["iroot"] = int(matches.argmax())
         log.info(
@@ -185,7 +185,7 @@ def dpt(
     elif "iroot" not in adata.uns:
         raise ValueError(
             "Root cell not specified. Pass root_cell=<int> or "
-            "root_obs_key= + root_obs_val=, or set adata.uns['iroot'] manually."
+            "root_obs_key= + root_obs_val=, or set adata.uns['iroot'] manually"
         )
 
     # ── Diffusion map (prerequisite for DPT) ─────────────────────────────────

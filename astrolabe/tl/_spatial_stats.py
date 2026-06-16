@@ -48,7 +48,7 @@ def _build_weights(adata: ad.AnnData, neighbors_key: str):
     conn_key = uns_entry.get("connectivities_key", neighbors_key + "_connectivities")
     if conn_key not in adata.obsp:
         raise KeyError(
-            f"obsp['{conn_key}'] not found.  Run ab.tl.spatial_neighbors() first."
+            f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors() first"
         )
     w = WSP(adata.obsp[conn_key]).to_W()
     w.transform = "r"
@@ -61,7 +61,7 @@ def _get_conn_matrix(adata: ad.AnnData, neighbors_key: str) -> sp.spmatrix:
     conn_key = uns_entry.get("connectivities_key", neighbors_key + "_connectivities")
     if conn_key not in adata.obsp:
         raise KeyError(
-            f"obsp['{conn_key}'] not found.  Run ab.tl.spatial_neighbors() first."
+            f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors() first"
         )
     return adata.obsp[conn_key]
 
@@ -77,7 +77,7 @@ def _extract_values(adata: ad.AnnData, key: str, layer: str | None) -> np.ndarra
         return np.asarray(col, dtype=np.float64)
     if key in adata.obs.columns:
         return adata.obs[key].to_numpy(dtype=np.float64)
-    raise KeyError(f"Key '{key}' not found in var_names or obs columns.")
+    raise KeyError(f"Key '{key}' not found in var_names or obs columns")
 
 
 def _normalise_pairs(
@@ -89,7 +89,7 @@ def _normalise_pairs(
         y = [y]
     if len(x) != len(y):
         raise ValueError(
-            f"x and y must have the same length; got {len(x)} and {len(y)}."
+            f"x and y must have the same length; got {len(x)} and {len(y)}"
         )
     return x, y
 
@@ -197,10 +197,10 @@ def moran_local(
 
     Identifies per-cell spatial association patterns:
 
-    - **HH** — high value surrounded by high-value neighbours (hot spot)
-    - **LL** — low value surrounded by low-value neighbours (cold spot)
-    - **HL** — high value surrounded by low-value neighbours (spatial outlier)
-    - **LH** — low value surrounded by high-value neighbours (spatial outlier)
+    - **HH** — high value surrounded by high-value neighbors (hot spot)
+    - **LL** — low value surrounded by low-value neighbors (cold spot)
+    - **HL** — high value surrounded by low-value neighbors (spatial outlier)
+    - **LH** — low value surrounded by high-value neighbors (spatial outlier)
 
     Each key is first looked up in ``var_names``; if absent it falls back to
     ``obs`` columns.  P-values are FDR-adjusted across all cells per key.
@@ -557,9 +557,9 @@ def spatial_lag(
 ) -> None:
     """Compute the spatial lag of expression or obs variables.
 
-    For each key, writes the weighted average of neighbours' values as a new
+    For each key, writes the weighted average of neighbors' values as a new
     ``obs`` column.  Numeric variables use the row-standardised spatial
-    average; categorical variables use the most-common neighbour label.
+    average; categorical variables use the most-common neighbor label.
 
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
     Each key is looked up in ``var_names`` first, then ``obs`` columns.
@@ -607,7 +607,7 @@ def spatial_lag(
                 y = adata.obs[key].to_numpy(dtype=np.float64)
                 adata.obs[col_name] = lag_spatial(w, y)
         else:
-            raise KeyError(f"Key '{key}' not found in var_names or obs columns.")
+            raise KeyError(f"Key '{key}' not found in var_names or obs columns")
 
     log.info("spatial_lag: wrote %d lag columns", len(keys))
 
@@ -623,7 +623,7 @@ def spatial_silhouette(
 ) -> None:
     """Boundary silhouette score for spatially-defined clusters.
 
-    Measures how well each cell separates from its spatial neighbours in
+    Measures how well each cell separates from its spatial neighbors in
     attribute space.  Cells at cluster boundaries score lower than cells deep
     within a cluster.  Differs from the standard sklearn silhouette, which
     uses global pairwise distances.
@@ -654,7 +654,7 @@ def spatial_silhouette(
     import esda
 
     if groupby not in adata.obs.columns:
-        raise KeyError(f"obs column '{groupby}' not found.")
+        raise KeyError(f"obs column '{groupby}' not found")
 
     w = _build_weights(adata, neighbors_key)
     labels = adata.obs[groupby].to_numpy()
@@ -741,7 +741,7 @@ def ripley_l(
         from pointpats import l_test  # older API
 
     if spatial_key not in adata.obsm:
-        raise KeyError(f"obsm['{spatial_key}'] not found.")
+        raise KeyError(f"obsm['{spatial_key}'] not found")
 
     coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
 
@@ -749,7 +749,7 @@ def ripley_l(
         groups: dict[str, np.ndarray] = {"all": np.ones(adata.n_obs, dtype=bool)}
     else:
         if groupby not in adata.obs.columns:
-            raise KeyError(f"obs column '{groupby}' not found.")
+            raise KeyError(f"obs column '{groupby}' not found")
         unique_vals = adata.obs[groupby].unique()
         groups = {str(v): adata.obs[groupby].values == v for v in unique_vals}
 
@@ -785,7 +785,7 @@ def ripley_l(
         if n_perms > 0 and sims is not None:
             sims = np.asarray(sims)
             if sims.ndim == 2:
-                # normalise to (n_perms, n_support)
+                # normalize to (n_perms, n_support)
                 if sims.shape[0] == len(distances):
                     sims = sims.T
                 df["L_hi"] = np.percentile(sims, 97.5, axis=0)

@@ -22,7 +22,7 @@ boundaries
     Draw cell or nucleus boundary polygons.
 raster
     Bin cells into a 2-D grid (square pixels or hexagons) and render as
-    an image; colour by density, expression, or category.
+    an image; color by density, expression, or category.
 violin
     Per-cluster violin plots (wraps scanpy).
 dotplot
@@ -81,6 +81,7 @@ from astrolabe.pl._qc_plots import (
     cell_area_histogram,
     nucleus_area_histogram,
     gene_qv_scatter,
+    gene_detection_scatter,
     mean_variance_plot,
     genes_per_cell_histogram,
     transcripts_per_cell_histogram,
@@ -132,6 +133,7 @@ __all__ = [
     "paga_plot",
     "ripley_plot",
     "gene_qv_scatter",
+    "gene_detection_scatter",
     "mean_variance_plot",
     "cell_area_histogram",
     "nucleus_area_histogram",

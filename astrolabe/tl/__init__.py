@@ -12,7 +12,7 @@ cluster
 umap
     UMAP embedding (thin wrapper around sc.tl.umap).
 spatial_umap
-    UMAP using a weighted blend of expression and spatial neighbourhood graphs.
+    UMAP using a weighted blend of expression and spatial neighborhood graphs.
 paga
     Partition-based graph abstraction (PAGA) trajectory inference.
 dpt
@@ -36,7 +36,7 @@ moran_local_bv
 getis_ord
     Local Getis-Ord G* hot/cold spot detection.
 spatial_lag
-    Compute spatial lag (weighted neighbour average) of expression or obs variables.
+    Compute spatial lag (weighted neighbor average) of expression or obs variables.
 spatial_silhouette
     Boundary silhouette score for spatial cluster quality.
 ripley_l
@@ -48,7 +48,7 @@ identify_micronuclei
 merge_micronuclei
     Sum expression and union boundaries of micronuclei into their primary cells.
 interaction_changed_genes
-    Genes differentially expressed in cell type A when neighbouring cell type B.
+    Genes differentially expressed in cell type A when neighboring cell type B.
 spatial_gene_modules
     Cluster genes into spatial co-expression modules.
 banksy_sweep

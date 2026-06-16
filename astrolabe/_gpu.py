@@ -54,7 +54,7 @@ def use_gpu(enabled: bool) -> None:
     Parameters
     ----------
     enabled
-        ``True`` to enable GPU routing; ``False`` to restore CPU-only behaviour.
+        ``True`` to enable GPU routing; ``False`` to restore CPU-only behavior.
 
     See Also
     --------
@@ -87,13 +87,13 @@ class gpu:
     ----------
     data
         :class:`~anndata.AnnData` or :class:`~mudata.MuData` to transfer.
-        Pass ``None`` to skip automatic data transfer and manage it manually.
+        Pass ``None`` to skip automatic data transfer and manage it manually
     auto_transfer
         When ``True`` (default) and *data* is provided, calls :func:`to_gpu`
-        on entry and :func:`to_cpu` on exit.
+        on entry and :func:`to_cpu` on exit
     modality
         For :class:`~mudata.MuData`: restrict transfer to this one modality.
-        ``None`` transfers all modalities.
+        ``None`` transfers all modalities
 
     Examples
     --------

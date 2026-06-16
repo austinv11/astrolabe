@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 def _category_codes(adata: ad.AnnData, groupby: str) -> tuple[np.ndarray, list]:
     """Return (int codes, category list) for obs[groupby] cast to Categorical."""
     if groupby not in adata.obs.columns:
-        raise KeyError(f"obs['{groupby}'] not found.")
+        raise KeyError(f"obs['{groupby}'] not found")
     labels = adata.obs[groupby].astype("category")
     return labels.cat.codes.to_numpy(), labels.cat.categories.tolist()
 
@@ -241,7 +241,7 @@ def co_occurrence(
     n_types = len(categories)
 
     if spatial_key not in adata.obsm:
-        raise KeyError(f"obsm['{spatial_key}'] not found.")
+        raise KeyError(f"obsm['{spatial_key}'] not found")
     coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)[:, :2]
 
     if isinstance(interval, tuple) and len(interval) == 3:
@@ -310,8 +310,8 @@ def centrality_scores(
 
     - **degree_centrality** — fraction of other cells the cell is connected to;
       high = spatially well-connected hub.
-    - **clustering** — fraction of a cell's neighbours that are also neighbours
-      of each other; high = tightly clustered local neighbourhood.
+    - **clustering** — fraction of a cell's neighbors that are also neighbors
+      of each other; high = tightly clustered local neighborhood.
     - **closeness_centrality** — inverse mean shortest-path to all other cells;
       high = spatially central cell.  Skipped for datasets > 5 000 cells
       because the O(n²) computation is too slow.
@@ -459,16 +459,16 @@ def expression_by_distance(
     if isinstance(anchor_groups, str):
         anchor_groups = [anchor_groups]
     if anchor_key not in adata.obs.columns:
-        raise KeyError(f"obs['{anchor_key}'] not found.")
+        raise KeyError(f"obs['{anchor_key}'] not found")
     if spatial_key not in adata.obsm:
-        raise KeyError(f"obsm['{spatial_key}'] not found.")
+        raise KeyError(f"obsm['{spatial_key}'] not found")
 
     coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)[:, :2]
     anchor_mask = adata.obs[anchor_key].isin(anchor_groups).to_numpy()
     if not anchor_mask.any():
         raise ValueError(
             f"No cells found matching anchor_groups={anchor_groups!r} "
-            f"in obs['{anchor_key}']."
+            f"in obs['{anchor_key}']"
         )
 
     # Distance to nearest anchor cell
@@ -555,7 +555,7 @@ def ligrec(
     of type B.  Cell-type labels are permuted ``n_perms`` times to produce
     a null distribution and an empirical p-value.
 
-    By restricting to actual spatial neighbours the test identifies LR
+    By restricting to actual spatial neighbors the test identifies LR
     interactions that are plausible given the spatial architecture of the
     tissue — a more stringent criterion than bulk cell-type-level analysis.
 
@@ -606,7 +606,7 @@ def ligrec(
     >>> ab.pl.ligrec_plot(mdata)
     """
     if not {"ligand", "receptor"}.issubset(lr_pairs.columns):
-        raise ValueError("lr_pairs must have 'ligand' and 'receptor' columns.")
+        raise ValueError("lr_pairs must have 'ligand' and 'receptor' columns")
 
     if gpu_enabled():
         rsc = _require_rapids()
@@ -637,7 +637,7 @@ def ligrec(
         lr_pairs["ligand"].isin(present) & lr_pairs["receptor"].isin(present)
     ].reset_index(drop=True)
     if len(valid) == 0:
-        raise ValueError("No LR pairs have both genes in adata.var_names.")
+        raise ValueError("No LR pairs have both genes in adata.var_names")
 
     n_dropped = len(lr_pairs) - len(valid)
     if n_dropped:
@@ -771,12 +771,12 @@ def composition(
     >>> df  # rows = spatial clusters, columns = cell types, values = fraction
     """
     if groupby not in adata.obs.columns:
-        raise KeyError(f"obs['{groupby}'] not found.")
+        raise KeyError(f"obs['{groupby}'] not found")
     if region_by not in adata.obs.columns:
-        raise KeyError(f"obs['{region_by}'] not found.")
+        raise KeyError(f"obs['{region_by}'] not found")
     if groupby == region_by:
         raise ValueError(
-            f"groupby and region_by must be different obs columns; both are '{groupby}'."
+            f"groupby and region_by must be different obs columns; both are '{groupby}'"
         )
 
     counts = (

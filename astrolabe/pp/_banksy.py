@@ -2,7 +2,7 @@
 BANKSY spatially-augmented feature matrix.
 
 Augments each cell's expression with a λ-weighted contribution from its
-spatial neighbourhood (M0 = neighbour mean; |M1| = azimuthal Gabor magnitude),
+spatial neighborhood (M0 = neighbor mean; |M1| = azimuthal Gabor magnitude),
 producing a concatenated feature matrix for PCA-based clustering.
 
 Reference
@@ -67,19 +67,19 @@ def banksy_matrix(
     """Build the BANKSY spatially-augmented feature matrix.
 
     Augments each cell's normalised expression with a λ-weighted contribution
-    from its spatial neighbourhood and stores the result in ``obsm``.  Feed
+    from its spatial neighborhood and stores the result in ``obsm``.  Feed
     the output into :func:`~astrolabe.tl.pca` + :func:`~astrolabe.tl.cluster`
     for spatially-coherent cell typing (low λ) or tissue-domain segmentation
     (high λ).
 
-    Two neighbourhood features are supported:
+    Two neighborhood features are supported:
 
-    **M0 — neighbourhood mean** (always included):
+    **M0 — neighborhood mean** (always included):
         ``M0ᵢ = (1/k) Σ_{j∈N(i)} xⱼ``
 
     **|M1| — azimuthal Gabor magnitude** (``agf=True``):
         ``M1ᵢ = (1/k) Σ_{j∈N(i)} xⱼ · exp(i·θᵢⱼ)``
-        where θᵢⱼ is the angle from cell i to neighbour j.  The magnitude
+        where θᵢⱼ is the angle from cell i to neighbor j.  The magnitude
         |M1| captures directional expression gradients and improves tissue
         domain segmentation in structured tissues.
 
@@ -97,11 +97,11 @@ def banksy_matrix(
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     lambda_param
         Spatial weighting factor λ ∈ [0, 1].  ``0`` = pure expression,
-        ``1`` = pure neighbourhood.  ~0.2 for cell typing, ~0.8 for spatial
+        ``1`` = pure neighborhood.  ~0.2 for cell typing, ~0.8 for spatial
         domain segmentation.
     agf
         Include the azimuthal Gabor magnitude (|M1|) as an additional
-        neighbourhood feature block.
+        neighborhood feature block.
     agf_weight
         Fraction of λ allocated to |M1| vs M0 when ``agf=True``.
         Default 0.5 splits evenly.

@@ -39,11 +39,11 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
+
 __all__ = ["read_merscope"]
 
 log = logging.getLogger(__name__)
-
-_SCHEMA_VERSION = "0.1"
 
 # Gene names with these prefixes are blank barcodes (negative controls).
 _CONTROL_PREFIXES = ("Blank-", "Blank_")
@@ -106,9 +106,9 @@ def read_merscope(
     # ------------------------------------------------------------------ #
     cbg_df = _read_csv_candidate(path, _CELLS_CANDIDATES, "cell_by_gene")
 
-    # First column is cell_id (named 'Unnamed: 0' in some versions)
+    # First column is cell_id (named 'Unnamed: 0', 'EntityID', or 'cell' depending on MERSCOPE version)
     first_col = cbg_df.columns[0]
-    if first_col == "Unnamed: 0" or first_col.lower() in ("cell_id", "entityid"):
+    if first_col == "Unnamed: 0" or first_col.lower() in ("cell_id", "entityid", "cell"):
         cbg_df = cbg_df.set_index(first_col)
     cbg_df.index = cbg_df.index.astype(str)
     cbg_df.index.name = "cell_id"
@@ -163,15 +163,15 @@ def read_merscope(
             "source_path": str(path),
         }
     }
-    adata.uns["astrolabe_schema_version"] = _SCHEMA_VERSION
+    adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 
     # ------------------------------------------------------------------ #
     # 6. Wrap in MuData                                                   #
     # ------------------------------------------------------------------ #
     mdata = md.MuData({"merscope": adata})
     mdata.uns["spatial"] = adata.uns["spatial"]
-    mdata.uns["astrolabe_schema_version"] = _SCHEMA_VERSION
-    mdata.uns["default_modality"] = "merscope"
+    mdata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
+    mdata.uns[UNS_DEFAULT_MODALITY_KEY] = "merscope"
 
     log.info("Loaded %d cells × %d genes (%d control probes)", adata.n_obs, adata.n_vars, n_ctrl)
     return mdata
@@ -196,7 +196,7 @@ def _read_csv_candidate(path: Path, candidates: list[str], label: str) -> pd.Dat
 
 def _attach_obs(adata: ad.AnnData, meta_df: pd.DataFrame) -> ad.AnnData:
     """Merge cell metadata into obs and extract obsm['spatial']."""
-    # Normalise the cell-ID column; MERSCOPE uses 'EntityID' in some versions
+    # Normalize the cell-ID column; MERSCOPE uses 'EntityID' in some versions
     # and an unnamed integer index in others.
     id_col_candidates = ["EntityID", "cell_id", "Unnamed: 0"]
     id_col = next((c for c in id_col_candidates if c in meta_df.columns), None)
@@ -223,7 +223,7 @@ def _attach_obs(adata: ad.AnnData, meta_df: pd.DataFrame) -> ad.AnnData:
 
     meta_aligned = meta_df.reindex(adata.obs_names)
 
-    # Spatial coordinates — normalise column names across MERSCOPE versions
+    # Spatial coordinates — normalize column names across MERSCOPE versions
     x_col = next((c for c in ("center_x", "x_centroid", "x", "center_x_micron") if c in meta_aligned.columns), None)
     y_col = next((c for c in ("center_y", "y_centroid", "y", "center_y_micron") if c in meta_aligned.columns), None)
 
@@ -274,7 +274,7 @@ def _attach_boundaries(adata: ad.AnnData, bnd_dir: Path, z_level: int) -> None:
     log.debug("Reading boundaries from %s", parquet_path)
     bnd_df = pd.read_parquet(parquet_path)
 
-    # Normalise entity ID column
+    # Normalize entity ID column
     id_col = next((c for c in ("EntityID", "cell_id", "entity_id") if c in bnd_df.columns), None)
     if id_col is None:
         log.warning("No entity ID column found in boundary file; skipping boundaries.")

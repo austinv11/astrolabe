@@ -117,11 +117,11 @@ def extract_if_intensities(
         the Xenium modality.
     """
     if xenium_key not in mdata.mod:
-        raise KeyError(f"Modality '{xenium_key}' not found in mdata.")
+        raise KeyError(f"Modality '{xenium_key}' not found in mdata")
     if if_key not in mdata.mod:
         raise KeyError(
-            f"Modality '{if_key}' not found in mdata.  "
-            f"Call ab.io.read_ome_tiff(..., mdata=mdata) first."
+            f"Modality '{if_key}' not found in mdata. "
+            f"Call ab.io.read_ome_tiff(..., mdata=mdata) first"
         )
 
     xen_adata: ad.AnnData = mdata[xenium_key]
@@ -129,8 +129,8 @@ def extract_if_intensities(
 
     if "cell_boundaries" not in xen_adata.obsm:
         raise ValueError(
-            "obsm['cell_boundaries'] not found in the Xenium modality.  "
-            "Re-run ab.io.read_xenium with load_boundaries=True."
+            "obsm['cell_boundaries'] not found in the Xenium modality. "
+            "Re-run ab.io.read_xenium with load_boundaries=True"
         )
 
     # ------------------------------------------------------------------ #
@@ -208,7 +208,7 @@ def _extract_intensities_from_spec(
         :class:`~astrolabe._utils.ImageSpec` for the image to sample.
     reduction
         Pixel aggregation: ``'mean'``, ``'median'``, ``'sum'``, ``'max'``,
-        or ``'min'``.
+        or ``'min'``.  Applied after ``spec.filter_chain`` (if any).
     channel_axis
         Channel axis in the raw array.  Inferred from
         ``spec.dimension_order`` when ``None``.
@@ -273,6 +273,13 @@ def _extract_intensities_from_spec(
 
             tile = _read_tile(img_arr, channel_axis, row_min, row_max + 1, col_min, col_max + 1)
 
+            if spec.filter_chain:
+                for c in range(tile.shape[0]):
+                    ch = tile[c].astype(np.float32)
+                    for filt in spec.filter_chain:
+                        ch = filt(ch)
+                    tile[c] = ch.astype(np.float64)
+
             for i in range(len(batch_boundaries)):
                 cell_idx = batch_start + i
                 verts_um = np.asarray(batch_boundaries[i])
@@ -292,7 +299,7 @@ def _extract_intensities_from_spec(
                 else:
                     result[cell_idx] = reduction_fn(tile[:, rr, cc], axis=1).astype(np.float32)
 
-            log.debug("_extract_intensities_from_spec: batch %d–%d", batch_start, batch_end)
+            log.debug("Intensity extraction batch %d–%d", batch_start, batch_end)
 
     return result
 
@@ -428,7 +435,7 @@ def _deconvolve_cell_pixels(
         ``(3,)`` float32 mean stain concentrations [H, E, residual].
     """
     eps = 1e-6
-    # Normalise to [0, 1] — handles both uint8-derived (0-255) and float (0-1) inputs
+    # Normalize to [0, 1] — handles both uint8-derived (0-255) and float (0-1) inputs
     rgb = rgb_pixels.astype(np.float64)
     if rgb.max() > 1.0:
         rgb = rgb / 255.0

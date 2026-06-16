@@ -51,13 +51,12 @@ import numpy as np
 import pandas as pd
 import tifffile
 
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
 from astrolabe._utils import ImageSpec
 
 __all__ = ["read_ome_tiff"]
 
 log = logging.getLogger(__name__)
-
-_SCHEMA_VERSION = "0.1"
 
 # Units that OME-XML reports as microns (case-insensitive match)
 _MICRON_UNITS = {"µm", "um", "micron", "microns", "micrometer", "micrometers"}
@@ -188,7 +187,7 @@ def read_ome_tiff(
                 "source_path": str(path),
             }
         },
-        "astrolabe_schema_version": _SCHEMA_VERSION,
+        UNS_SCHEMA_VERSION_KEY: SCHEMA_VERSION,
     }
 
     adata = ad.AnnData(obs=obs, var=var_df, uns=uns)
@@ -209,7 +208,7 @@ def read_ome_tiff(
         mdata.mod[mdata_key] = adata
         mdata.uns.setdefault("spatial", {}).update(uns["spatial"])
         # Only set default_modality if one wasn't already established (e.g. by read_xenium).
-        mdata.uns.setdefault("default_modality", mdata_key)
+        mdata.uns.setdefault(UNS_DEFAULT_MODALITY_KEY, mdata_key)
 
     return adata
 

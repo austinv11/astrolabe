@@ -11,6 +11,8 @@ import anndata as ad
 import mudata as md
 import numpy as np
 
+from astrolabe._constants import UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
+
 if TYPE_CHECKING:
     pass
 
@@ -68,8 +70,8 @@ _QC_EXPLICIT = frozenset({
 # uns keys that belong to other summary sections, not "Stored results"
 _UNS_SYSTEM_KEYS = frozenset({
     "spatial",                   # shown in Libraries section
-    "default_modality",          # internal routing
-    "astrolabe_schema_version",  # internal versioning
+    UNS_DEFAULT_MODALITY_KEY,    # internal routing
+    UNS_SCHEMA_VERSION_KEY,      # internal versioning
     "neighbors",                 # shown in Graph/segmentation section
     "spatial_neighbors",         # shown in Graph/segmentation section
 })
@@ -147,10 +149,10 @@ def _collect(data: ad.AnnData | md.MuData) -> dict:
                 "n_obs": adata.n_obs,
                 "n_vars": adata.n_vars,
                 "n_ctrl": n_ctrl,
-                "is_default": data.uns.get("default_modality") == key,
+                "is_default": data.uns.get(UNS_DEFAULT_MODALITY_KEY) == key,
             }
         info["modalities"] = mods
-        info["default_modality"] = data.uns.get("default_modality")
+        info["default_modality"] = data.uns.get(UNS_DEFAULT_MODALITY_KEY)
         primary_mod = info["default_modality"] or next(iter(mods))
         adata = data.mod[primary_mod]
         uns = data.uns

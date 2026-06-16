@@ -5,13 +5,14 @@ Multi-sample concatenation for astrolabe MuData objects.
 from __future__ import annotations
 
 import logging
-from typing import Any
+import warnings
 
 import anndata as ad
 import mudata as md
 import numpy as np
 import pandas as pd
 
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
 
 __all__ = ["concat_samples"]
 
@@ -36,8 +37,8 @@ def concat_samples(
 
     ``uns['spatial']`` entries are unioned across all samples so that
     per-sample image and coordinate metadata are preserved.  Awkward ragged
-    arrays in ``obsm`` (cell/nucleus boundaries) are concatenated correctly —
-    plain ``anndata.concat`` cannot handle them.
+    arrays in ``obsm`` (cell/nucleus boundaries) are concatenated via
+    anndata's built-in awkward support (experimental but verified correct).
 
     .. warning::
         Spatial coordinates from different Xenium runs are **not comparable** —
@@ -96,7 +97,7 @@ def concat_samples(
     >>> ab.pl.hstack(*panels).show()
     """
     # ------------------------------------------------------------------
-    # Normalise input → {library_id: MuData}
+    # Normalize input → {library_id: MuData}
     # ------------------------------------------------------------------
     if isinstance(mdatas, list):
         id_to_mdata: dict[str, md.MuData] = {}
@@ -137,7 +138,7 @@ def concat_samples(
     resolved_modality: str | None = None
 
     for lib_id, mdata in id_to_mdata.items():
-        mod = modality or mdata.uns.get("default_modality")
+        mod = modality or mdata.uns.get(UNS_DEFAULT_MODALITY_KEY)
         if mod is None:
             if not mdata.mod:
                 raise ValueError(
@@ -176,23 +177,9 @@ def concat_samples(
 
         # Strip uns keys that will conflict during ad.concat
         adata.uns.pop("spatial", None)
-        adata.uns.pop("astrolabe_schema_version", None)
+        adata.uns.pop(UNS_SCHEMA_VERSION_KEY, None)
 
         adatas_prepared.append(adata)
-
-    # ------------------------------------------------------------------
-    # Extract awkward arrays before ad.concat — it cannot handle them
-    # ------------------------------------------------------------------
-    ak_keys = [k for k, v in adatas_prepared[0].obsm.items() if _is_awkward(v)]
-    ak_per_key: dict[str, list] = {k: [] for k in ak_keys}
-
-    for adata in adatas_prepared:
-        for k in ak_keys:
-            if k in adata.obsm:
-                ak_per_key[k].append(adata.obsm[k])
-                del adata.obsm[k]
-            else:
-                ak_per_key[k].append(None)
 
     # ------------------------------------------------------------------
     # Warn if gene sets differ
@@ -210,43 +197,31 @@ def concat_samples(
         )
 
     # ------------------------------------------------------------------
-    # Concatenate with anndata
+    # Concatenate with anndata (handles awkward obsm arrays natively)
     # ------------------------------------------------------------------
-    concat_adata = ad.concat(
-        adatas_prepared,
-        axis=0,
-        join=join,
-        uns_merge="unique",
-        fill_value=0,
-    )
-
-    # ------------------------------------------------------------------
-    # Re-attach awkward arrays
-    # ------------------------------------------------------------------
-    if ak_keys:
-        try:
-            import awkward as ak
-
-            for k, arrays in ak_per_key.items():
-                valid = [a for a in arrays if a is not None and len(a) > 0]
-                if valid:
-                    concat_adata.obsm[k] = ak.concatenate(valid)
-        except ImportError:
-            log.warning("awkward not available; boundary arrays were dropped.")
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ad.ExperimentalFeatureWarning)
+        concat_adata = ad.concat(
+            adatas_prepared,
+            axis=0,
+            join=join,
+            uns_merge="unique",
+            fill_value=0,
+        )
 
     # ------------------------------------------------------------------
     # Restore uns
     # ------------------------------------------------------------------
     concat_adata.uns["spatial"] = spatial_uns_merged
-    concat_adata.uns["astrolabe_schema_version"] = "0.1"
+    concat_adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 
     # ------------------------------------------------------------------
     # Wrap in MuData
     # ------------------------------------------------------------------
     mdata_out = md.MuData({resolved_modality: concat_adata})
     mdata_out.uns["spatial"] = spatial_uns_merged
-    mdata_out.uns["default_modality"] = resolved_modality
-    mdata_out.uns["astrolabe_schema_version"] = "0.1"
+    mdata_out.uns[UNS_DEFAULT_MODALITY_KEY] = resolved_modality
+    mdata_out.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 
     lib_ids = list(id_to_mdata.keys())
     log.info(
@@ -258,11 +233,3 @@ def concat_samples(
     )
 
     return mdata_out
-
-
-def _is_awkward(obj: Any) -> bool:
-    try:
-        import awkward as ak
-        return isinstance(obj, ak.Array)
-    except ImportError:
-        return False

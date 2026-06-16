@@ -355,7 +355,7 @@ class NapariSession:
                 return layer
         suffix = "" if layer_name is None else f" named {layer_name!r}"
         raise KeyError(
-            f"No Shapes layer{suffix} found. Draw shapes in napari first."
+            f"No Shapes layer{suffix} found. Draw shapes in napari first"
         )
 
     def annotations(self, layer_name: str | None = None) -> list[np.ndarray]:
@@ -405,7 +405,7 @@ class NapariSession:
         polys_xy = self.annotations(layer_name)
 
         if not polys_xy:
-            raise ValueError("Shapes layer contains no polygons.")
+            raise ValueError("Shapes layer contains no polygons")
 
         base_name = layer.name
         shape_names = [f"{base_name}_{i}" for i in range(len(polys_xy))]
@@ -437,7 +437,7 @@ class NapariSession:
         for layer in self._viewer.layers:
             if layer.name == layer_name or layer.name.startswith(layer_name):
                 return layer
-        raise KeyError(f"No napari layer found matching {layer_name!r}.")
+        raise KeyError(f"No napari layer found matching {layer_name!r}")
 
     def get_affine(self, layer_name: str) -> np.ndarray:
         """Read the current napari affine of an Image layer in astrolabe convention.
@@ -547,10 +547,10 @@ def view_napari(
     library_id
         Library identifier filter; defaults to including all libraries.
     color
-        Gene name or obs column to colour the Points layer.
+        Gene name or obs column to color the Points layer.
     boundaries
         If ``True``, add cell boundaries as a Shapes layer.  If a string, use
-        that obs/gene column for per-boundary colour.
+        that obs/gene column for per-boundary color.
     nucleus_boundaries
         If ``True``, add nucleus boundaries as a Shapes layer.
     ndisplay

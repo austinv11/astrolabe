@@ -52,14 +52,14 @@ def calculate_qc_metrics(
         Modality key when *data* is a MuData.
     qc_vars
         ``var`` column names that flag feature subsets (e.g. control probes).
-        A ``pct_counts_<name>`` column is added to ``obs`` for each.
+        A ``pct_counts_<name>`` column is added to ``obs`` for each
     percent_top
         Compute cumulative fractions for these top-N gene counts.
-        ``None`` to skip.
+        ``None`` to skip
     log1p
-        Whether to add ``log1p``-transformed counts alongside raw counts.
+        Whether to add ``log1p``-transformed counts alongside raw counts
     inplace
-        Modify *data* in place (default) or return ``(obs_df, var_df)``.
+        Modify *data* in place (default) or return ``(obs_df, var_df)``
 
     Returns
     -------
@@ -189,9 +189,9 @@ def calculate_xenium_qc_metrics(
     modality
         If a MuData is passed, the modality containing the Xenium data. Ignored if an AnnData is passed.
     qv_col
-        Column in *transcripts* containing per-transcript quality values.
+        Column in *transcripts* containing per-transcript quality values
     gene_col
-        Column in *transcripts* containing gene/feature names.
+        Column in *transcripts* containing gene/feature names
     remove_controls
         When ``True`` (the default), remove all features that are not gene expression after computing summary stats.
     inplace
@@ -207,7 +207,7 @@ def calculate_xenium_qc_metrics(
     if "feature_type" not in adata.var.columns:
         raise KeyError(
             "var['feature_type'] not found — calculate_xenium_qc_metrics requires "
-            "Xenium data loaded via ab.io.read_xenium()."
+            "Xenium data loaded via ab.io.read_xenium()"
         )
 
     unassigned_mask = adata.var['feature_type'] == 'Unassigned Codeword'
@@ -220,7 +220,7 @@ def calculate_xenium_qc_metrics(
     if any_negative_control_mask.sum() < 1:
         raise ValueError(
             "No control probes found in var['feature_type']; cannot compute Xenium QC metrics. "
-            "Ensure the data includes control probe features from read_xenium()."
+            "Ensure the data includes control probe features from read_xenium()"
         )
 
     def _row_sum(x) -> np.ndarray:
@@ -348,7 +348,7 @@ def flag_controls(
     n_provided = sum(x is not None for x in [names, var_col, pattern])
     if n_provided != 1:
         raise ValueError(
-            "Exactly one of names=, var_col=, or pattern= must be provided."
+            "Exactly one of names=, var_col=, or pattern= must be provided"
         )
 
     if names is not None:
@@ -357,7 +357,7 @@ def flag_controls(
     elif var_col is not None:
         if var_col not in adata.var.columns:
             raise KeyError(
-                f"var['{var_col}'] not found.  "
+                f"var['{var_col}'] not found. "
                 f"Available columns: {list(adata.var.columns)}"
             )
         ctrl_mask = adata.var[var_col].to_numpy(dtype=bool)
@@ -439,8 +439,8 @@ def filter_cells(
         nonlocal mask
         if col not in adata.obs.columns:
             raise KeyError(
-                f"obs['{col}'] not found.  "
-                "Run pp.calculate_qc_metrics / pp.flag_controls first."
+                f"obs['{col}'] not found. "
+                "Run pp.calculate_qc_metrics / pp.flag_controls first"
             )
         values = adata.obs[col].to_numpy(dtype=np.float64)
         if lo is not None:
@@ -509,12 +509,12 @@ def filter_genes(
 
     if min_counts is not None:
         if "total_counts" not in adata.var.columns:
-            raise KeyError("var['total_counts'] not found. Run pp.calculate_qc_metrics first.")
+            raise KeyError("var['total_counts'] not found. Run pp.calculate_qc_metrics first")
         mask &= adata.var["total_counts"].to_numpy(dtype=np.float64) >= min_counts
 
     if min_cells is not None:
         if "n_cells_by_counts" not in adata.var.columns:
-            raise KeyError("var['n_cells_by_counts'] not found. Run pp.calculate_qc_metrics first.")
+            raise KeyError("var['n_cells_by_counts'] not found. Run pp.calculate_qc_metrics first")
         mask &= adata.var["n_cells_by_counts"].to_numpy(dtype=np.int32) >= min_cells
 
     if exclude_controls:
@@ -528,7 +528,7 @@ def filter_genes(
             raise KeyError(
             "var['feature_type'] not found. "
             "Populate it with feature-type labels (e.g. 'Gene Expression', control probe types) "
-            "before calling filter_genes with keep_feature_types."
+            "before calling filter_genes with keep_feature_types"
         )
         mask &= adata.var["feature_type"].isin(keep_feature_types).to_numpy()
 
@@ -553,16 +553,16 @@ def filter_isolated(
 ) -> ad.AnnData | tuple[ad.AnnData, np.ndarray] | None:
     """Remove spatially isolated cells using a pre-computed kNN distance graph.
 
-    Reads per-cell neighbour distances from
+    Reads per-cell neighbor distances from
     ``obsp[neighbors_key + '_distances']`` (written by
     :func:`~astrolabe.tl.spatial_neighbors`) and removes cells that fail
     either criterion:
 
-    - **nearest-neighbour distance** ``> min_neighbor_dist_um`` — the cell's
-      closest neighbour is farther than this threshold, indicating a truly
+    - **nearest-neighbor distance** ``> min_neighbor_dist_um`` — the cell's
+      closest neighbor is farther than this threshold, indicating a truly
       isolated cell.
-    - **maximum-neighbour distance** ``> max_neighbor_dist_um`` — the
-      farthest stored neighbour exceeds this threshold, indicating the cell
+    - **maximum-neighbor distance** ``> max_neighbor_dist_um`` — the
+      farthest stored neighbor exceeds this threshold, indicating the cell
       sits in a very sparse region.
 
     Both thresholds can be independently disabled by passing ``None``.
@@ -580,10 +580,10 @@ def filter_isolated(
         :func:`~astrolabe.tl.spatial_neighbors`.  The full key used is
         ``neighbors_key + '_distances'``.
     max_neighbor_dist_um
-        Retain cells whose farthest stored neighbour is within this distance
+        Retain cells whose farthest stored neighbor is within this distance
         (µm).  ``None`` disables this check.
     min_neighbor_dist_um
-        Retain cells whose nearest neighbour is within this distance (µm).
+        Retain cells whose nearest neighbor is within this distance (µm).
         ``None`` disables this check.
     inplace
         If ``False`` (default), return ``(filtered_adata, bool_mask)``.
@@ -603,7 +603,7 @@ def filter_isolated(
     if dist_key not in adata.obsp:
         raise KeyError(
             f"obsp['{dist_key}'] not found. "
-            f"Run ab.tl.spatial_neighbors(data) before ab.pp.filter_isolated()."
+            f"Run ab.tl.spatial_neighbors(data) before ab.pp.filter_isolated()"
         )
 
     if max_neighbor_dist_um is None and min_neighbor_dist_um is None:
@@ -689,7 +689,7 @@ def calculate_shape_metrics(
     from shapely.geometry import Polygon
 
     if boundaries_key not in adata.obsm:
-        raise KeyError(f"obsm['{boundaries_key}'] not found.")
+        raise KeyError(f"obsm['{boundaries_key}'] not found")
 
     if prefix is None:
         if boundaries_key == "cell_boundaries":
@@ -785,7 +785,7 @@ def calculate_transcript_assignment_qc(
         if "transcripts" not in adata.uns:
             raise ValueError(
                 "No transcript table found in adata.uns['transcripts']. "
-                "Call ab.io.read_xenium_transcripts(mdata) first, or pass transcripts=."
+                "Call ab.io.read_xenium_transcripts(mdata) first, or pass transcripts="
             )
         transcripts = adata.uns["transcripts"]
 

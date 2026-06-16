@@ -80,7 +80,7 @@ def voronoi_resegment(
     from shapely.geometry import Point
 
     if spatial_key not in adata.obsm:
-        raise KeyError(f"obsm['{spatial_key}'] not found.")
+        raise KeyError(f"obsm['{spatial_key}'] not found")
 
     if not inplace:
         adata = adata.copy()

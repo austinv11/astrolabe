@@ -1,8 +1,8 @@
 """
 Interaction Changed Genes (ICGs).
 
-For every ordered cell-type pair (receiver A, neighbour B), split A-cells
-into "contacted" (≥1 spatial neighbour of type B) vs "non-contacted" and
+For every ordered cell-type pair (receiver A, neighbor B), split A-cells
+into "contacted" (≥1 spatial neighbor of type B) vs "non-contacted" and
 run a two-group DE test across all genes simultaneously.
 """
 from __future__ import annotations
@@ -93,10 +93,10 @@ def interaction_changed_genes(
     min_cells: int = 10,
     key_added: str = "icg",
 ) -> pd.DataFrame:
-    """Test for genes whose expression in cell type A changes when neighbouring cell type B.
+    """Test for genes whose expression in cell type A changes when neighboring cell type B.
 
-    For every ordered pair (receiver A, neighbour B), cells of type A are
-    split into "contacted" (≥1 spatial neighbour of type B) and
+    For every ordered pair (receiver A, neighbor B), cells of type A are
+    split into "contacted" (≥1 spatial neighbor of type B) and
     "non-contacted" groups; a two-group DE test is run across all genes at
     once.  Results are stored in ``adata.uns[key_added]`` and returned.
 
@@ -138,10 +138,10 @@ def interaction_changed_genes(
     conn_key = neighbors_key + "_connectivities"
     if conn_key not in adata.obsp:
         raise KeyError(
-            f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors first."
+            f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors first"
         )
     if groupby not in adata.obs:
-        raise KeyError(f"obs['{groupby}'] not found.")
+        raise KeyError(f"obs['{groupby}'] not found")
 
     conn = adata.obsp[conn_key]
     labels = np.asarray(adata.obs[groupby])

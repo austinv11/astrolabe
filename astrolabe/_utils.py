@@ -13,6 +13,8 @@ import anndata as ad
 import mudata as md
 import numpy as np
 
+from astrolabe._constants import UNS_DEFAULT_MODALITY_KEY
+
 __all__: list[str] = ["with_adata", "ImageSpec", "ImageFilter"]
 
 _F = TypeVar("_F", bound=Callable)
@@ -78,7 +80,7 @@ class ImageSpec:
     filter_chain: list = field(default_factory=list)
     """Sequence of :class:`ImageFilter` callables appended by
     :func:`~astrolabe.pp.add_image_filter`.  Applied per-channel in order
-    after pixel data is loaded from disk and before normalisation."""
+    after pixel data is loaded from disk and before normalization."""
 
     stain_matrix: np.ndarray | None = None
     """Optional ``(3, 3)`` float64 deconvolution matrix for H&E images.
@@ -218,9 +220,9 @@ def _resolve_adata(
     if isinstance(data, ad.AnnData):
         return data
     if not isinstance(data, md.MuData):
-        raise TypeError(f"Expected AnnData or MuData, got {type(data).__name__!r}.")
+        raise TypeError(f"Expected AnnData or MuData, got {type(data).__name__!r}")
 
-    key = modality or data.uns.get("default_modality")
+    key = modality or data.uns.get(UNS_DEFAULT_MODALITY_KEY)
     if key is None:
         raise ValueError(
             "Cannot infer modality from MuData: uns['default_modality'] is not set "

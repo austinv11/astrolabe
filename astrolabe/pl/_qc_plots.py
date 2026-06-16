@@ -28,6 +28,7 @@ __all__ = [
     "paga_plot",
     "ripley_plot",
     "gene_qv_scatter",
+    "gene_detection_scatter",
     "mean_variance_plot",
     "cell_area_histogram",
     "nucleus_area_histogram",
@@ -43,7 +44,7 @@ __all__ = [
     "ligrec_plot",
 ]
 
-# Default colours for known feature types (controls visually distinct from Gene Expression).
+# Default colors for known feature types (controls visually distinct from Gene Expression).
 _FEATURE_TYPE_PALETTE: dict[str, str] = {
     "Gene Expression": "#AAAAAA",
     "Negative Control Probe": "#D94F3D",
@@ -82,10 +83,10 @@ def violin(
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     keys
-        Gene names or ``obs`` column names to plot.
+        Gene names or ``obs`` column names to plot
     groupby
         ``obs`` column to group by (e.g. ``'leiden'``).  ``None`` plots
-        the full dataset as a single violin.
+        the full dataset as a single violin
     log
         Log-transform the y-axis.
     use_raw
@@ -124,13 +125,7 @@ def violin(
         ax=ax,
         **kwargs,
     )
-    if isinstance(result, matplotlib.figure.Figure):
-        fig = result
-    elif isinstance(result, matplotlib.axes.Axes):
-        fig = result.get_figure()
-    else:
-        fig = plt.gcf()
-    return FigurePanel(fig)
+    return FigurePanel.from_obj(result)
 
 
 @with_adata
@@ -148,7 +143,7 @@ def dotplot(
 ) -> FigurePanel:
     """Dot plot of gene expression across cluster groups.
 
-    Dot size encodes the fraction of cells expressing each gene; colour
+    Dot size encodes the fraction of cells expressing each gene; color
     encodes mean expression.  Returns a :class:`~astrolabe.pl.FigurePanel`
     so the result can be composed with spatial panels using ``|`` and ``/``.
 
@@ -210,19 +205,7 @@ def dotplot(
         **kwargs,
     )
 
-    # scanpy returns a DotPlot object; extract the underlying matplotlib Figure.
-    # DotPlot.get_axes() returns an axes dict after figure creation; we grab
-    # the figure from any available axes, with plt.gcf() as a safe fallback.
-    if isinstance(dp, matplotlib.figure.Figure):
-        fig = dp
-    else:
-        axes_dict = dp.get_axes() if hasattr(dp, "get_axes") else {}
-        if axes_dict:
-            fig = next(iter(axes_dict.values())).get_figure()
-        else:
-            fig = plt.gcf()
-
-    return FigurePanel(fig)
+    return FigurePanel.from_obj(dp)
 
 
 @with_adata
@@ -309,16 +292,7 @@ def heatmap(
         **kwargs,
     )
 
-    if isinstance(hp, matplotlib.figure.Figure):
-        fig = hp
-    else:
-        axes_dict = hp.get_axes() if hasattr(hp, "get_axes") else {}
-        if axes_dict:
-            fig = next(iter(axes_dict.values())).get_figure()
-        else:
-            fig = plt.gcf()
-
-    return FigurePanel(fig)
+    return FigurePanel.from_obj(hp)
 
 
 @with_adata
@@ -340,7 +314,7 @@ def embedding_scatter(
 
     Wraps :func:`scanpy.pl.embedding` and returns a composable
     :class:`~astrolabe.pl.FigurePanel`.  When multiple ``color`` values are
-    requested, scanpy draws one sub-panel per colour.
+    requested, scanpy draws one sub-panel per color.
 
     Parameters
     ----------
@@ -351,14 +325,14 @@ def embedding_scatter(
         ``'X_pca'``, ``'X_spatial_umap'``).  The ``'X_'`` prefix is stripped
         when passing to scanpy's ``basis`` argument.
     color
-        One or more ``obs`` column names or gene names to colour cells by.
-        ``None`` draws all cells in a single grey colour.
+        One or more ``obs`` column names or gene names to color cells by.
+        ``None`` draws all cells in a single grey color.
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
     title
-        Axes title(s).  ``None`` defaults to the colour key.
+        Axes title(s).  ``None`` defaults to the color key.
     palette
-        Colour palette for categorical colours.
+        Color palette for categorical colors.
     size
         Scatter marker size.
     alpha
@@ -402,17 +376,7 @@ def embedding_scatter(
         **kwargs,
     )
 
-    if ax is not None:
-        fig = ax.get_figure()
-    elif isinstance(result, matplotlib.figure.Figure):
-        fig = result
-    elif isinstance(result, matplotlib.axes.Axes):
-        fig = result.get_figure()
-    elif isinstance(result, list) and result:
-        fig = result[0].get_figure()
-    else:
-        fig = plt.gcf()
-
+    fig = ax.get_figure() if ax is not None else FigurePanel.from_obj(result).figure
     plt.close(fig)
     return FigurePanel(fig)
 
@@ -470,7 +434,7 @@ def volcano_plot(
     point_size, alpha
         Scatter marker parameters.
     up_color, down_color, ns_color
-        Colours for up-regulated, down-regulated, and non-significant genes.
+        Colors for up-regulated, down-regulated, and non-significant genes.
     title
         Axes title.
     ax
@@ -490,7 +454,7 @@ def volcano_plot(
     """
     if key not in adata.uns:
         raise KeyError(
-            f"uns['{key}'] not found. Run ab.tl.rank_genes_groups() first."
+            f"uns['{key}'] not found. Run ab.tl.rank_genes_groups() first"
         )
 
     rgg = adata.uns[key]
@@ -502,7 +466,7 @@ def volcano_plot(
         else:
             raise ValueError(
                 f"Multiple groups in uns['{key}']: {groups_stored}. "
-                "Specify group= explicitly."
+                "Specify group= explicitly"
             )
     if group not in groups_stored:
         raise KeyError(
@@ -517,7 +481,7 @@ def volcano_plot(
     pvals_raw = np.clip(pvals_raw, 1e-300, 1.0)
     neg_log_p = -np.log10(pvals_raw)
 
-    # Categorise points
+    # Categorize points
     sig_up   = (pvals_raw < pval_threshold) & (lfc >  lfc_threshold)
     sig_down = (pvals_raw < pval_threshold) & (lfc < -lfc_threshold)
     colors = np.where(sig_up, up_color, np.where(sig_down, down_color, ns_color))
@@ -528,7 +492,7 @@ def volcano_plot(
     else:
         fig = ax.get_figure()
 
-    # Non-significant first (background), then coloured points on top
+    # Non-significant first (background), then colored points on top
     for mask, c in [(~(sig_up | sig_down), ns_color), (sig_up, up_color), (sig_down, down_color)]:
         if mask.any():
             ax.scatter(
@@ -599,7 +563,7 @@ def paga_plot(
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
     color
-        ``obs`` column or gene name used to colour cluster nodes.
+        ``obs`` column or gene name used to color cluster nodes.
         ``None`` uses the groupby column from the PAGA run.
     threshold
         Minimum edge weight to draw.
@@ -643,6 +607,7 @@ def ripley_plot(
     *,
     key: str = "ripley_l",
     cell_types: "list[str] | None" = None,
+    cmap: str = "tab10",
     title: "str | None" = None,
     ax: "matplotlib.axes.Axes | None" = None,
     figsize: "tuple[float, float]" = (6, 4),
@@ -663,6 +628,8 @@ def ripley_plot(
         ``uns`` key written by :func:`~astrolabe.tl.ripley_l`.
     cell_types
         Cell types to plot.  ``None`` plots all available.
+    cmap
+        Colormap name or instance used to cycle line colors.  Default ``"tab10"``.
     title
         Axes title.
     ax
@@ -681,7 +648,7 @@ def ripley_plot(
     >>> ab.pl.ripley_plot(mdata).show()
     """
     if key not in adata.uns:
-        raise KeyError(f"uns['{key}'] not found. Run ab.tl.ripley_l() first.")
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.ripley_l() first")
 
     result = adata.uns[key]
     # result is a dict keyed by cell-type string, each value has 'bins' and 'stats'
@@ -694,7 +661,7 @@ def ripley_plot(
     else:
         fig = ax.get_figure()
 
-    cmap = plt.get_cmap("tab10")
+    cmap_obj = plt.get_cmap(cmap)
     for i, ct in enumerate(cell_types):
         if ct not in result:
             continue
@@ -709,7 +676,7 @@ def ripley_plot(
             l_vals = np.asarray(stats, dtype=float)
 
         l_d = l_vals - bins[:len(l_vals)]
-        ax.plot(bins[:len(l_d)], l_d, label=ct, color=cmap(i % 10))
+        ax.plot(bins[:len(l_d)], l_d, label=ct, color=cmap_obj(i % 10))
 
     ax.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
     ax.set_xlabel("Distance d (µm)", fontsize=9)
@@ -778,7 +745,7 @@ def gene_qv_scatter(
         If *transcripts* is ``None``, read mean Q-score from this ``var``
         column instead.
     palette
-        Mapping of feature-type label → matplotlib colour string.  Overrides
+        Mapping of feature-type label → matplotlib color string.  Overrides
         the built-in Xenium-matched palette for any keys supplied.
     size
         Marker size in points².
@@ -809,12 +776,12 @@ def gene_qv_scatter(
     if total_counts_key not in adata.var.columns:
         raise KeyError(
             f"var['{total_counts_key}'] not found. "
-            "Run ab.pp.calculate_qc_metrics(data) first."
+            "Run ab.pp.calculate_qc_metrics(data) first"
         )
     if feature_type_key not in adata.var.columns:
         raise KeyError(
             f"var['{feature_type_key}'] not found. "
-            "Ensure var contains feature-type labels before calling gene_qv_scatter."
+            "Ensure var contains feature-type labels before calling gene_qv_scatter"
         )
 
     # --- compute mean QV per gene ---
@@ -835,7 +802,7 @@ def gene_qv_scatter(
         if not isinstance(transcripts, pd.DataFrame):
             raise TypeError(
                 f"transcripts must be a pyarrow.Table or pandas.DataFrame, "
-                f"got {type(transcripts).__name__!r}."
+                f"got {type(transcripts).__name__!r}"
             )
         mean_qv_series = transcripts.groupby(gene_col)[qv_col].mean()
         mean_qv = adata.var_names.map(mean_qv_series).to_numpy(dtype=np.float64)
@@ -843,14 +810,14 @@ def gene_qv_scatter(
         if mean_qv_key not in adata.var.columns:
             raise KeyError(
                 f"var['{mean_qv_key}'] not found. "
-                "Either pass transcripts= or pre-compute the column."
+                "Either pass transcripts= or pre-compute the column"
             )
         mean_qv = adata.var[mean_qv_key].to_numpy(dtype=np.float64)
     else:
         raise ValueError(
             "No Q-score source found. Either: run ab.io.read_xenium_transcripts(mdata) "
             "so the table is available in uns['transcripts'], pass transcripts= explicitly, "
-            "or supply mean_qv_key= if the column is pre-computed in var."
+            "or supply mean_qv_key= if the column is pre-computed in var"
         )
 
     counts = adata.var[total_counts_key].to_numpy(dtype=np.float64) + 1
@@ -873,7 +840,7 @@ def gene_qv_scatter(
     effective_palette = {**_FEATURE_TYPE_PALETTE, **(palette or {})}
     unique_types = sorted(set(feature_types))
 
-    # Assign a colour to any feature type not in the palette
+    # Assign a color to any feature type not in the palette
     fallback_cmap = plt.get_cmap("tab10")
     known = set(effective_palette)
     extra = [ft for ft in unique_types if ft not in known]
@@ -907,6 +874,181 @@ def gene_qv_scatter(
     ax.set_xscale("log")
     ax.set_xlabel("total transcripts + 1")
     ax.set_ylabel("Mean calibrated Q-score")
+    ax.set_title(title)
+
+    legend_handles = [
+        mpatches.Patch(color=effective_palette.get(ft, "#888888"), label=ft)
+        for ft in unique_types
+    ]
+    ax.legend(
+        handles=legend_handles,
+        bbox_to_anchor=(1.01, 1),
+        loc="upper left",
+        frameon=False,
+        fontsize=8,
+    )
+
+    if own_fig:
+        fig.tight_layout()
+        plt.close(fig)
+    return FigurePanel(fig)
+
+
+
+# ---------------------------------------------------------------------------
+# Gene detection rate scatter
+# ---------------------------------------------------------------------------
+
+
+@with_adata
+def gene_detection_scatter(
+    adata: ad.AnnData,
+    *,
+    feature_type_key: str = "feature_type",
+    control_key: str = "is_control",
+    total_counts_key: str = "total_counts",
+    pct_dropout_key: str = "pct_dropout",
+    palette: dict[str, str] | None = None,
+    size: float = 10.0,
+    alpha: float = 0.7,
+    title: str = "Gene detection rate vs. transcript abundance",
+    ax: matplotlib.axes.Axes | None = None,
+    figsize: tuple[float, float] = (7, 5),
+    **scatter_kwargs: Any,
+) -> FigurePanel:
+    """Scatter plot of gene detection rate vs. log-scaled total transcripts per gene.
+
+    Platform-agnostic analog of :func:`gene_qv_scatter`.  Each point is a gene
+    (or control probe).  Negative / blank controls should cluster at the
+    bottom-left (low counts, low detection rate), well separated from true
+    genes which typically show higher detection rates at a given abundance.
+
+    Requires :func:`~astrolabe.pp.calculate_qc_metrics` to have been called
+    first (provides ``var['total_counts']`` and ``var['pct_dropout']``).
+
+    Works on all platforms:
+
+    - **Xenium** — colored by ``var['feature_type']`` (full control-type palette)
+    - **CosMx / MERSCOPE** — colored by ``var['is_control_probe']`` (boolean)
+
+    Parameters
+    ----------
+    data
+        :class:`anndata.AnnData` or :class:`~mudata.MuData`.  Must have
+        ``var['total_counts']`` and ``var['pct_dropout']`` from
+        :func:`~astrolabe.pp.calculate_qc_metrics`.
+    modality
+        Modality key when *data* is a :class:`~mudata.MuData`.
+    feature_type_key
+        Column in ``var`` containing feature-type labels (Xenium).  If absent,
+        falls back to *control_key* or ``'is_control_probe'``.
+    control_key
+        Boolean ``var`` column used when *feature_type_key* is absent.
+        Falls back to ``'is_control_probe'`` if this column is also absent.
+    total_counts_key
+        Column in ``var`` containing total transcript counts.  X-axis (log).
+    pct_dropout_key
+        Column in ``var`` containing the percentage of cells with zero counts.
+        Detection rate = ``1 - pct_dropout / 100``.
+    palette
+        Mapping of feature-type label → matplotlib color.  Overrides the
+        built-in palette for any keys supplied.
+    size
+        Marker size in points².
+    alpha
+        Marker opacity.
+    title
+        Axes title.
+    ax
+        Existing :class:`~matplotlib.axes.Axes` to draw into.  A new figure
+        is created when ``None``.
+    figsize
+        ``(width, height)`` in inches, used only when *ax* is ``None``.
+    **scatter_kwargs
+        Extra keyword arguments forwarded to ``ax.scatter``.
+
+    Returns
+    -------
+    FigurePanel
+
+    Examples
+    --------
+    >>> ab.pp.calculate_qc_metrics(mdata)
+    >>> ab.pl.gene_detection_scatter(mdata)            # CosMx / MERSCOPE / Xenium
+
+    >>> ab.pl.gene_detection_scatter(mdata, palette={"Control Probe": "blue"})
+    """
+    for key in (total_counts_key, pct_dropout_key):
+        if key not in adata.var.columns:
+            raise KeyError(
+                f"var['{key}'] not found. "
+                "Run ab.pp.calculate_qc_metrics(data) first."
+            )
+
+    counts = adata.var[total_counts_key].to_numpy(dtype=np.float64) + 1
+    detection_rate = 1.0 - adata.var[pct_dropout_key].to_numpy(dtype=np.float64) / 100.0
+
+    # --- resolve feature labels ---
+    if feature_type_key in adata.var.columns:
+        feature_types = adata.var[feature_type_key].astype(str).to_numpy()
+        effective_palette = {**_FEATURE_TYPE_PALETTE, **(palette or {})}
+
+        # Restore stashed controls (Xenium: after calculate_xenium_qc_metrics + filter_genes)
+        ctrl_stash = adata.uns.get("control_probe_summary", {})
+        if ctrl_stash and "total_counts" in ctrl_stash:
+            ctrl_counts = np.array(ctrl_stash["total_counts"], dtype=np.float64) + 1
+            ctrl_types = np.array(ctrl_stash["feature_type"])
+            ctrl_detection = np.full(len(ctrl_counts), np.nan)
+            counts = np.concatenate([counts, ctrl_counts])
+            detection_rate = np.concatenate([detection_rate, ctrl_detection])
+            feature_types = np.concatenate([feature_types, ctrl_types])
+    else:
+        _ctrl_col = control_key if control_key in adata.var.columns else "is_control_probe"
+        if _ctrl_col in adata.var.columns:
+            is_ctrl = adata.var[_ctrl_col].astype(bool).to_numpy()
+            feature_types = np.where(is_ctrl, "Control Probe", "Gene Expression")
+        else:
+            feature_types = np.full(len(counts), "Gene Expression")
+        effective_palette = {
+            "Gene Expression": "#AAAAAA",
+            "Control Probe": "#D94F3D",
+            **(palette or {}),
+        }
+
+    # Assign fallback colors for any unlisted types
+    unique_types = sorted(set(feature_types))
+    fallback_cmap = plt.get_cmap("tab10")
+    known = set(effective_palette)
+    for i, ft in enumerate(ft for ft in unique_types if ft not in known):
+        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 10))
+
+    # --- plot ---
+    own_fig = ax is None
+    if own_fig:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
+    for ft in draw_order:
+        mask = feature_types == ft
+        if not mask.any():
+            continue
+        ax.scatter(
+            counts[mask],
+            detection_rate[mask],
+            c=effective_palette.get(ft, "#888888"),
+            s=size,
+            alpha=alpha,
+            label=ft,
+            rasterized=mask.sum() > 5_000,
+            **scatter_kwargs,
+        )
+
+    ax.set_xscale("log")
+    ax.set_xlabel("total transcripts + 1")
+    ax.set_ylabel("Detection rate (fraction of cells)")
+    ax.set_ylim(-0.05, 1.05)
     ax.set_title(title)
 
     legend_handles = [
@@ -968,13 +1110,13 @@ def mean_variance_plot(
         Modality key when *data* is a :class:`~mudata.MuData`.
     feature_type_key
         ``var`` column containing feature-type labels (e.g. ``'feature_type'``
-        from :func:`~astrolabe.io.read_xenium`).  Used to colour points by
+        from :func:`~astrolabe.io.read_xenium`).  Used to color points by
         probe type.  Falls back to *control_key* when absent.
     control_key
         ``var`` boolean column set by :func:`~astrolabe.pp.flag_controls`
         (``'is_control'``).  Used when *feature_type_key* is not present.
     palette
-        Colour overrides for feature-type labels.  Merged with the built-in
+        Color overrides for feature-type labels.  Merged with the built-in
         Xenium palette.
     size
         Marker size in points².
@@ -1116,7 +1258,7 @@ def _obs_histogram(
     """Shared implementation for per-cell obs-column histograms."""
     if key not in adata.obs.columns:
         raise KeyError(
-            f"obs['{key}'] not found. Run ab.pp.calculate_qc_metrics(data) first."
+            f"obs['{key}'] not found. Run ab.pp.calculate_qc_metrics(data) first"
         )
     values = adata.obs[key].to_numpy(dtype=np.float64)
 
@@ -1177,7 +1319,7 @@ def cell_area_histogram(
     bins
         Number of histogram bins or an explicit bin-edge array.
     color
-        Bar colour.
+        Bar color.
     title
         Axes title.
     vlines
@@ -1225,7 +1367,7 @@ def nucleus_area_histogram(
     bins
         Number of histogram bins or an explicit bin-edge array.
     color
-        Bar colour.
+        Bar color.
     title
         Axes title.
     vlines
@@ -1274,7 +1416,7 @@ def genes_per_cell_histogram(
     bins
         Number of histogram bins or an explicit bin-edge array.
     color
-        Bar colour.
+        Bar color.
     title
         Axes title.
     vlines
@@ -1329,7 +1471,7 @@ def transcripts_per_cell_histogram(
     log
         Use a log x-axis with log-spaced bins (default ``True``).
     color
-        Bar colour.
+        Bar color.
     title
         Axes title.
     vlines
@@ -1364,7 +1506,7 @@ def _resolve_channel(adata: ad.AnnData, channel: int | str) -> tuple[np.ndarray,
     if isinstance(channel, str):
         if channel not in adata.var_names:
             raise KeyError(
-                f"Channel '{channel}' not found in var_names.  "
+                f"Channel '{channel}' not found in var_names. "
                 f"Available: {list(adata.var_names)}"
             )
         idx = adata.var_names.get_loc(channel)
@@ -1411,7 +1553,7 @@ def intensity_histogram(
     bins
         Number of histogram bins.
     color
-        Bar colour.
+        Bar color.
     otsu
         If ``True``, compute an Otsu threshold on the intensity values and
         overlay it as a vertical dashed line.  Useful for identifying a
@@ -1419,7 +1561,7 @@ def intensity_histogram(
     vlines
         Additional vertical reference lines (e.g. manual gates).
     vline_color
-        Colour for Otsu and *vlines* reference lines.
+        Color for Otsu and *vlines* reference lines.
     log
         Use a log x-axis.
     title
@@ -1636,7 +1778,7 @@ def scatter_gate(
 
     Designed for use with the ``'morphology'`` or ``'if'`` modality whose
     ``X`` matrix contains per-cell intensities.  Each cell is one point;
-    colour encodes local density (default) or a third channel.  Marginal
+    color encodes local density (default) or a third channel.  Marginal
     histograms are drawn on the top and right edges sharing axes with the
     central scatter.
 
@@ -1655,8 +1797,8 @@ def scatter_gate(
         Otsu threshold is computed from that channel's distribution and used
         as the gate.
     color
-        Third channel (index or name) used to colour points.  ``None``
-        colours by local 2-D density.
+        Third channel (index or name) used to color points.  ``None``
+        colors by local 2-D density.
     density_bins
         Number of bins for the 2-D density histogram (ignored when *color*
         is set).
@@ -1665,7 +1807,7 @@ def scatter_gate(
     log_x, log_y
         Use log x / y axes.
     cmap
-        Colormap for density or third-channel colouring.
+        Colormap for density or third-channel coloring.
     point_size
         Scatter point size in points².
     alpha
@@ -1699,7 +1841,7 @@ def scatter_gate(
         gate_y = _otsu_or_none(yf)
 
     # ------------------------------------------------------------------ #
-    # Point colours                                                       #
+    # Point colors                                                       #
     # ------------------------------------------------------------------ #
     if color is not None:
         cv, c_name = _resolve_channel(adata, color)
@@ -1882,13 +2024,13 @@ def moran_plot(
     """Moran scatter plot: standardised values vs. their spatial lag.
 
     The slope of the fit line through the origin equals Moran's I.  Points
-    are optionally coloured by LISA quadrant (HH / LL / HL / LH) when
+    are optionally colored by LISA quadrant (HH / LL / HL / LH) when
     pre-computed local results are available in ``uns``.
 
     Parameters
     ----------
     key
-        Gene name or ``obs`` column to visualise.
+        Gene name or ``obs`` column to visualize.
     layer
         Expression layer for gene keys.  ``None`` uses ``X``.
     neighbors_key
@@ -1898,9 +2040,9 @@ def moran_plot(
         used to read the global I value.  ``None`` computes it on the fly.
     lisa_key
         ``uns`` key of pre-computed :func:`~astrolabe.tl.moran_local`
-        results for quadrant colouring.  ``None`` = no colouring.
+        results for quadrant coloring.  ``None`` = no coloring.
     palette
-        Quadrant colour overrides (keys: ``'HH'``, ``'LL'``, ``'HL'``,
+        Quadrant color overrides (keys: ``'HH'``, ``'LL'``, ``'HL'``,
         ``'LH'``).
     point_size, alpha
         Scatter marker size and opacity.
@@ -1952,7 +2094,7 @@ def moran_plot(
     conn_key = uns_entry.get("connectivities_key", neighbors_key + "_connectivities")
     if conn_key not in adata.obsp:
         raise KeyError(
-            f"obsp['{conn_key}'] not found.  Run ab.tl.spatial_neighbors() first."
+            f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors() first"
         )
     W = adata.obsp[conn_key]
     row_sums = np.asarray(W.sum(axis=1)).ravel()
@@ -1961,7 +2103,7 @@ def moran_plot(
     lag_z = np.asarray(W_norm @ z).ravel()
 
     # ------------------------------------------------------------------ #
-    # Point colours (LISA quadrant)                                       #
+    # Point colors (LISA quadrant)                                       #
     # ------------------------------------------------------------------ #
     pal = {**_MORAN_QUAD_PALETTE, **(palette or {})}
     no_quad_color = "#AAAAAA"
@@ -2030,6 +2172,7 @@ def nhood_enrichment_plot(
     *,
     key: str = "nhood_enrichment",
     metric: str = "zscore",
+    cmap: str = _DIVNORM_CMAP,
     vmax: float | None = None,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
@@ -2038,7 +2181,7 @@ def nhood_enrichment_plot(
     """Annotated heatmap of neighborhood enrichment z-scores.
 
     Visualises the result of :func:`~astrolabe.tl.nhood_enrichment`.
-    Warm colours = enriched co-localization; cool colours = avoidance.
+    Warm colors = enriched co-localization; cool colors = avoidance.
 
     Parameters
     ----------
@@ -2053,8 +2196,10 @@ def nhood_enrichment_plot(
         ``uns`` key written by :func:`~astrolabe.tl.nhood_enrichment`.
     metric
         ``'zscore'`` (default) or ``'counts'``.
+    cmap
+        Diverging colormap for the heatmap.  Default ``"RdBu_r"``.
     vmax
-        Colour-scale maximum.  Defaults to ``max(|values|)``.
+        Color-scale maximum.  Defaults to ``max(|values|)``.
     figsize
         Figure size.
     title
@@ -2063,7 +2208,7 @@ def nhood_enrichment_plot(
         Existing axes to draw into.
     """
     if key not in adata.uns:
-        raise KeyError(f"uns['{key}'] not found. Run ab.tl.nhood_enrichment() first.")
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.nhood_enrichment() first")
 
     result = adata.uns[key]
     groups = result["groups"]
@@ -2082,7 +2227,7 @@ def nhood_enrichment_plot(
     if v == 0:
         v = 1.0
     norm = mcolors.TwoSlopeNorm(vcenter=0, vmin=-v, vmax=v)
-    im = ax.imshow(mat, cmap=_DIVNORM_CMAP, norm=norm, aspect="auto")
+    im = ax.imshow(mat, cmap=cmap, norm=norm, aspect="auto")
 
     fs = max(5, min(9, 80 // max(n, 1)))
     for i in range(n):
@@ -2116,6 +2261,7 @@ def co_occurrence_plot(
     key: str = "co_occurrence",
     source_groups: list[str] | None = None,
     target_groups: list[str] | None = None,
+    cmap: str = "tab20",
     figsize: tuple[float, float] = (6, 4),
     title: str | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -2140,6 +2286,8 @@ def co_occurrence_plot(
         Source cell types to show.  ``None`` shows all.
     target_groups
         Target cell types to show.  ``None`` shows all.
+    cmap
+        Colormap name or instance used to cycle line colors.  Default ``"tab20"``.
     figsize
         Figure size.
     title
@@ -2148,7 +2296,7 @@ def co_occurrence_plot(
         Existing axes.
     """
     if key not in adata.uns:
-        raise KeyError(f"uns['{key}'] not found. Run ab.tl.co_occurrence() first.")
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.co_occurrence() first")
 
     result = adata.uns[key]
     occ = result["occ"]
@@ -2163,9 +2311,10 @@ def co_occurrence_plot(
     else:
         fig = ax.figure
 
-    cmap = plt.get_cmap("tab20")
+    cmap_obj = plt.get_cmap(cmap)
+    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 20
     for line_i, (a, b) in enumerate([(a, b) for a in src_idx for b in tgt_idx]):
-        ax.plot(interval, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=cmap(line_i % 20))
+        ax.plot(interval, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=cmap_obj(line_i % n_colors))
 
     ax.axhline(1.0, color="grey", linestyle="--", linewidth=0.8, zorder=0)
     ax.set_xlabel("Distance (µm)")
@@ -2187,6 +2336,7 @@ def centrality_scores_plot(
     *,
     key: str = "centrality_scores",
     metrics: list[str] | None = None,
+    cmap: str = "tab10",
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
 ) -> FigurePanel:
@@ -2207,6 +2357,8 @@ def centrality_scores_plot(
         ``uns`` key written by :func:`~astrolabe.tl.centrality_scores`.
     metrics
         Columns to plot.  ``None`` uses all non-NaN columns.
+    cmap
+        Colormap name or instance for bar colors.  Default ``"tab10"``.
     figsize
         Figure size.
     title
@@ -2214,7 +2366,7 @@ def centrality_scores_plot(
     """
     if key not in adata.uns:
         raise KeyError(
-            f"uns['{key}'] not found. Run ab.tl.centrality_scores() first."
+            f"uns['{key}'] not found. Run ab.tl.centrality_scores() first"
         )
 
     df: pd.DataFrame = adata.uns[key]
@@ -2230,7 +2382,7 @@ def centrality_scores_plot(
     if n_metrics == 1:
         axes = [axes]
 
-    colors = plt.get_cmap("tab10")(np.linspace(0, 0.9, n_groups))
+    colors = plt.get_cmap(cmap)(np.linspace(0, 0.9, n_groups))
     for ax, metric in zip(axes, metrics):
         vals = df[metric].fillna(0).to_numpy()
         cats = df.index.tolist()
@@ -2252,6 +2404,7 @@ def expression_by_distance_plot(
     adata: ad.AnnData,
     *genes: str,
     key: str = "expression_by_distance",
+    cmap: str = "tab10",
     figsize: tuple[float, float] = (6, 4),
     title: str | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -2272,6 +2425,8 @@ def expression_by_distance_plot(
     key
         ``uns`` key written by
         :func:`~astrolabe.tl.expression_by_distance`.
+    cmap
+        Colormap name or instance used to cycle line colors.  Default ``"tab10"``.
     figsize
         Figure size.
     title
@@ -2281,7 +2436,7 @@ def expression_by_distance_plot(
     """
     if key not in adata.uns:
         raise KeyError(
-            f"uns['{key}'] not found. Run ab.tl.expression_by_distance() first."
+            f"uns['{key}'] not found. Run ab.tl.expression_by_distance() first"
         )
 
     result = adata.uns[key]
@@ -2302,11 +2457,11 @@ def expression_by_distance_plot(
     else:
         fig = ax.figure
 
-    cmap = plt.get_cmap("tab10")
+    cmap_obj = plt.get_cmap(cmap)
     for i, gene in enumerate(plot_genes):
         mean = mean_df[gene].to_numpy(dtype=float)
         se = se_df[gene].to_numpy(dtype=float)
-        color = cmap(i % 10)
+        color = cmap_obj(i % 10)
         ax.plot(distances, mean, label=gene, color=color)
         ax.fill_between(distances, mean - se, mean + se, alpha=0.2, color=color)
 
@@ -2330,6 +2485,7 @@ def ligrec_plot(
     receiver: str | list[str] | None = None,
     p_threshold: float = 0.05,
     top_n: int = 50,
+    cmap: str = "Reds",
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
 ) -> FigurePanel:
@@ -2337,7 +2493,7 @@ def ligrec_plot(
 
     Visualises the result of :func:`~astrolabe.tl.ligrec`.  Columns are
     (sender, receiver) cell-type pairs; rows are LR pairs with at least one
-    significant interaction.  Dot size encodes mean LR product score; colour
+    significant interaction.  Dot size encodes mean LR product score; color
     encodes -log₁₀ p-value.
 
     Parameters
@@ -2356,13 +2512,15 @@ def ligrec_plot(
         Only LR pairs with at least one p-value below this are shown.
     top_n
         Maximum rows to display (ranked by minimum p-value).
+    cmap
+        Colormap for dot color (encodes −log₁₀ p-value).  Default ``"Reds"``.
     figsize
         Figure size.  Auto-sized if ``None``.
     title
         Axes title.
     """
     if key not in adata.uns:
-        raise KeyError(f"uns['{key}'] not found. Run ab.tl.ligrec() first.")
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.ligrec() first")
 
     result = adata.uns[key]
     means_df: pd.DataFrame = result["means"]
@@ -2377,7 +2535,7 @@ def ligrec_plot(
         ct_pairs = [p for p in ct_pairs if p[1] in receivers]
 
     if not ct_pairs:
-        raise ValueError("No cell-type pairs remain after filtering.")
+        raise ValueError("No cell-type pairs remain after filtering")
 
     means_sub = means_df[ct_pairs]
     pval_sub = pval_df[ct_pairs]
@@ -2386,7 +2544,7 @@ def ligrec_plot(
     if not sig_mask.any():
         raise ValueError(
             f"No LR pairs significant at p < {p_threshold}. "
-            "Try a higher p_threshold or increase n_perms."
+            "Try a higher p_threshold or increase n_perms"
         )
 
     min_pval = pval_sub[sig_mask].min(axis=1)
@@ -2419,7 +2577,7 @@ def ligrec_plot(
     sc_plot = ax.scatter(
         xs, ys,
         s=sizes, c=colors,
-        cmap="Reds", vmin=0, vmax=1,
+        cmap=cmap, vmin=0, vmax=1,
         edgecolors="grey", linewidths=0.3, alpha=0.9,
     )
 

@@ -52,17 +52,12 @@ import scanpy as sc
 import scipy.sparse as sp
 import copy
 
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
 from astrolabe.io._ome_tiff import _extract_image_spec
 
 __all__ = ["read_xenium", "read_xenium_transcripts", "extract_morphology_intensities"]
 
 log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Internal constants
-# ---------------------------------------------------------------------------
-
-_SCHEMA_VERSION = "0.1"
 
 # Columns from cells.parquet we promote to obs; everything else is dropped.
 _OBS_COLUMNS = [
@@ -224,7 +219,7 @@ def read_xenium(
             "source_path": str(path),
         }
     }
-    adata.uns["astrolabe_schema_version"] = _SCHEMA_VERSION
+    adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 
     # ------------------------------------------------------------------ #
     # 6. Morphology image (optional, lazy)                                #
@@ -237,8 +232,8 @@ def read_xenium(
     # ------------------------------------------------------------------ #
     mdata = md.MuData({"xenium": adata})
     mdata.uns["spatial"] = adata.uns["spatial"]
-    mdata.uns["astrolabe_schema_version"] = _SCHEMA_VERSION
-    mdata.uns["default_modality"] = "xenium"
+    mdata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
+    mdata.uns[UNS_DEFAULT_MODALITY_KEY] = "xenium"
 
     log.info(
         "Loaded %d cells × %d features (%d control probes)",
@@ -559,7 +554,7 @@ def _annotate_xenium_var(
     if var_names not in ("gene_name", "gene_id"):
         raise ValueError(f"var_names must be 'gene_name' or 'gene_id', got {var_names!r}")
 
-    # scanpy names the column 'feature_types'; normalise to 'feature_type'
+    # scanpy names the column 'feature_types'; normalize to 'feature_type'
     if "feature_types" in adata.var.columns:
         adata.var = adata.var.rename(columns={"feature_types": "feature_type"})
 
@@ -623,7 +618,7 @@ def _attach_obs(adata: ad.AnnData, cells_df: pd.DataFrame) -> ad.AnnData:
     adata.obs_names.  We do an explicit reindex so any mismatch is caught
     immediately rather than silently producing NaN rows.
     """
-    # Normalise index: cells table may use 'cell_id' as a column or as index
+    # Normalize index: cells table may use 'cell_id' as a column or as index
     if "cell_id" in cells_df.columns:
         cells_df = cells_df.set_index("cell_id")
     cells_df.index = cells_df.index.astype(str)

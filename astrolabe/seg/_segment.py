@@ -102,13 +102,13 @@ def _masks_to_adata(
     n_cells = int(len(cell_ids))
 
     if n_cells == 0:
-        log.warning("_masks_to_adata: no cells found in mask.")
+        log.warning("No cells found in segmentation mask.")
         adata = ad.AnnData(n_obs=0)
         adata.obsm["spatial"] = np.zeros((0, 2), dtype=np.float32)
         adata.obsm["cell_boundaries"] = ak.Array([])
         return adata
 
-    log.info("_masks_to_adata: converting %d cells", n_cells)
+    log.info("Converting %d segmented cells to AnnData", n_cells)
 
     # Centroids in pixel (y, x)
     props = regionprops_table(masks, properties=["label", "centroid"])

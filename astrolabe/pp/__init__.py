@@ -40,7 +40,7 @@ add_image_filter
 estimate_stain_matrix
     Re-estimate the H&E stain deconvolution matrix for an already-loaded image.
 banksy_matrix
-    Build the BANKSY spatially-augmented feature matrix (λ-weighted self + neighbour mean + optional AGF).
+    Build the BANKSY spatially-augmented feature matrix (λ-weighted self + neighbor mean + optional AGF).
 harmony
     Harmony batch correction on a PCA or BANKSY embedding (requires harmonypy).
 """

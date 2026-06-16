@@ -1,17 +1,16 @@
 """
 Persistence — save and load a processed MuData to/from a single .h5mu file.
 
-The only thing mudata's native writer cannot handle is the **ImageSpec**
-dataclass stored in ``uns['spatial'][*]['images']``.  It contains numpy arrays,
-strings, and image filter objects that h5py cannot serialise directly.
+ImageSpec objects in uns['spatial'][*]['images'] are registered with anndata's
+IO spec registry (``anndata._io.specs._REGISTRY``) so that ``write_h5mu()`` /
+``read_h5mu()`` handle them transparently without any pre/post-processing.
 
-Strategy: convert ImageSpec ↔ plain dict (numpy arrays + strings) in-place on
-a copy of the MuData before writing.  A ``'__astrolabe_type': 'ImageSpec'``
-marker allows automatic reconstruction after ``md.read_h5mu``.
+The HDF5 encoding type ``"astrolabe-image-spec" / "0.1.0"`` identifies the
+group on load.  ``filter_chain`` entries are serialized as a JSON string —
+each filter is a ``@dataclass`` with only scalar fields.
 
-``filter_chain`` entries are serialised as a JSON string — each filter is a
-``@dataclass`` with only scalar fields, so ``dataclasses.asdict`` + ``json``
-gives a lossless round-trip.
+If registration fails (e.g. a future anndata API change), ``save()`` / ``load()``
+fall back to the explicit pre/post-processing approach and log a warning.
 
 Awkward arrays in obsm are handled natively by AnnData's h5 backend (≥0.10).
 """
@@ -33,7 +32,7 @@ __all__ = ["save", "load"]
 log = logging.getLogger(__name__)
 
 
-# ── Filter chain serialisation ────────────────────────────────────────────────
+# ── Filter chain serialization ────────────────────────────────────────────────
 
 def _filter_chain_to_json(filter_chain: list) -> str:
     records = []
@@ -49,12 +48,8 @@ def _filter_chain_from_json(s: str | bytes) -> list:
         s = s.decode()
     if not s:
         return []
-    from astrolabe.pl._filters import CLAHEFilter, FFTFilter, GaussianFilter
-    registry = {
-        "GaussianFilter": GaussianFilter,
-        "CLAHEFilter": CLAHEFilter,
-        "FFTFilter": FFTFilter,
-    }
+    import astrolabe.pl._filters as _filters_mod
+    registry = {name: getattr(_filters_mod, name) for name in _filters_mod.__all__}
     result = []
     for rec in json.loads(s):
         rec = dict(rec)
@@ -63,17 +58,91 @@ def _filter_chain_from_json(s: str | bytes) -> list:
         if cls is None:
             log.warning("load: unknown filter type '%s'; skipping.", cls_name)
             continue
-        # JSON deserialises tuples as lists — coerce back where needed
-        if cls_name == "CLAHEFilter" and isinstance(rec.get("kernel_size"), list):
-            rec["kernel_size"] = tuple(rec["kernel_size"])
         result.append(cls(**rec))
     return result
 
 
-# ── ImageSpec ↔ dict ──────────────────────────────────────────────────────────
+# ── anndata IO spec registration (transparent serialization) ──────────────────
+
+_SPECS_REGISTERED = False
+
+try:
+    import h5py as _h5py
+    from anndata._io.specs import _REGISTRY
+    from anndata.experimental import IOSpec
+
+    _SPEC = IOSpec("astrolabe-image-spec", "0.1.0")
+
+    @_REGISTRY.register_write(_h5py.Group, ImageSpec, _SPEC)
+    def _write_image_spec(f, k, elem, *, _writer, dataset_kwargs={}):
+        g = f.require_group(k)
+        # Scalar string / float attrs
+        g.attrs["path"] = elem.path
+        g.attrs["pixel_size_um"] = float(elem.pixel_size_um)
+        g.attrs["dimension_order"] = elem.dimension_order
+        # JSON-encoded attrs for structured data (small, shape varies across specs)
+        g.attrs["full_shape"] = json.dumps(list(elem.full_shape))
+        g.attrs["level_shapes"] = json.dumps([list(s) for s in elem.level_shapes])
+        g.attrs["level_scales"] = json.dumps([list(s) for s in elem.level_scales])
+        g.attrs["channel_names"] = json.dumps(elem.channel_names)  # None → "null"
+        g.attrs["filter_chain"] = _filter_chain_to_json(elem.filter_chain)
+        # Optional numpy array fields — zero-length sentinel encodes None
+        _writer.write_elem(
+            g, "registration_affine",
+            elem.registration_affine if elem.registration_affine is not None
+            else np.zeros((0,), dtype=np.float64),
+            dataset_kwargs=dataset_kwargs,
+        )
+        _writer.write_elem(
+            g, "stain_matrix",
+            elem.stain_matrix if elem.stain_matrix is not None
+            else np.zeros((0,), dtype=np.float64),
+            dataset_kwargs=dataset_kwargs,
+        )
+        _writer.write_elem(
+            g, "transform_chain",
+            np.stack(elem.transform_chain).astype(np.float64)
+            if elem.transform_chain
+            else np.zeros((0, 3, 3), dtype=np.float64),
+            dataset_kwargs=dataset_kwargs,
+        )
+
+    @_REGISTRY.register_read(_h5py.Group, _SPEC)
+    def _read_image_spec(elem, *, _reader):
+        def _arr_or_none(key, shape):
+            a = _reader.read_elem(elem[key])
+            return a.reshape(shape) if a.size > 0 else None
+
+        tc = _reader.read_elem(elem["transform_chain"])
+        ch = json.loads(elem.attrs["channel_names"])
+        return ImageSpec(
+            path=str(elem.attrs["path"]),
+            pixel_size_um=float(elem.attrs["pixel_size_um"]),
+            dimension_order=str(elem.attrs["dimension_order"]),
+            full_shape=tuple(json.loads(elem.attrs["full_shape"])),
+            level_shapes=[tuple(s) for s in json.loads(elem.attrs["level_shapes"])],
+            level_scales=[tuple(s) for s in json.loads(elem.attrs["level_scales"])],
+            channel_names=ch if ch is not None else None,
+            filter_chain=_filter_chain_from_json(elem.attrs.get("filter_chain", "[]")),
+            registration_affine=_arr_or_none("registration_affine", (3, 3)),
+            stain_matrix=_arr_or_none("stain_matrix", (3, 3)),
+            transform_chain=[tc[i] for i in range(tc.shape[0])] if tc.ndim == 3 and tc.shape[0] > 0 else [],
+        )
+
+    _SPECS_REGISTERED = True
+    log.debug("ImageSpec registered with anndata IO spec registry.")
+
+except Exception as _exc:
+    log.warning(
+        "Could not register ImageSpec with anndata IO spec registry (%s); "
+        "falling back to explicit pre/post-processing in save()/load().",
+        _exc,
+    )
+
+
+# ── Fallback helpers (used only when _SPECS_REGISTERED is False) ──────────────
 
 def _spec_to_dict(spec: ImageSpec) -> dict:
-    """Convert an ImageSpec to a plain dict that h5mu can serialise."""
     return {
         "__astrolabe_type": "ImageSpec",
         "path": spec.path,
@@ -82,7 +151,6 @@ def _spec_to_dict(spec: ImageSpec) -> dict:
         "full_shape": np.array(spec.full_shape, dtype=np.int64),
         "level_shapes": np.array(spec.level_shapes, dtype=np.int64),
         "level_scales": np.array(spec.level_scales, dtype=np.float64),
-        # Use a (0,) sentinel array when the field is None
         "registration_affine": (
             np.array(spec.registration_affine, dtype=np.float64)
             if spec.registration_affine is not None
@@ -93,15 +161,12 @@ def _spec_to_dict(spec: ImageSpec) -> dict:
             if spec.channel_names is not None
             else np.zeros((0,), dtype=object)
         ),
-        # Stack list of (3,3) matrices → (N,3,3); empty → (0,3,3)
         "transform_chain": (
             np.stack(spec.transform_chain).astype(np.float64)
             if spec.transform_chain
             else np.zeros((0, 3, 3), dtype=np.float64)
         ),
-        # Serialise filter callables as a JSON string
         "filter_chain": _filter_chain_to_json(spec.filter_chain),
-        # H&E stain deconvolution matrix — (0,) sentinel when absent
         "stain_matrix": (
             np.array(spec.stain_matrix, dtype=np.float64)
             if spec.stain_matrix is not None
@@ -111,7 +176,6 @@ def _spec_to_dict(spec: ImageSpec) -> dict:
 
 
 def _dict_to_spec(d: dict) -> ImageSpec:
-    """Reconstruct an ImageSpec from the dict produced by _spec_to_dict."""
     ra_raw = np.asarray(d["registration_affine"], dtype=np.float64)
     registration_affine = ra_raw.reshape(3, 3) if ra_raw.size == 9 else None
 
@@ -126,8 +190,6 @@ def _dict_to_spec(d: dict) -> ImageSpec:
     level_scales = [tuple(float(x) for x in row)
                     for row in np.asarray(d["level_scales"], dtype=np.float64)]
 
-    filter_chain = _filter_chain_from_json(d.get("filter_chain", ""))
-
     sm_raw = np.asarray(d.get("stain_matrix", np.zeros((0,), dtype=np.float64)), dtype=np.float64)
     stain_matrix = sm_raw.reshape(3, 3) if sm_raw.size == 9 else None
 
@@ -141,15 +203,12 @@ def _dict_to_spec(d: dict) -> ImageSpec:
         registration_affine=registration_affine,
         channel_names=channel_names,
         transform_chain=transform_chain,
-        filter_chain=filter_chain,
+        filter_chain=_filter_chain_from_json(d.get("filter_chain", "")),
         stain_matrix=stain_matrix,
     )
 
 
-# ── uns walking ───────────────────────────────────────────────────────────────
-
 def _replace_specs(obj):
-    """Recursively replace ImageSpec objects with serialisable dicts."""
     if isinstance(obj, ImageSpec):
         return _spec_to_dict(obj)
     if isinstance(obj, dict):
@@ -158,7 +217,6 @@ def _replace_specs(obj):
 
 
 def _restore_specs(obj):
-    """Recursively convert dicts with __astrolabe_type marker back to ImageSpec."""
     if isinstance(obj, dict):
         if obj.get("__astrolabe_type") == "ImageSpec":
             return _dict_to_spec(obj)
@@ -176,12 +234,10 @@ def save(
 ) -> None:
     """Save a processed MuData to a single ``.h5mu`` file.
 
-    Handles **ImageSpec** objects in ``uns['spatial']`` by converting them to
-    plain dicts before writing and restoring them automatically on
-    :func:`load`.  ``ImageSpec.filter_chain`` entries are round-tripped via
-    JSON — all three built-in filter classes are fully serialisable.
-    Awkward boundary arrays in ``obsm`` are written natively by AnnData's h5
-    backend.
+    ``ImageSpec`` objects in ``uns['spatial']`` are serialized transparently
+    via anndata's IO spec registry.  ``filter_chain`` entries are round-tripped
+    via JSON.  Awkward boundary arrays in ``obsm`` are written natively by
+    AnnData's h5 backend.
 
     Parameters
     ----------
@@ -208,15 +264,15 @@ def save(
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Work on a shallow copy so we don't mutate the caller's object
-    mdata_copy = mdata.copy()
+    if _SPECS_REGISTERED:
+        mdata.write_h5mu(str(path))
+    else:
+        mdata_copy = mdata.copy()
+        mdata_copy.uns.update(_replace_specs(dict(mdata_copy.uns)))
+        for adata in mdata_copy.mod.values():
+            adata.uns.update(_replace_specs(dict(adata.uns)))
+        mdata_copy.write_h5mu(str(path))
 
-    # Replace ImageSpec → dict throughout uns (MuData level + each modality)
-    mdata_copy.uns.update(_replace_specs(dict(mdata_copy.uns)))
-    for adata in mdata_copy.mod.values():
-        adata.uns.update(_replace_specs(dict(adata.uns)))
-
-    mdata_copy.write_h5mu(str(path))
     log.info("save: wrote %s", path)
 
 
@@ -243,10 +299,10 @@ def load(path: str | Path) -> md.MuData:
     log.info("load: reading %s", path)
     mdata = md.read_h5mu(str(path))
 
-    # Reconstruct ImageSpec objects from their dict representations
-    mdata.uns.update(_restore_specs(dict(mdata.uns)))
-    for adata in mdata.mod.values():
-        adata.uns.update(_restore_specs(dict(adata.uns)))
+    if not _SPECS_REGISTERED:
+        mdata.uns.update(_restore_specs(dict(mdata.uns)))
+        for adata in mdata.mod.values():
+            adata.uns.update(_restore_specs(dict(adata.uns)))
 
     log.info("load: done — %d cells", mdata.n_obs)
     return mdata

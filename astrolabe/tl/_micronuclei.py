@@ -52,7 +52,7 @@ def identify_micronuclei(
     A cell is classified as a micronucleus if:
 
     1. Its ``obs['nucleus_area']`` is below *max_nucleus_area*.
-    2. Its nearest spatial-graph neighbour that is **not** itself a candidate
+    2. Its nearest spatial-graph neighbor that is **not** itself a candidate
        and has ``nucleus_area ≥ min_primary_ratio × max_nucleus_area`` lies
        within *max_distance_um* µm.
 
@@ -88,7 +88,7 @@ def identify_micronuclei(
     Raises
     ------
     KeyError
-        If ``obs['nucleus_area']`` or the spatial-neighbour distance matrix are
+        If ``obs['nucleus_area']`` or the spatial-neighbor distance matrix are
         absent.
     """
     if "nucleus_area" not in adata.obs.columns:

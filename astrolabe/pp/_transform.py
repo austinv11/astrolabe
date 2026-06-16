@@ -190,8 +190,8 @@ def crop(
     """
     if spatial_key not in adata.obsm:
         raise KeyError(
-            f"obsm['{spatial_key}'] not found.  "
-            "Ensure spatial coordinates have been loaded."
+            f"obsm['{spatial_key}'] not found. "
+            "Ensure spatial coordinates have been loaded"
         )
 
     centroids = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
@@ -253,7 +253,7 @@ def rotate(
     None or AnnData
     """
     if spatial_key not in adata.obsm:
-        raise KeyError(f"obsm['{spatial_key}'] not found.")
+        raise KeyError(f"obsm['{spatial_key}'] not found")
 
     if center is None:
         coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
@@ -312,7 +312,7 @@ def flip(
     None or AnnData
     """
     if spatial_key not in adata.obsm:
-        raise KeyError(f"obsm['{spatial_key}'] not found.")
+        raise KeyError(f"obsm['{spatial_key}'] not found")
 
     if center is None:
         coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
@@ -343,8 +343,9 @@ def add_image_filter(
     """Append *filter* to the pixel-processing pipeline of matching images.
 
     Filters are stored in :attr:`~astrolabe._utils.ImageSpec.filter_chain`
-    and applied per-channel (2-D) at render time, after pixel data is loaded
-    from disk and before per-channel normalisation.  Multiple calls stack
+    and applied per-channel (2-D) in two places: at render time (``pl.image``,
+    before normalization) and at analysis time (``pp.extract_if_intensities``,
+    before per-cell reduction and stain deconvolution).  Multiple calls stack
     filters in order.
 
     Parameters

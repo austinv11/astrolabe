@@ -35,17 +35,17 @@ Typical workflow
 >>> ab.tl.spatial_neighbors(mdata)
 >>> ab.tl.cluster(mdata, resolution=0.5)
 >>>
->>> # 5. Visualise
+>>> # 5. Visualize
 >>> ab.pl.points(mdata, color="leiden")
 """
 
 import mudata
 
-# Opt into mudata 0.4 behaviour now: update() does not pull obs/var columns
+# Opt into mudata 0.4 behavior now: update() does not pull obs/var columns
 # from individual modalities. Use mdata.pull_obs()/pull_var() explicitly.
 mudata.set_options(pull_on_update=False)
 
-from astrolabe import io, pp, tl, pl, seg, pipeline
+from astrolabe import io, pp, tl, pl, seg, pipeline, datasets
 from astrolabe._summary import summary, Summary
 from astrolabe._gpu import gpu, gpu_enabled, to_gpu, to_cpu, use_gpu
 
@@ -56,7 +56,7 @@ except PackageNotFoundError:
     __version__ = "0.0.0+dev"
 
 __all__ = [
-    "io", "pp", "tl", "pl", "seg", "pipeline",
+    "io", "pp", "tl", "pl", "seg", "pipeline", "datasets",
     "summary", "Summary",
     "gpu", "gpu_enabled", "to_gpu", "to_cpu", "use_gpu",
     "__version__",

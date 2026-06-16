@@ -54,12 +54,12 @@ def spatial_neighbors(
     n_neighbors
         Number of nearest neighbours per cell.  Ignored for
         ``coord_type='delaunay'``; only used with ``'generic'`` and
-        ``'grid'``.
+        ``'grid'``
     radius
         Connect cells within this radius (µm) instead of a fixed-k graph.
         Ignored for ``coord_type='delaunay'``.  When both *n_neighbors*
         and *radius* are set, cells are connected if within the top-k
-        **and** within the radius.
+        **and** within the radius
     coord_type
         Graph construction method:
 

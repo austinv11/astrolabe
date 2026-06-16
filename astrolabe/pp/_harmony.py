@@ -74,9 +74,9 @@ def harmony(
     if gpu_enabled():
         rsc = _require_rapids()
         if basis not in adata.obsm:
-            raise KeyError(f"obsm['{basis}'] not found. Run ab.tl.pca first.")
+            raise KeyError(f"obsm['{basis}'] not found. Run ab.tl.pca first")
         if batch_key not in adata.obs:
-            raise KeyError(f"obs['{batch_key}'] not found.")
+            raise KeyError(f"obs['{batch_key}'] not found")
         if random_state != 0:
             log.debug("harmony GPU: random_state=%d ignored (rsc.pp.harmony_integrate does not expose it)", random_state)
         import cupy as cp

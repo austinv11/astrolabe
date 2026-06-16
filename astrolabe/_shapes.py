@@ -111,7 +111,7 @@ def arrow(
     direction = e - s
     length = float(np.linalg.norm(direction))
     if length < 1e-12:
-        raise ValueError("start and end must be distinct points")
+        raise ValueError("Start and end must be distinct points")
 
     unit = direction / length
     perp = np.array([-unit[1], unit[0]], dtype=np.float64)  # 90° CCW
@@ -167,7 +167,7 @@ def merge_polygons(polys: list[np.ndarray]) -> np.ndarray:
 
     geoms = [Polygon(p[:, :2]) for p in polys if p is not None and len(p) >= 3]
     if not geoms:
-        raise ValueError("No valid polygon (≥ 3 vertices) found in polys.")
+        raise ValueError("No valid polygon (≥ 3 vertices) found in polys")
 
     merged = unary_union(geoms)
 
