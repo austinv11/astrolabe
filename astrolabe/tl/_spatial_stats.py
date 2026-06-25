@@ -1,8 +1,9 @@
 """Spatial statistical tests.
 
-Global and local Moran's I, bivariate variants, Getis-Ord G*, spatial lag,
-spatial silhouette, and Ripley's L all delegate to the PySAL ecosystem
-(``esda``, ``libpysal``, ``pointpats``) for correctness and maintainability.
+Moran's I, bivariate variants, Geary's C, Getis-Ord G*, spatial lag, and
+spatial silhouette delegate to the PySAL ecosystem (``esda``, ``libpysal``).
+Ripley's L uses a KDTree-based range-counting implementation (scipy) that is
+O(n log n) in time and memory — no pointpats dependency.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ __all__ = [
     "ripley_l",
     "spatially_variable_genes",
     "geary_c",
+    "colocation_quotient",
 ]
 
 log = logging.getLogger(__name__)
@@ -55,6 +57,73 @@ def _build_weights(adata: ad.AnnData, neighbors_key: str):
     return w
 
 
+def _boundary_silhouette_graph(attr: np.ndarray, labels: np.ndarray, w) -> np.ndarray:
+    """Graph-efficient boundary silhouette: O(n×k) instead of O(n²).
+
+    esda.boundary_silhouette defaults to computing all-pairs distances via
+    sklearn.metrics.pairwise.euclidean_distances, which requires O(n²) memory.
+    This implementation computes distances only for cells connected by an edge
+    in the spatial weight matrix W, using pandas groupby for vectorised
+    aggregation rather than a Python-level cell loop.
+    """
+    adj = w.to_adjlist(remove_symmetric=False)
+    n = len(labels)
+    scores = np.zeros(n, dtype=np.float64)
+
+    if len(adj) == 0:
+        return scores
+
+    id_order = list(w.id_order)
+    id_to_row: dict = {obs_id: i for i, obs_id in enumerate(id_order)}
+
+    focal_idx = np.array([id_to_row[f] for f in adj["focal"]], dtype=np.intp)
+    neighbor_idx = np.array([id_to_row[nb] for nb in adj["neighbor"]], dtype=np.intp)
+
+    diffs = attr[focal_idx] - attr[neighbor_idx]
+    edge_dists = np.sqrt((diffs * diffs).sum(axis=1))
+
+    edge_df = pd.DataFrame(
+        {
+            "focal": focal_idx,
+            "nb_label": labels[neighbor_idx],
+            "focal_label": labels[focal_idx],
+            "dist": edge_dists,
+        }
+    )
+    edge_df["same"] = edge_df["focal_label"] == edge_df["nb_label"]
+
+    # a(i): mean distance to same-cluster spatial neighbors
+    a_vals = (
+        edge_df[edge_df["same"]]
+        .groupby("focal")["dist"]
+        .mean()
+        .rename("a")
+    )
+
+    # b(i): mean distance to nearest *other* border cluster, per focal cell
+    cross = edge_df[~edge_df["same"]].copy()
+    if len(cross) == 0:
+        return scores  # no cross-cluster edges; all scores remain 0
+
+    b_vals = (
+        cross.groupby(["focal", "nb_label"])["dist"]
+        .mean()
+        .groupby(level="focal")
+        .min()
+        .rename("b")
+    )
+
+    sil_df = pd.concat([a_vals, b_vals], axis=1)
+    # Cells not on any cluster boundary (b is NaN) score 0 by convention.
+    no_boundary = sil_df["b"].isna()
+    sil_df = sil_df.fillna(0.0)
+    mx = sil_df[["a", "b"]].max(axis=1)
+    sil = (sil_df["b"] - sil_df["a"]) / mx.where(mx > 0, other=1.0)
+    sil[no_boundary] = 0.0
+    scores[sil_df.index.to_numpy(dtype=np.intp)] = sil.to_numpy()
+    return scores
+
+
 def _get_conn_matrix(adata: ad.AnnData, neighbors_key: str) -> sp.spmatrix:
     """Return the raw sparse connectivity matrix from obsp (no libpysal)."""
     uns_entry = adata.uns.get(neighbors_key, {})
@@ -80,7 +149,7 @@ def _extract_values(adata: ad.AnnData, key: str, layer: str | None) -> np.ndarra
     raise KeyError(f"Key '{key}' not found in var_names or obs columns")
 
 
-def _normalise_pairs(
+def _normalize_pairs(
     x: str | list[str], y: str | list[str]
 ) -> tuple[list[str], list[str]]:
     if isinstance(x, str):
@@ -314,16 +383,17 @@ def moran_bv(
     neighbors_key
         Key in ``uns`` written by :func:`~astrolabe.tl.spatial_neighbors`.
     n_perms
-        Permutations (``0`` = normality approximation only).
+        Permutations used to obtain ``EI``/``z_sim``/``p_sim``.  Must be > 0:
+        unlike univariate Moran's I, ``esda.Moran_BV`` has no analytic
+        normal-approximation null, so permutations are required.
     key_added
         ``uns`` key where the result DataFrame is stored.
 
     Returns
     -------
     pd.DataFrame
-        MultiIndex ``(x, y)`` rows with columns ``I``, ``EI``, ``z_norm``,
-        ``p_norm``, and (when ``n_perms > 0``) ``z_sim``, ``p_sim``.
-        Also stored in ``adata.uns[key_added]``.
+        MultiIndex ``(x, y)`` rows with columns ``I``, ``EI``, ``z_sim``,
+        ``p_sim``.  Also stored in ``adata.uns[key_added]``.
 
     Examples
     --------
@@ -332,10 +402,16 @@ def moran_bv(
     """
     import esda
 
-    x_keys, y_keys = _normalise_pairs(x, y)
+    x_keys, y_keys = _normalize_pairs(x, y)
 
     w = _build_weights(adata, neighbors_key)
     log.info("moran_bv: %d pairs, %d cells, n_perms=%d", len(x_keys), adata.n_obs, n_perms)
+
+    if n_perms <= 0:
+        raise ValueError(
+            "moran_bv: esda.Moran_BV has no analytic normal approximation; "
+            "n_perms must be > 0 to obtain z/p-values."
+        )
 
     rows = []
     for xk, yk in zip(x_keys, y_keys):
@@ -344,13 +420,10 @@ def moran_bv(
         mi = esda.Moran_BV(xv, yv, w, permutations=n_perms)
         row: dict[str, float] = {
             "I": mi.I,
-            "EI": mi.EI_sim if hasattr(mi, "EI_sim") and n_perms > 0 else getattr(mi, "EI", np.nan),
-            "z_norm": mi.z_norm,
-            "p_norm": mi.p_norm,
+            "EI": mi.EI_sim,
+            "z_sim": mi.z_sim,
+            "p_sim": mi.p_sim,
         }
-        if n_perms > 0:
-            row["z_sim"] = mi.z_sim
-            row["p_sim"] = mi.p_sim
         rows.append(row)
 
     idx = pd.MultiIndex.from_tuples(list(zip(x_keys, y_keys)), names=["x", "y"])
@@ -409,7 +482,7 @@ def moran_local_bv(
     """
     import esda
 
-    x_keys, y_keys = _normalise_pairs(x, y)
+    x_keys, y_keys = _normalize_pairs(x, y)
 
     w = _build_weights(adata, neighbors_key)
     log.info("moran_local_bv: %d pairs, %d cells, n_perms=%d", len(x_keys), adata.n_obs, n_perms)
@@ -651,8 +724,6 @@ def spatial_silhouette(
     >>> ab.tl.spatial_silhouette(mdata, groupby="leiden")
     >>> ab.pl.points(mdata, color="spatial_silhouette")
     """
-    import esda
-
     if groupby not in adata.obs.columns:
         raise KeyError(f"obs column '{groupby}' not found")
 
@@ -669,17 +740,52 @@ def spatial_silhouette(
             attr = np.asarray(X, dtype=np.float64)
 
     log.info("spatial_silhouette: %d cells, groupby='%s', rep='%s'", adata.n_obs, groupby, use_rep)
-    scores_df = esda.boundary_silhouette(attr, labels, w)
-
-    if isinstance(scores_df, pd.DataFrame):
-        score_col = next(
-            (c for c in scores_df.columns if "score" in c.lower()), scores_df.columns[0]
-        )
-        adata.obs[key_added] = scores_df[score_col].values
-    else:
-        adata.obs[key_added] = np.asarray(scores_df).ravel()
-
+    scores = _boundary_silhouette_graph(attr, labels, w)
+    adata.obs[key_added] = scores
     log.info("spatial_silhouette: done")
+
+
+def _ripley_l_kdtree(
+    coords: np.ndarray,
+    radii: np.ndarray,
+    n_perms: int,
+    rng: "np.random.Generator",
+) -> "tuple[np.ndarray, np.ndarray]":
+    """KDTree-based Ripley's L — O(n log n × m) time, O(n log n) memory.
+
+    Uses ``scipy.spatial.cKDTree.count_neighbors`` to count pairs within each
+    radius without materialising an O(n²) distance matrix.
+    """
+    from scipy.spatial import cKDTree
+
+    n = len(coords)
+    xy_min = coords.min(axis=0)
+    xy_max = coords.max(axis=0)
+    area = max(float((xy_max[0] - xy_min[0]) * (xy_max[1] - xy_min[1])), 1.0)
+
+    def _k(pts: np.ndarray) -> np.ndarray:
+        tree = cKDTree(pts)
+        # count_neighbors counts ordered pairs (i,j) with dist(i,j) < r,
+        # including i==j self-pairs.  Subtracting len(pts) removes self-pairs;
+        # the remaining count is already doubled ((i,j) and (j,i) both counted),
+        # which is the correct numerator for K(r) = A/(n(n-1)) × Σ_{i≠j} I(d<r).
+        raw = np.array(
+            [tree.count_neighbors(tree, r) - len(pts) for r in radii],
+            dtype=np.float64,
+        )
+        return area * raw / (n * (n - 1))
+
+    def _l(k: np.ndarray) -> np.ndarray:
+        return np.sqrt(np.maximum(k, 0.0) / np.pi) - radii
+
+    l_obs = _l(_k(coords))
+
+    l_sims = np.empty((n_perms, len(radii)), dtype=np.float64)
+    for i in range(n_perms):
+        sim = rng.uniform(xy_min, xy_max, size=(n, 2))
+        l_sims[i] = _l(_k(sim))
+
+    return l_obs, l_sims
 
 
 @with_adata
@@ -690,6 +796,7 @@ def ripley_l(
     spatial_key: str = "spatial",
     support: int = 200,
     n_perms: int = 99,
+    seed: int | None = None,
     key_added: str = "ripley_l",
 ) -> dict[str, pd.DataFrame]:
     """Ripley's L function for cell-type point patterns.
@@ -700,9 +807,13 @@ def ripley_l(
 
     Unlike Moran's I (which tests autocorrelation of a continuous variable),
     Ripley's L treats cells of a given type as a binary point pattern and
-    characterises the *scale* of clustering.
+    characterizes the *scale* of clustering.
 
     Does not require :func:`~astrolabe.tl.spatial_neighbors`.
+
+    Uses a KDTree-based range-counting algorithm — O(n log n × support) time
+    and O(n log n) memory — so it scales to tens of thousands of cells per
+    group without subsampling.
 
     Parameters
     ----------
@@ -710,7 +821,7 @@ def ripley_l(
         :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
     groupby
         ``obs`` column to stratify by (e.g. ``'leiden'``, ``'cell_type'``).
-        ``None`` treats all cells as a single group labelled ``'all'``.
+        ``None`` treats all cells as a single group labeled ``'all'``.
     modality
         For :class:`~mudata.MuData`: modality key.
     spatial_key
@@ -720,6 +831,8 @@ def ripley_l(
     n_perms
         Simulation permutations for the CSR envelope
         (``0`` → no envelope; ``L_hi``/``L_lo`` will be ``NaN``).
+    seed
+        Random seed for reproducible CSR simulations.
     key_added
         ``uns`` key where results are stored.
 
@@ -735,15 +848,17 @@ def ripley_l(
     >>> curves = ab.tl.ripley_l(mdata, groupby="leiden")
     >>> curves["0"].plot(y=["L_obs", "L_hi", "L_lo"])   # cluster 0
     """
-    try:
-        from pointpats.distance_statistics import l_test
-    except ImportError:
-        from pointpats import l_test  # older API
-
     if spatial_key not in adata.obsm:
         raise KeyError(f"obsm['{spatial_key}'] not found")
 
     coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
+    rng = np.random.default_rng(seed)
+
+    # Radii computed from full-dataset extent so all groups share the same x-axis.
+    # max_r = min(x_range, y_range) / 4 follows Ripley's rule of thumb.
+    xy_range = coords.max(axis=0) - coords.min(axis=0)
+    max_r = float(min(xy_range)) / 4.0
+    radii = np.linspace(0.0, max_r, support)
 
     if groupby is None:
         groups: dict[str, np.ndarray] = {"all": np.ones(adata.n_obs, dtype=bool)}
@@ -761,44 +876,23 @@ def ripley_l(
         if group_coords.shape[0] < 3:
             log.warning("Group '%s' has fewer than 3 cells; skipping.", name)
             continue
-        try:
-            res = l_test(
-                group_coords,
-                support=support,
-                permutations=n_perms,
-                keep_simulations=(n_perms > 0),
-            )
-        except Exception as exc:
-            log.warning("ripley_l failed for group '%s': %s", name, exc)
-            continue
 
-        distances = np.asarray(res.support)
-        l_obs = np.asarray(res.statistic)
-        l_exp = np.zeros_like(l_obs)
+        l_obs, l_sims = _ripley_l_kdtree(group_coords, radii, n_perms, rng)
 
         df = pd.DataFrame(
-            {"L_obs": l_obs, "L_exp": l_exp},
-            index=pd.Index(distances, name="distance_um"),
+            {"L_obs": l_obs, "L_exp": np.zeros_like(l_obs)},
+            index=pd.Index(radii, name="distance_um"),
         )
 
-        sims = getattr(res, "simulations", None)
-        if n_perms > 0 and sims is not None:
-            sims = np.asarray(sims)
-            if sims.ndim == 2:
-                # normalize to (n_perms, n_support)
-                if sims.shape[0] == len(distances):
-                    sims = sims.T
-                df["L_hi"] = np.percentile(sims, 97.5, axis=0)
-                df["L_lo"] = np.percentile(sims, 2.5, axis=0)
-            else:
-                df["L_hi"] = np.nan
-                df["L_lo"] = np.nan
+        if n_perms > 0:
+            df["L_hi"] = np.percentile(l_sims, 97.5, axis=0)
+            df["L_lo"] = np.percentile(l_sims, 2.5, axis=0)
+            # empirical one-sided p: fraction of CSR sims with L(max_r) >= observed
+            df["p_value"] = float((l_sims[:, -1] >= l_obs[-1]).mean())
         else:
             df["L_hi"] = np.nan
             df["L_lo"] = np.nan
-
-        pv = getattr(res, "pvalue", None)
-        df["p_value"] = np.asarray(pv) if pv is not None else np.nan
+            df["p_value"] = np.nan
 
         results[name] = df
 
@@ -1082,4 +1176,244 @@ def geary_c(
     result = pd.DataFrame(rows, index=pd.Index(keys, name="key"))
     adata.uns[key_added] = result
     log.info("geary_c: done — min C=%.3f (%s)", result["C"].min(), result["C"].idxmin())
+    return result
+
+
+@with_adata
+def colocation_quotient(
+    adata: ad.AnnData,
+    *,
+    mode: str = "cell",
+    layer: str | None = None,
+    transcripts: "object | None" = None,
+    x_col: str = "x_location",
+    y_col: str = "y_location",
+    feature_col: str = "feature_name",
+    pixel_size_um: float = 10.0,
+    genes: list[str] | None = None,
+    pairs: list[tuple[str, str]] | None = None,
+    threshold: float = 0.0,
+    min_locs: int = 5,
+    key_added: str = "clq",
+) -> pd.DataFrame:
+    """Compute gene-pair co-location quotients (CLQ).
+
+    The CLQ measures whether two genes co-occur in the same spatial location
+    more or less than expected by chance:
+
+    ``CLQ(A, B) = [n_locs(A ∩ B) × N_total] / [n_locs(A) × n_locs(B)]``
+
+    * CLQ > 1 — genes co-occur more than expected (co-enriched)
+    * CLQ = 1 — independent
+    * CLQ < 1 — genes avoid co-occurring
+
+    Two modes are supported:
+
+    ``'cell'`` (default)
+        Locations are cells (or rows of any AnnData layer).  The expression
+        matrix is binarized at *threshold* and the CLQ is computed from the
+        resulting presence/absence matrix.
+
+    ``'pixel'``
+        Segmentation-free.  The spatial domain is divided into square bins of
+        *pixel_size_um* µm; each bin is treated as one location.  Requires the
+        *transcripts* argument.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        For :class:`~mudata.MuData`: modality key.
+    mode
+        ``'cell'`` or ``'pixel'``.
+    layer
+        Expression layer for ``mode='cell'``.  ``None`` uses ``X``.
+    transcripts
+        Transcript table (:class:`pyarrow.Table` or :class:`pandas.DataFrame`)
+        required for ``mode='pixel'``.
+    x_col, y_col
+        Coordinate column names (``mode='pixel'``).
+    feature_col
+        Gene/feature column name (``mode='pixel'``).
+    pixel_size_um
+        Bin edge length in µm (``mode='pixel'``).
+    genes
+        Restrict to this gene subset.  ``None`` includes all genes / features.
+    pairs
+        Compute CLQ only for these specific (gene_a, gene_b) pairs.  ``None``
+        computes all pairs satisfying *min_locs*.
+    threshold
+        Binarisation cutoff for ``mode='cell'``: a cell counts as expressing
+        a gene when its count exceeds *threshold* (default 0.0 = any nonzero).
+    min_locs
+        Skip genes present in fewer than this many cells / bins.
+    key_added
+        ``uns`` key where the result DataFrame is stored.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per pair with columns ``gene_a``, ``gene_b``, ``clq``,
+        ``n_a``, ``n_b``, ``n_ab``, ``n_locs``, ``mode``, ``pixel_size_um``.
+        Also stored in ``adata.uns[key_added]``.
+
+    Examples
+    --------
+    >>> clq = ab.tl.colocation_quotient(mdata)
+    >>> clq.sort_values('clq', ascending=False).head(10)
+
+    >>> # Nucleus-only CLQ (requires create_compartment_layers first)
+    >>> ab.tl.colocation_quotient(mdata, layer='nucleus', key_added='clq_nucleus')
+
+    >>> # Segmentation-free pixel CLQ
+    >>> transcripts = ab.io.read_xenium_transcripts(mdata)
+    >>> ab.tl.colocation_quotient(mdata, mode='pixel', transcripts=transcripts,
+    ...                            pixel_size_um=10.0, key_added='clq_pixel')
+    """
+    _MODES = ("cell", "pixel")
+    if mode not in _MODES:
+        raise ValueError(f"mode must be one of {_MODES!r}, got {mode!r}")
+
+    gene_set: set[str] | None = set(genes) if genes is not None else None
+    empty_df = pd.DataFrame(
+        columns=["gene_a", "gene_b", "clq", "n_a", "n_b", "n_ab", "n_locs", "mode", "pixel_size_um"]
+    )
+
+    # ── Build binary (locations × genes) sparse matrix B ────────────────────
+
+    if mode == "cell":
+        if layer is not None and layer not in adata.layers:
+            raise KeyError(
+                f"Layer '{layer}' not found. Available: {list(adata.layers.keys())}"
+            )
+        M = adata.layers[layer] if layer is not None else adata.X
+        if not sp.issparse(M):
+            M = sp.csr_matrix(M)
+
+        if gene_set is not None:
+            keep = np.array([g in gene_set for g in adata.var_names], dtype=bool)
+            M = M[:, keep]
+            gene_list = [g for g in adata.var_names if g in gene_set]
+        else:
+            gene_list = list(adata.var_names)
+
+        B = (M > threshold).astype(np.float32)  # (n_obs × n_genes)
+        N = adata.n_obs
+
+    else:  # pixel
+        if transcripts is None:
+            raise ValueError("mode='pixel' requires the transcripts argument.")
+
+        try:
+            import pyarrow as _pa
+            df_pix: pd.DataFrame = (
+                transcripts.to_pandas()  # type: ignore[union-attr]
+                if isinstance(transcripts, _pa.Table)
+                else transcripts  # type: ignore[assignment]
+            )
+        except ImportError:
+            df_pix = transcripts  # type: ignore[assignment]
+
+        for col in (x_col, y_col, feature_col):
+            if col not in df_pix.columns:
+                raise KeyError(f"Column '{col}' not found in transcript table.")
+
+        x = df_pix[x_col].to_numpy(dtype=np.float64)
+        y = df_pix[y_col].to_numpy(dtype=np.float64)
+        feat_all = df_pix[feature_col].to_numpy()
+
+        x_min, y_min = x.min(), y.min()
+        bin_x = np.floor((x - x_min) / pixel_size_um).astype(np.int64)
+        bin_y = np.floor((y - y_min) / pixel_size_um).astype(np.int64)
+        n_y_bins = int(bin_y.max()) + 1
+        bin_id = bin_x * n_y_bins + bin_y
+
+        # N_bins = unique bins occupied by any transcript (before gene filter)
+        _, bin_remapped = np.unique(bin_id, return_inverse=True)
+        N = int(bin_remapped.max()) + 1
+
+        if gene_set is not None:
+            mask = np.array([f in gene_set for f in feat_all], dtype=bool)
+            feat_sub = feat_all[mask]
+            bin_sub = bin_remapped[mask]
+        else:
+            feat_sub = feat_all
+            bin_sub = bin_remapped
+
+        unique_genes = sorted(set(feat_sub.tolist()))
+        if genes is not None:
+            gene_list = [g for g in genes if g in set(unique_genes)]
+        else:
+            gene_list = unique_genes
+
+        if not gene_list:
+            adata.uns[key_added] = empty_df
+            return empty_df
+
+        gene_to_idx_pix = {g: i for i, g in enumerate(gene_list)}
+        n_g = len(gene_list)
+        gene_col_arr = np.array(
+            [gene_to_idx_pix.get(f, -1) for f in feat_sub], dtype=np.int32
+        )
+        known = gene_col_arr >= 0
+        B = sp.coo_matrix(
+            (
+                np.ones(known.sum(), dtype=np.float32),
+                (bin_sub[known], gene_col_arr[known]),
+            ),
+            shape=(N, n_g),
+        ).tocsr()
+        B.data[:] = 1.0  # binarize (sum duplicates → 1)
+
+    # ── Common CLQ computation ───────────────────────────────────────────────
+
+    if not gene_list:
+        adata.uns[key_added] = empty_df
+        return empty_df
+
+    co = B.T @ B  # (n_genes × n_genes), entry [i,j] = n_locs with both i and j
+    freq = np.asarray(co.diagonal()).ravel()  # n_locs per gene (diagonal)
+    co_dense = co.toarray()
+    gene_to_idx = {g: i for i, g in enumerate(gene_list)}
+
+    if pairs is not None:
+        pair_indices: list[tuple[int, int]] = []
+        for a, b in pairs:
+            if a not in gene_to_idx:
+                log.warning("colocation_quotient: gene '%s' not found; skipping pair.", a)
+                continue
+            if b not in gene_to_idx:
+                log.warning("colocation_quotient: gene '%s' not found; skipping pair.", b)
+                continue
+            pair_indices.append((gene_to_idx[a], gene_to_idx[b]))
+    else:
+        eligible = np.where(freq >= min_locs)[0]
+        pair_indices = [(int(i), int(j)) for i in eligible for j in eligible if i < j]
+
+    rows_out = []
+    for i_a, i_b in pair_indices:
+        n_a = int(freq[i_a])
+        n_b = int(freq[i_b])
+        n_ab = int(co_dense[i_a, i_b])
+        denom = n_a * n_b
+        clq = float(n_ab * N / denom) if denom > 0 else np.nan
+        rows_out.append({
+            "gene_a": gene_list[i_a],
+            "gene_b": gene_list[i_b],
+            "clq": clq,
+            "n_a": n_a,
+            "n_b": n_b,
+            "n_ab": n_ab,
+            "n_locs": N,
+            "mode": mode,
+            "pixel_size_um": pixel_size_um if mode == "pixel" else np.nan,
+        })
+
+    result = pd.DataFrame(rows_out) if rows_out else empty_df
+    adata.uns[key_added] = result
+    log.info(
+        "colocation_quotient: %d pairs computed (mode='%s', N=%d)",
+        len(result), mode, N,
+    )
     return result

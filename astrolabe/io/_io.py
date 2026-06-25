@@ -129,12 +129,32 @@ try:
             transform_chain=[tc[i] for i in range(tc.shape[0])] if tc.ndim == 3 and tc.shape[0] > 0 else [],
         )
 
+    import pyarrow as _pa
+
+    _ARROW_SPEC = IOSpec("astrolabe-arrow-table", "0.1.0")
+
+    @_REGISTRY.register_write(_h5py.Group, _pa.Table, _ARROW_SPEC)
+    def _write_arrow_table(f, k, elem, *, _writer, dataset_kwargs={}):
+        sink = _pa.BufferOutputStream()
+        with _pa.ipc.new_stream(sink, elem.schema) as ipc_writer:
+            ipc_writer.write_table(elem)
+        _writer.write_elem(
+            f.require_group(k), "data",
+            np.frombuffer(sink.getvalue(), dtype=np.uint8),
+            dataset_kwargs=dataset_kwargs,
+        )
+
+    @_REGISTRY.register_read(_h5py.Group, _ARROW_SPEC)
+    def _read_arrow_table(elem, *, _reader):
+        data = _reader.read_elem(elem["data"])
+        return _pa.ipc.open_stream(_pa.BufferReader(data.tobytes())).read_all()
+
     _SPECS_REGISTERED = True
-    log.debug("ImageSpec registered with anndata IO spec registry.")
+    log.debug("ImageSpec and pyarrow.Table registered with anndata IO spec registry.")
 
 except Exception as _exc:
     log.warning(
-        "Could not register ImageSpec with anndata IO spec registry (%s); "
+        "Could not register ImageSpec/pyarrow.Table with anndata IO spec registry (%s); "
         "falling back to explicit pre/post-processing in save()/load().",
         _exc,
     )

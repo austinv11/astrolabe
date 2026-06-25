@@ -104,13 +104,19 @@ def voronoi_resegment(
     # Voronoi tessellation                                                #
     # ------------------------------------------------------------------ #
     points_gs = gpd.GeoSeries([Point(xy) for xy in centroids])
-    regions_gdf = voronoi_frames(points_gs, clip=clip_geom)
+    # as_gdf=False, return_input=False: newer libpysal defaults changed this
+    # call to return a (geoms, ids) tuple instead of a single GeoDataFrame;
+    # request the plain GeoSeries explicitly so the result is unambiguous
+    # across libpysal versions.
+    regions = voronoi_frames(points_gs, clip=clip_geom, as_gdf=False, return_input=False)
 
-    # voronoi_frames returns a GeoDataFrame in the same order as input
-    polys = list(regions_gdf.geometry)
-    assert len(polys) == n_cells, (
-        f"voronoi_frames returned {len(polys)} polygons but expected {n_cells}."
-    )
+    # voronoi_frames returns polygons in the same order as input
+    polys = list(regions.geometry) if hasattr(regions, "geometry") else list(regions)
+    if len(polys) != n_cells:
+        raise RuntimeError(
+            f"voronoi_frames returned {len(polys)} polygons but expected {n_cells}. "
+            "This is a libpysal version incompatibility; check your libpysal version."
+        )
 
     # ------------------------------------------------------------------ #
     # Convert to awkward array (same format as original boundaries)      #

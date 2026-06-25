@@ -37,11 +37,18 @@ __all__ = [
     "intensity_histogram",
     "intensity_histograms",
     "scatter_gate",
+    "shape_distribution_plot",
+    "shape_ratio_plot",
+    "moran_plot",
     "nhood_enrichment_plot",
     "co_occurrence_plot",
     "centrality_scores_plot",
     "expression_by_distance_plot",
     "ligrec_plot",
+    "som_umatrix",
+    "som_component_plane",
+    "som_hits",
+    "som_subcellular_plot",
 ]
 
 # Default colors for known feature types (controls visually distinct from Gene Expression).
@@ -276,7 +283,9 @@ def heatmap(
     >>> markers = {"T cell": ["CD3D", "CD8A"], "Epithelial": ["EPCAM", "KRT8"]}
     >>> ab.pl.heatmap(mdata, markers, groupby="leiden_annotation").show()
     """
-    hp = sc.pl.heatmap(
+    import matplotlib.pyplot as plt
+
+    sc.pl.heatmap(
         adata,
         var_names=var_names,
         groupby=groupby,
@@ -288,11 +297,10 @@ def heatmap(
         swap_axes=swap_axes,
         show_gene_labels=show_gene_labels,
         show=False,
-        return_fig=True,
         **kwargs,
     )
 
-    return FigurePanel.from_obj(hp)
+    return FigurePanel.from_obj(plt.gcf())
 
 
 @with_adata
@@ -303,7 +311,7 @@ def embedding_scatter(
     color: "str | list[str] | None" = None,
     title: "str | list[str] | None" = None,
     palette: "str | dict | None" = None,
-    size: float = 5.0,
+    size: "float | None" = None,
     alpha: float = 0.7,
     frameon: bool = False,
     figsize: "tuple[float, float] | None" = None,
@@ -334,7 +342,9 @@ def embedding_scatter(
     palette
         Color palette for categorical colors.
     size
-        Scatter marker size.
+        Scatter marker size in points².  ``None`` (default) lets scanpy
+        auto-scale as ``120 000 / n_cells``, which is appropriate for most
+        UMAP and PCA embeddings.  Pass an explicit float to override.
     alpha
         Marker opacity.
     frameon
@@ -361,22 +371,28 @@ def embedding_scatter(
     # scanpy's embedding() takes basis without the 'X_' prefix
     basis = obsm_key[2:] if obsm_key.startswith("X_") else obsm_key
 
+    # sc.pl.embedding has no figsize param in current scanpy; create the
+    # axes ourselves so figsize is honored instead of leaking into **kwargs
+    # (where it would reach Axes.scatter() and raise an AttributeError).
+    made_ax = ax is None
+    if made_ax:
+        fig, ax = plt.subplots(figsize=figsize)
+
     result = sc.pl.embedding(
         adata,
         basis=basis,
         color=color,
         title=title,
         palette=palette,
-        size=size,
+        **({"size": size} if size is not None else {}),
         alpha=alpha,
         frameon=frameon,
-        figsize=figsize,
         ax=ax,
         show=False,
         **kwargs,
     )
 
-    fig = ax.get_figure() if ax is not None else FigurePanel.from_obj(result).figure
+    fig = ax.get_figure() if not made_ax else FigurePanel.from_obj(result).figure
     plt.close(fig)
     return FigurePanel(fig)
 
@@ -407,7 +423,7 @@ def volcano_plot(
     ``uns['rank_genes_groups']`` and plots log₂FC vs −log₁₀(p-value).
     Up-regulated genes (log₂FC > *lfc_threshold* and p < *pval_threshold*)
     are shown in red; down-regulated in blue; non-significant in grey.
-    Top-*n* most significant genes in each direction are labelled.
+    Top-*n* most significant genes in each direction are labeled.
 
     Parameters
     ----------
@@ -614,7 +630,7 @@ def ripley_plot(
 ) -> FigurePanel:
     """Ripley's L function plot (L(d) − d vs. distance).
 
-    Visualises the output of :func:`~astrolabe.tl.ripley_l`.  Values above
+    Visualizes the output of :func:`~astrolabe.tl.ripley_l`.  Values above
     zero indicate spatial clustering; values below indicate regularity.  A
     dashed reference line at zero marks complete spatial randomness (CSR).
 
@@ -666,17 +682,24 @@ def ripley_plot(
         if ct not in result:
             continue
         entry = result[ct]
-        # Squidpy-style: entry has 'bins' and 'stats' DataFrame with 'L' column
-        bins = np.asarray(entry.get("bins", []))
-        stats = entry.get("stats")
-        if hasattr(stats, "columns"):
-            l_col = "L" if "L" in stats.columns else stats.columns[0]
-            l_vals = stats[l_col].to_numpy(dtype=float)
+        # entry is a DataFrame with index=distance_um and columns L_obs, L_exp, L_hi, L_lo
+        if hasattr(entry, "index"):
+            bins = np.asarray(entry.index, dtype=float)
+            l_col = "L_obs" if "L_obs" in entry.columns else entry.columns[0]
+            l_vals = entry[l_col].to_numpy(dtype=float)
         else:
-            l_vals = np.asarray(stats, dtype=float)
+            bins = np.asarray(entry.get("bins", []))
+            stats = entry.get("stats")
+            l_vals = stats["L"].to_numpy(dtype=float) if hasattr(stats, "columns") else np.asarray(stats, dtype=float)
 
         l_d = l_vals - bins[:len(l_vals)]
-        ax.plot(bins[:len(l_d)], l_d, label=ct, color=cmap_obj(i % 10))
+        color = cmap_obj(i % 10)
+        ax.plot(bins[:len(l_d)], l_d, label=ct, color=color)
+        # Draw simulation envelope if available
+        if hasattr(entry, "columns") and "L_hi" in entry.columns and "L_lo" in entry.columns:
+            l_hi = entry["L_hi"].to_numpy(dtype=float) - bins[:len(l_vals)]
+            l_lo = entry["L_lo"].to_numpy(dtype=float) - bins[:len(l_vals)]
+            ax.fill_between(bins[:len(l_d)], l_lo, l_hi, alpha=0.15, color=color)
 
     ax.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
     ax.set_xlabel("Distance d (µm)", fontsize=9)
@@ -907,7 +930,7 @@ def gene_detection_scatter(
     feature_type_key: str = "feature_type",
     control_key: str = "is_control",
     total_counts_key: str = "total_counts",
-    pct_dropout_key: str = "pct_dropout",
+    pct_dropout_key: str = "pct_dropout_by_counts",
     palette: dict[str, str] | None = None,
     size: float = 10.0,
     alpha: float = 0.7,
@@ -924,7 +947,7 @@ def gene_detection_scatter(
     genes which typically show higher detection rates at a given abundance.
 
     Requires :func:`~astrolabe.pp.calculate_qc_metrics` to have been called
-    first (provides ``var['total_counts']`` and ``var['pct_dropout']``).
+    first (provides ``var['total_counts']`` and ``var['pct_dropout_by_counts']``).
 
     Works on all platforms:
 
@@ -935,7 +958,7 @@ def gene_detection_scatter(
     ----------
     data
         :class:`anndata.AnnData` or :class:`~mudata.MuData`.  Must have
-        ``var['total_counts']`` and ``var['pct_dropout']`` from
+        ``var['total_counts']`` and ``var['pct_dropout_by_counts']`` from
         :func:`~astrolabe.pp.calculate_qc_metrics`.
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
@@ -1492,6 +1515,246 @@ def transcripts_per_cell_histogram(
         bins=bins, log=log, color=color, xlabel="Transcripts per cell", title=title,
         vlines=vlines, ax=ax, figsize=figsize, **hist_kwargs,
     )
+
+
+# ---------------------------------------------------------------------------
+# Shape feature distribution plots
+# ---------------------------------------------------------------------------
+
+_SHAPE_METRIC_SUFFIXES: frozenset[str] = frozenset({
+    "area", "perimeter", "span_x", "span_y", "equivalent_radius",
+    "major_axis_length", "minor_axis_length", "aspect_ratio", "rna_density",
+    "circularity", "solidity", "elongation",
+})
+
+
+def _array_histogram(
+    values: np.ndarray,
+    *,
+    bins: int | np.ndarray = 50,
+    log: bool = False,
+    color: str = "#4C72B0",
+    xlabel: str = "",
+    ax: "matplotlib.axes.Axes | None" = None,
+    figsize: tuple[float, float] = (6, 4),
+    **hist_kwargs: Any,
+) -> FigurePanel:
+    """Histogram of an arbitrary float array (does not read from obs)."""
+    own_fig = ax is None
+    if own_fig:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    vals = np.asarray(values, dtype=np.float64)
+    vals = vals[np.isfinite(vals)]
+
+    if log and isinstance(bins, int) and len(vals) > 0:
+        pos = vals[vals > 0]
+        if len(pos):
+            bins = np.logspace(np.log10(pos.min()), np.log10(pos.max()), bins + 1)
+
+    ax.hist(vals, bins=bins, color=color, edgecolor="none", **hist_kwargs)
+
+    if log:
+        ax.set_xscale("log")
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Number of cells")
+    ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+    ax.set_axisbelow(True)
+
+    if own_fig:
+        fig.tight_layout()
+        plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def shape_distribution_plot(
+    adata: ad.AnnData,
+    keys: list[str] | None = None,
+    *,
+    prefix: str | None = None,
+    ncols: int = 3,
+    bins: int | np.ndarray = 50,
+    log: bool = False,
+    color: str = "#4C72B0",
+    figsize_per_panel: tuple[float, float] = (4, 3),
+    **hist_kwargs: Any,
+) -> FigurePanel:
+    """Histogram grid of shape feature distributions from ``obs``.
+
+    Designed to visualize the output of
+    :func:`~astrolabe.pp.calculate_shape_metrics`.  When *keys* is ``None``
+    the function auto-detects relevant columns from *prefix* or from the
+    known set of shape metric suffixes.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
+    keys
+        Explicit list of ``obs`` column names to plot.  When ``None``,
+        columns are detected automatically.
+    prefix
+        If *keys* is ``None``, restrict auto-detection to columns that
+        start with this prefix (e.g. ``'cell_'`` or ``'nucleus_'``).
+    ncols
+        Number of histogram panels per row.
+    bins
+        Number of bins or explicit bin-edge array passed to each histogram.
+    log
+        Use log-spaced bins and a log x-axis.
+    color
+        Bar fill color.
+    figsize_per_panel
+        ``(width, height)`` in inches for each individual histogram panel.
+    **hist_kwargs
+        Forwarded to :func:`matplotlib.axes.Axes.hist`.
+
+    Returns
+    -------
+    FigurePanel
+
+    Examples
+    --------
+    >>> ab.pp.calculate_shape_metrics(mdata)
+    >>> ab.pl.shape_distribution_plot(mdata).show()
+    >>> ab.pl.shape_distribution_plot(mdata, prefix='nucleus_').show()
+    >>> ab.pl.shape_distribution_plot(mdata, keys=['cell_area', 'cell_aspect_ratio']).show()
+    """
+    import math
+
+    if keys is None:
+        if prefix is not None:
+            keys = [c for c in adata.obs.columns if c.startswith(prefix)]
+        else:
+            keys = [
+                c for c in adata.obs.columns
+                if any(c.endswith(f"_{s}") for s in _SHAPE_METRIC_SUFFIXES)
+            ]
+        if not keys:
+            raise ValueError(
+                "No shape metric columns found in obs. "
+                "Run ab.pp.calculate_shape_metrics() first, "
+                "or pass keys= or prefix= explicitly."
+            )
+
+    nrows = math.ceil(len(keys) / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(figsize_per_panel[0] * ncols, figsize_per_panel[1] * nrows),
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
+
+    for ax, key in zip(axes_flat, keys):
+        _obs_histogram(
+            adata, key,
+            bins=bins, log=log, color=color, ax=ax, **hist_kwargs,
+        )
+        ax.set_title(key.replace("_", " "))
+
+    for ax in axes_flat[len(keys):]:
+        ax.set_visible(False)
+
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def shape_ratio_plot(
+    adata: ad.AnnData,
+    pairs: list[tuple[str, str]],
+    *,
+    ncols: int = 3,
+    bins: int | np.ndarray = 50,
+    log: bool = False,
+    color: str = "#4C72B0",
+    figsize_per_panel: tuple[float, float] = (4, 3),
+    **hist_kwargs: Any,
+) -> FigurePanel:
+    """Histogram grid of per-cell ratios of pairs of ``obs`` columns.
+
+    For each ``(numerator, denominator)`` pair, computes
+    ``obs[numerator] / obs[denominator]`` cell-by-cell and shows its
+    distribution.  Zero denominators produce ``NaN`` and are excluded.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
+    pairs
+        List of ``(numerator_key, denominator_key)`` obs column pairs.
+    ncols
+        Number of histogram panels per row.
+    bins
+        Number of bins or explicit bin-edge array.
+    log
+        Use log-spaced bins and a log x-axis.
+    color
+        Bar fill color.
+    figsize_per_panel
+        ``(width, height)`` in inches per panel.
+    **hist_kwargs
+        Forwarded to :func:`matplotlib.axes.Axes.hist`.
+
+    Returns
+    -------
+    FigurePanel
+
+    Examples
+    --------
+    >>> ab.pp.calculate_shape_metrics(mdata)
+    >>> ab.pl.shape_ratio_plot(
+    ...     mdata,
+    ...     pairs=[
+    ...         ("cell_area", "cell_perimeter"),
+    ...         ("cell_span_x", "cell_span_y"),
+    ...         ("cell_major_axis_length", "cell_minor_axis_length"),
+    ...     ],
+    ... ).show()
+    """
+    import math
+
+    if not pairs:
+        raise ValueError("pairs must be a non-empty list of (numerator, denominator) tuples.")
+
+    nrows = math.ceil(len(pairs) / ncols)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(figsize_per_panel[0] * ncols, figsize_per_panel[1] * nrows),
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
+
+    for ax, (num_key, den_key) in zip(axes_flat, pairs):
+        for key in (num_key, den_key):
+            if key not in adata.obs.columns:
+                raise KeyError(
+                    f"obs['{key}'] not found. "
+                    "Run ab.pp.calculate_shape_metrics() first."
+                )
+        num = adata.obs[num_key].to_numpy(dtype=np.float64)
+        den = adata.obs[den_key].to_numpy(dtype=np.float64)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            ratio = np.where(den != 0, num / den, np.nan)
+        xlabel = f"{num_key} / {den_key}"
+        _array_histogram(ratio, bins=bins, log=log, color=color, xlabel=xlabel, ax=ax, **hist_kwargs)
+        ax.set_title(xlabel.replace("_", " "))
+
+    for ax in axes_flat[len(pairs):]:
+        ax.set_visible(False)
+
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -2180,7 +2443,7 @@ def nhood_enrichment_plot(
 ) -> FigurePanel:
     """Annotated heatmap of neighborhood enrichment z-scores.
 
-    Visualises the result of :func:`~astrolabe.tl.nhood_enrichment`.
+    Visualizes the result of :func:`~astrolabe.tl.nhood_enrichment`.
     Warm colors = enriched co-localization; cool colors = avoidance.
 
     Parameters
@@ -2268,7 +2531,7 @@ def co_occurrence_plot(
 ) -> FigurePanel:
     """Line plot of co-occurrence probability ratio vs. distance.
 
-    Visualises the result of :func:`~astrolabe.tl.co_occurrence`.
+    Visualizes the result of :func:`~astrolabe.tl.co_occurrence`.
     Dashed reference line at ratio = 1 marks random co-occurrence.
 
     Parameters
@@ -2342,7 +2605,7 @@ def centrality_scores_plot(
 ) -> FigurePanel:
     """Horizontal bar charts of per-cluster centrality metrics.
 
-    Visualises the result of :func:`~astrolabe.tl.centrality_scores`.
+    Visualizes the result of :func:`~astrolabe.tl.centrality_scores`.
     Each non-NaN metric gets its own subplot.
 
     Parameters
@@ -2411,7 +2674,7 @@ def expression_by_distance_plot(
 ) -> FigurePanel:
     """Expression gradient with ±SE ribbon vs. distance to anchor.
 
-    Visualises the result of :func:`~astrolabe.tl.expression_by_distance`.
+    Visualizes the result of :func:`~astrolabe.tl.expression_by_distance`.
     One line per gene with a shaded ±1 SE band.
 
     Parameters
@@ -2491,7 +2754,7 @@ def ligrec_plot(
 ) -> FigurePanel:
     """Dot plot of ligand-receptor interaction scores.
 
-    Visualises the result of :func:`~astrolabe.tl.ligrec`.  Columns are
+    Visualizes the result of :func:`~astrolabe.tl.ligrec`.  Columns are
     (sender, receiver) cell-type pairs; rows are LR pairs with at least one
     significant interaction.  Dot size encodes mean LR product score; color
     encodes -log₁₀ p-value.
@@ -2600,6 +2863,368 @@ def ligrec_plot(
         title="Score (rel.)", fontsize=6, title_fontsize=6,
         loc="upper left", bbox_to_anchor=(1.12, 1.0), framealpha=0.7,
     )
+
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def som_umatrix(
+    adata: ad.AnnData,
+    *,
+    key: str = "som",
+    cmap: str = "viridis",
+    annotate: bool = True,
+    figsize: tuple[float, float] | None = None,
+    title: str | None = None,
+) -> FigurePanel:
+    """Plot the SOM unified distance matrix (U-matrix).
+
+    High U-matrix values indicate cluster boundaries (nodes whose weights are
+    dissimilar to their neighbors); low values mark cluster centers. Use this
+    to identify natural cluster structure in the SOM without external labels.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with SOM results
+        from :func:`~astrolabe.tl.som`.
+    modality
+        Modality key when *data* is a MuData.
+    key
+        ``uns`` key written by :func:`~astrolabe.tl.som`.
+    cmap
+        Colormap. Default ``'viridis'``.
+    annotate
+        Overlay ``"{col}_{row}"`` node labels on each cell.
+    figsize
+        Figure size. Auto-computed if ``None``.
+    title
+        Axes title.
+    """
+    if key not in adata.uns:
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.som() first")
+
+    umatrix: np.ndarray = adata.uns[key]["umatrix"]
+    sx, sy = umatrix.shape
+
+    if figsize is None:
+        figsize = (max(4.0, sy * 0.6), max(3.5, sx * 0.6))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(umatrix.T, cmap=cmap, origin="upper", aspect="equal")
+    fig.colorbar(im, ax=ax, shrink=0.8, label="U-matrix distance")
+
+    if annotate:
+        for xi in range(sx):
+            for yi in range(sy):
+                ax.text(
+                    xi, yi, f"{xi}_{yi}",
+                    ha="center", va="center", fontsize=6, color="white",
+                    fontweight="bold",
+                )
+
+    ax.set_xlabel("SOM column")
+    ax.set_ylabel("SOM row")
+    ax.set_xticks(range(sx))
+    ax.set_yticks(range(sy))
+    ax.set_title(title or "SOM U-matrix", fontsize=10)
+
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def som_component_plane(
+    adata: ad.AnnData,
+    gene: str,
+    *,
+    key: str = "som",
+    cmap: str = "viridis",
+    annotate: bool = False,
+    figsize: tuple[float, float] | None = None,
+    title: str | None = None,
+) -> FigurePanel:
+    """Plot a SOM component plane for one gene.
+
+    Shows how strongly each SOM node is activated by a single gene — the weight
+    value for that gene across all nodes. Nodes where the gene has high weight
+    are those whose prototype vector includes high expression of that gene.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with SOM results
+        from :func:`~astrolabe.tl.som` (trained on a representation that
+        includes gene expression, e.g. ``use_rep=None``).
+    modality
+        Modality key when *data* is a MuData.
+    gene
+        Gene name. Must be in ``adata.var_names``.
+    key
+        ``uns`` key written by :func:`~astrolabe.tl.som`.
+    cmap
+        Colormap. Default ``'viridis'``.
+    annotate
+        Overlay node labels.
+    figsize
+        Figure size. Auto-computed if ``None``.
+    title
+        Axes title.
+    """
+    if key not in adata.uns:
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.som() first")
+    if gene not in adata.var_names:
+        raise KeyError(f"'{gene}' not found in var_names")
+
+    weights: np.ndarray = adata.uns[key]["weights"]
+    sx, sy, n_feat = weights.shape
+
+    if n_feat != adata.n_vars:
+        raise ValueError(
+            f"SOM was trained on {n_feat} features but adata has {adata.n_vars} vars. "
+            "Component planes require the SOM to be trained with use_rep=None."
+        )
+
+    gene_idx = adata.var_names.get_loc(gene)
+    plane = weights[:, :, gene_idx]
+
+    if figsize is None:
+        figsize = (max(4.0, sy * 0.6), max(3.5, sx * 0.6))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(plane.T, cmap=cmap, origin="upper", aspect="equal")
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Weight")
+
+    if annotate:
+        for xi in range(sx):
+            for yi in range(sy):
+                ax.text(
+                    xi, yi, f"{xi}_{yi}",
+                    ha="center", va="center", fontsize=6, color="white",
+                )
+
+    ax.set_xlabel("SOM column")
+    ax.set_ylabel("SOM row")
+    ax.set_xticks(range(sx))
+    ax.set_yticks(range(sy))
+    ax.set_title(title or f"Component plane: {gene}", fontsize=10)
+
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def som_hits(
+    adata: ad.AnnData,
+    *,
+    key: str = "som",
+    cmap: str = "Blues",
+    annotate: bool = True,
+    figsize: tuple[float, float] | None = None,
+    title: str | None = None,
+) -> FigurePanel:
+    """Plot the SOM hit-count map (cells per node).
+
+    Shows how many cells map to each node. Dense nodes are common expression
+    states; sparse nodes are rare or transitional. Used alongside the U-matrix
+    to distinguish cluster boundaries from low-density transition zones.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with SOM results
+        from :func:`~astrolabe.tl.som`.
+    modality
+        Modality key when *data* is a MuData.
+    key
+        ``uns`` key written by :func:`~astrolabe.tl.som`.
+    cmap
+        Colormap. Default ``'Blues'``.
+    annotate
+        Overlay cell count in each node.
+    figsize
+        Figure size. Auto-computed if ``None``.
+    title
+        Axes title.
+    """
+    if key not in adata.uns:
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.som() first")
+
+    hit_counts: np.ndarray = adata.uns[key]["hit_counts"]
+    sx, sy = hit_counts.shape
+
+    if figsize is None:
+        figsize = (max(4.0, sy * 0.6), max(3.5, sx * 0.6))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(hit_counts.T, cmap=cmap, origin="upper", aspect="equal")
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Cell count")
+
+    if annotate:
+        for xi in range(sx):
+            for yi in range(sy):
+                val = int(hit_counts[xi, yi])
+                color = "white" if hit_counts[xi, yi] > hit_counts.max() * 0.5 else "black"
+                ax.text(
+                    xi, yi, str(val),
+                    ha="center", va="center", fontsize=6, color=color,
+                )
+
+    ax.set_xlabel("SOM column")
+    ax.set_ylabel("SOM row")
+    ax.set_xticks(range(sx))
+    ax.set_yticks(range(sy))
+    ax.set_title(title or "SOM hit-count map", fontsize=10)
+
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def som_subcellular_plot(
+    adata: ad.AnnData,
+    transcript_domains: pd.DataFrame,
+    *,
+    max_cells: int = 200,
+    key: str = "som_subcellular",
+    palette: dict | None = None,
+    cell_boundaries_key: str = "cell_boundaries",
+    spatial_key: str = "spatial",
+    point_size: float = 2.0,
+    figsize: tuple[float, float] | None = None,
+    title: str | None = None,
+) -> FigurePanel:
+    """Render subcellular domain patterns by drawing transcript positions within cell outlines.
+
+    For each sampled cell, draws the boundary polygon as a thin outline and
+    scatters its transcript positions colored by their SOM domain label. The
+    result shows whether the SOM domains correspond to recognisable intracellular
+    structures (nuclear regions, peripheral rings, polar accumulations, etc.).
+
+    For a tissue-level spatial overview of dominant domains, use
+    ``ab.pl.points(mdata, color='som_subcellular_dominant')`` or
+    ``ab.pl.boundaries(mdata, color='som_subcellular_dominant')`` instead.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with subcellular
+        SOM results from :func:`~astrolabe.tl.som_subcellular_domains`.
+    transcript_domains
+        DataFrame returned by :func:`~astrolabe.tl.som_subcellular_domains`
+        with columns ``cell_id``, ``x``, ``y``, ``gene``, ``domain``.
+    modality
+        Modality key when *data* is a MuData.
+    max_cells
+        Maximum number of cells to render (random sample, reproducible).
+    key
+        ``uns`` key written by :func:`~astrolabe.tl.som_subcellular_domains`.
+    palette
+        Dict mapping domain label → color. Auto-assigned from ``tab20`` if
+        ``None``.
+    cell_boundaries_key
+        ``obsm`` key holding cell boundary polygons (awkward array).
+    spatial_key
+        ``obsm`` key for cell centroids.
+    point_size
+        Scatter point size in points².
+    figsize
+        Figure size. Auto-computed if ``None``.
+    title
+        Axes title.
+    """
+    import awkward as ak
+    import matplotlib.patches as mp_patches
+    import matplotlib.collections as mc
+
+    if key not in adata.uns:
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.som_subcellular_domains() first")
+    if cell_boundaries_key not in adata.obsm:
+        raise KeyError(f"obsm['{cell_boundaries_key}'] not found")
+
+    domain_names: list[str] = adata.uns[key]["domain_names"]
+    n_domains = len(domain_names)
+
+    if palette is None:
+        cmap_tab = plt.get_cmap("tab20")
+        palette = {d: cmap_tab(i % 20) for i, d in enumerate(domain_names)}
+
+    obs_index = {cid: i for i, cid in enumerate(adata.obs_names)}
+    boundaries_ak = adata.obsm[cell_boundaries_key]
+
+    cells_with_tx = transcript_domains["cell_id"].astype(str).unique()
+    cells_with_tx = [c for c in cells_with_tx if c in obs_index]
+    rng = np.random.default_rng(0)
+    sampled = rng.choice(
+        cells_with_tx,
+        size=min(max_cells, len(cells_with_tx)),
+        replace=False,
+    )
+    sampled_set = set(sampled.tolist())
+
+    centroids = np.asarray(adata.obsm[spatial_key], dtype=np.float32)
+    cell_indices = [obs_index[c] for c in sampled]
+    cx_vals = centroids[cell_indices, 0]
+    cy_vals = centroids[cell_indices, 1]
+    pad = 20.0
+    xlim = (float(cx_vals.min()) - pad, float(cx_vals.max()) + pad)
+    ylim = (float(cy_vals.min()) - pad, float(cy_vals.max()) + pad)
+
+    if figsize is None:
+        w = max(6.0, min(12.0, (xlim[1] - xlim[0]) / 50))
+        h = max(5.0, min(10.0, (ylim[1] - ylim[0]) / 50))
+        figsize = (w, h)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    poly_patches = []
+    for cid in sampled:
+        ci = obs_index[cid]
+        try:
+            verts = np.asarray(ak.to_regular(boundaries_ak[ci]))
+        except Exception:
+            try:
+                verts = np.asarray(boundaries_ak[ci])
+            except Exception:
+                continue
+        if verts.ndim == 2 and verts.shape[1] == 2:
+            poly_patches.append(mp_patches.Polygon(verts, closed=True, fill=False))
+
+    if poly_patches:
+        ax.add_collection(mc.PatchCollection(
+            poly_patches, match_original=True,
+            edgecolors="gray", linewidths=0.5, facecolors="none",
+        ))
+
+    tx_sub = transcript_domains[transcript_domains["cell_id"].astype(str).isin(sampled_set)]
+    for domain in domain_names:
+        mask = tx_sub["domain"] == domain
+        if mask.any():
+            sub = tx_sub[mask]
+            ax.scatter(
+                sub["x"].to_numpy(dtype=np.float32),
+                sub["y"].to_numpy(dtype=np.float32),
+                s=point_size, c=[palette[domain]], label=domain,
+                linewidths=0, alpha=0.7, zorder=2,
+            )
+
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (µm)")
+    ax.set_ylabel("y (µm)")
+    ax.set_title(title or f"Subcellular domains ({len(sampled)} cells sampled)", fontsize=10)
+
+    if n_domains <= 20:
+        ax.legend(
+            title="Domain", fontsize=6, title_fontsize=7,
+            loc="upper right", framealpha=0.7, markerscale=2.0,
+        )
 
     fig.tight_layout()
     plt.close(fig)

@@ -94,9 +94,9 @@ def log1p(
     layer: str | None = None,
     obsm: str | None = None,
 ) -> None:
-    """Logarithmize the data matrix: X = log(X + 1).
+    """Log-transform the data matrix in place: X = log(X + 1).
 
-    Delegates to :func:`scanpy.pp.log1p`.  Operates in place.
+    Delegates to :func:`scanpy.pp.log1p`.
 
     Parameters
     ----------

@@ -107,6 +107,19 @@ def read_cosmx(
     expr_path = _find_glob(path, "*_exprMat_file.csv", "expression matrix")
     expr_df = pd.read_csv(expr_path)
 
+    # cell_ID == 0 is CosMx's per-FOV "background"/unassigned transcript
+    # pseudo-cell (NanoString SMI ReadMe) — it is never a real segmented
+    # cell and never appears in the metadata file, so it has no centroid
+    # or boundary. Drop it here rather than carry NaN spatial coordinates
+    # downstream into neighbor-graph / filtering code that can't handle them.
+    if "cell_ID" in expr_df.columns:
+        n_bg = int((expr_df["cell_ID"] == 0).sum())
+        if n_bg:
+            log.info(
+                "Dropping %d background pseudo-cell row(s) (cell_ID == 0)", n_bg
+            )
+            expr_df = expr_df[expr_df["cell_ID"] != 0]
+
     # Build a compound cell_id key: "{fov}_{cell_ID}"
     expr_df["_cell_id"] = (
         expr_df["fov"].astype(str) + "_" + expr_df["cell_ID"].astype(str)
@@ -276,6 +289,14 @@ def _attach_boundaries(
     Each row is one vertex; rows for the same cell follow consecutively.
     """
     log.debug("Reading boundaries from %s", poly_path)
+    import os
+    file_mb = os.path.getsize(poly_path) / 1e6
+    if file_mb > 500:
+        log.warning(
+            "CosMx boundary file is %.0f MB; loading into RAM may be slow. "
+            "Consider filtering to a subregion before calling read_cosmx.",
+            file_mb,
+        )
     poly_df = pd.read_csv(poly_path)
 
     # Build compound cell_id key (same scheme as obs_names)

@@ -90,6 +90,8 @@ def filter_cells(
     :func:`filter_xenium` which runs probe-type breakdown first and then
     defers to this function for the shared steps.
 
+    Logs cell counts after each filter step at the INFO level.
+
     Parameters
     ----------
     data

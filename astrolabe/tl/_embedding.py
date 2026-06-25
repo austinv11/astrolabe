@@ -317,6 +317,12 @@ def spatial_umap(
 
     # ── Store blended graph temporarily for sc.tl.umap ───────────────────────
     conn_joint_key = f"{joint_key}_connectivities"
+    if joint_key in adata.uns:
+        log.warning(
+            "spatial_umap: uns['%s'] already exists and will be overwritten. "
+            "Pass a different joint_key= to avoid this.",
+            joint_key,
+        )
     adata.obsp[conn_joint_key] = conn_joint.astype(np.float32)
     adata.uns[joint_key] = {
         "connectivities_key": conn_joint_key,
@@ -324,6 +330,7 @@ def spatial_umap(
             "distances_key", f"{spatial_neighbors_key}_distances"
         ),
         "params": {
+            "method": "umap",
             "alpha": alpha,
             "expr_neighbors_key": expr_neighbors_key,
             "spatial_neighbors_key": spatial_neighbors_key,
@@ -337,21 +344,23 @@ def spatial_umap(
     )
 
     # ── Run UMAP ──────────────────────────────────────────────────────────────
-    sc.tl.umap(
-        adata,
-        neighbors_key=joint_key,
-        min_dist=min_dist,
-        spread=spread,
-        n_components=n_components,
-        random_state=random_state,
-        **kwargs,
-    )
+    try:
+        sc.tl.umap(
+            adata,
+            neighbors_key=joint_key,
+            min_dist=min_dist,
+            spread=spread,
+            n_components=n_components,
+            random_state=random_state,
+            **kwargs,
+        )
+    finally:
+        # Clean up the temporary joint graph from uns even if UMAP raises.
+        # Keep obsp[conn_joint_key] for potential reuse across repeated calls.
+        adata.uns.pop(joint_key, None)
 
     # Rename obsm['X_umap'] → obsm[key_added] if different
     if key_added != "X_umap" and "X_umap" in adata.obsm:
         adata.obsm[key_added] = adata.obsm.pop("X_umap")
-
-    # Clean up the temporary joint graph from uns (keep obsp for reuse)
-    del adata.uns[joint_key]
 
     log.info("spatial_umap: embedding written to obsm['%s']", key_added)

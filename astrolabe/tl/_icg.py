@@ -183,6 +183,9 @@ def interaction_changed_genes(
             mean_c = X_cont.mean(axis=0)
             mean_nc = X_non.mean(axis=0)
             log2fc = np.log2((mean_c + 1e-9) / (mean_nc + 1e-9))
+            # Genes absent in both groups are not informative; mark them NaN
+            # so they sort to the bottom rather than appearing as "no change".
+            log2fc = np.where((mean_c == 0) & (mean_nc == 0), np.nan, log2fc)
 
             parts.append(
                 pd.DataFrame(

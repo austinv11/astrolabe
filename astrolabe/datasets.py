@@ -8,7 +8,8 @@ returns a ready-to-use :class:`mudata.MuData` or :class:`anndata.AnnData`.
 Canonical usage
 ---------------
 >>> import astrolabe as ab
->>> mdata = ab.datasets.xenium()        # 10x Genomics Human Kidney tiny (20 MB)
+>>> mdata = ab.datasets.xenium()        # 10x Genomics Human Lung Cancer FFPE (~254 MB)
+>>> mdata = ab.datasets.xenium_tiny()   # 10x Genomics Human Kidney tiny (~20 MB, smoke tests)
 >>> mdata = ab.datasets.merscope()      # Vizgen assembloid, Zenodo 13835782 (126 MB)
 >>> mdata = ab.datasets.cosmx()         # NanoString Lung12 public S3 (155 MB)
 >>> adata = ab.datasets.ome_tiff()      # OME Bio-Formats sample (226 KB)
@@ -27,7 +28,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-__all__ = ["xenium", "merscope", "cosmx", "ome_tiff", "he"]
+__all__ = ["xenium", "xenium_tiny", "merscope", "cosmx", "ome_tiff", "he"]
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,26 @@ log = logging.getLogger(__name__)
 # Source URLs
 # ---------------------------------------------------------------------------
 
-_XENIUM_URL = (
+# FFPE Human Lung Cancer dataset (CC BY 4.0) — individual files, no _outs.zip needed.
+# 162k cells, 377-gene panel, ~5 GB total download (includes morphology OME-TIFF).
+_XENIUM_BASE = (
+    "https://cf.10xgenomics.com/samples/xenium/2.0.0/"
+    "Xenium_V1_humanLung_Cancer_FFPE/"
+    "Xenium_V1_humanLung_Cancer_FFPE"
+)
+# Maps remote file suffix → local canonical filename understood by read_xenium.
+_XENIUM_FILES: dict[str, str] = {
+    "_experiment.xenium": "experiment.xenium",
+    "_cells.parquet": "cells.parquet",
+    "_cell_feature_matrix.h5": "cell_feature_matrix.h5",
+    "_cell_boundaries.parquet": "cell_boundaries.parquet",
+    "_nucleus_boundaries.parquet": "nucleus_boundaries.parquet",
+    "_transcripts.parquet": "transcripts.parquet",
+    "_morphology.ome.tif": "morphology.ome.tif",
+}
+
+# Tiny smoke-test dataset (~20 MB zip, ~350 cells).
+_XENIUM_TINY_URL = (
     "https://cf.10xgenomics.com/samples/xenium/4.0.0/"
     "Xenium_V1_Protein_Human_Kidney_tiny/"
     "Xenium_V1_Protein_Human_Kidney_tiny_outs.zip"
@@ -132,21 +152,51 @@ def _find_xenium_outs(extract_dir: Path) -> Path:
 
 
 def xenium(cache_dir=None):
-    """Download and return the 10x Genomics Xenium Human Kidney tiny dataset.
+    """Download and return the 10x Genomics Xenium Human Lung Cancer FFPE dataset.
 
-    Source: 10x Genomics CDN (CC BY 4.0), ~20 MB ZIP.
+    Source: 10x Genomics CDN (CC BY 4.0), ~5 GB total (7 files: 6 expression
+    files ~254 MB + morphology OME-TIFF ~4.8 GB).
+    FFPE Human Lung Adenocarcinoma, 162k cells, 377-gene panel.
     Returns a :class:`mudata.MuData` with ``'xenium'`` modality containing
-    cell boundaries and spatial coordinates in microns.
+    cell boundaries, spatial coordinates in microns, transcript detections, and
+    the morphology image attached as an :class:`~astrolabe._utils.ImageSpec`
+    under ``uns['spatial'][library_id]['images']['morphology']``.
 
     Parameters
     ----------
     cache_dir
         Directory to cache downloaded files.  Defaults to
-        ``<cwd>/.astrolabe_cache/datasets/xenium/``.
+        ``<cwd>/.astrolabe_cache/datasets/xenium_ffpe/``.
     """
-    d = _cache_root(cache_dir) / "xenium"
+    d = _cache_root(cache_dir) / "xenium_ffpe"
+    outs_dir = d / "outs"
+    outs_dir.mkdir(parents=True, exist_ok=True)
+    for suffix, local_name in _XENIUM_FILES.items():
+        _download(
+            _XENIUM_BASE + suffix,
+            outs_dir / local_name,
+            f"Xenium Human Lung Cancer FFPE ({local_name})",
+        )
+    from astrolabe import io
+    return io.read_xenium(str(outs_dir), morphology_image=True)
+
+
+def xenium_tiny(cache_dir=None):
+    """Download and return the 10x Genomics Xenium Human Kidney tiny dataset.
+
+    Source: 10x Genomics CDN (CC BY 4.0), ~20 MB ZIP (~350 cells).
+    Intended for smoke tests only.  For full-size analysis use
+    :func:`xenium` which downloads the 254 MB Human Lung Cancer FFPE dataset.
+
+    Parameters
+    ----------
+    cache_dir
+        Directory to cache downloaded files.  Defaults to
+        ``<cwd>/.astrolabe_cache/datasets/xenium_tiny/``.
+    """
+    d = _cache_root(cache_dir) / "xenium_tiny"
     zip_path = d / "xenium_tiny.zip"
-    _download(_XENIUM_URL, zip_path, "Xenium Human Kidney tiny (10x Genomics, 20 MB)")
+    _download(_XENIUM_TINY_URL, zip_path, "Xenium Human Kidney tiny (10x Genomics, 20 MB)")
     outs_dir = d / "outs"
     if not outs_dir.exists():
         log.info("Extracting Xenium archive ...")

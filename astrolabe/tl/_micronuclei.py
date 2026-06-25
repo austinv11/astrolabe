@@ -275,8 +275,8 @@ def merge_micronuclei(
         else:
             polys = [np.asarray(raw[i]) for i in range(n_all)]
 
-        # Default: empty polygon for each cell
-        out_polys: list[np.ndarray] = [np.empty((0, 2), dtype=np.float32)] * n_all
+        # Default: empty polygon for each cell (list comprehension, not * n_all, to avoid aliasing)
+        out_polys: list[np.ndarray] = [np.empty((0, 2), dtype=np.float32) for _ in range(n_all)]
 
         for primary_name, micro_names in inverse.items():
             pi = name_to_idx.get(primary_name)

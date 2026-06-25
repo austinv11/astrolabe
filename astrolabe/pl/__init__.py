@@ -23,18 +23,28 @@ boundaries
 raster
     Bin cells into a 2-D grid (square pixels or hexagons) and render as
     an image; color by density, expression, or category.
+gradient_quiver
+    Quiver plot of per-cell expression gradients binned onto a coarse spatial grid.
+gradient_streamlines
+    Streamline plot of the interpolated gradient field (spatial ODE integral curves).
+divergence_plot
+    Pseudocolor heatmap of gradient divergence (sources) or curl.
 violin
     Per-cluster violin plots (wraps scanpy).
 dotplot
     Dot plot of gene expression across cluster groups; returns FigurePanel for composition.
 embedding_scatter
-    Scatter plot of any 2-D embedding (UMAP, PCA, spatial_umap) coloured by obs or gene.
+    Scatter plot of any 2-D embedding (UMAP, PCA, spatial_umap) colored by obs or gene.
 volcano_plot
     Volcano plot (log₂FC vs −log₁₀p) from rank_genes_groups results.
 paga_plot
     PAGA trajectory graph (wraps scanpy); returns FigurePanel.
 ripley_plot
     Ripley's L(d) − d curve plot from tl.ripley_l results.
+flux_plot
+    Heatmap of cross-compartment expression flux from tl.compartment_flux results.
+direction_histogram
+    Polar rose diagram of gradient direction distributions.
 
 Classes
 -------
@@ -67,6 +77,9 @@ from astrolabe.pl._spatial import (
     as_panel,
     boundaries,
     circle,
+    divergence_plot,
+    gradient_quiver,
+    gradient_streamlines,
     hstack,
     image,
     layer,
@@ -76,6 +89,7 @@ from astrolabe.pl._spatial import (
     vstack,
 )
 from astrolabe.pl._filters import CLAHEFilter, FFTFilter, GaussianFilter
+from astrolabe.pl._gradient_plots import direction_histogram, flux_plot
 from astrolabe.pl._napari import view_napari
 from astrolabe.pl._qc_plots import (
     cell_area_histogram,
@@ -95,12 +109,18 @@ from astrolabe.pl._qc_plots import (
     intensity_histogram,
     intensity_histograms,
     scatter_gate,
+    shape_distribution_plot,
+    shape_ratio_plot,
     moran_plot,
     nhood_enrichment_plot,
     co_occurrence_plot,
     centrality_scores_plot,
     expression_by_distance_plot,
     ligrec_plot,
+    som_umatrix,
+    som_component_plane,
+    som_hits,
+    som_subcellular_plot,
 )
 
 __all__ = [
@@ -110,6 +130,9 @@ __all__ = [
     "boundaries",
     "raster",
     "annotation",
+    "gradient_quiver",
+    "gradient_streamlines",
+    "divergence_plot",
     # Shape helpers
     "rectangle",
     "circle",
@@ -142,12 +165,21 @@ __all__ = [
     "intensity_histogram",
     "intensity_histograms",
     "scatter_gate",
+    "shape_distribution_plot",
+    "shape_ratio_plot",
     "moran_plot",
     "nhood_enrichment_plot",
     "co_occurrence_plot",
     "centrality_scores_plot",
     "expression_by_distance_plot",
     "ligrec_plot",
+    "som_umatrix",
+    "som_component_plane",
+    "som_hits",
+    "som_subcellular_plot",
+    # Gradient / vector-field summary plots
+    "flux_plot",
+    "direction_histogram",
     # Image filters
     "GaussianFilter",
     "CLAHEFilter",

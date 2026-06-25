@@ -16,7 +16,8 @@ filter_genes
 filter_isolated
     Remove spatially isolated cells using a pre-computed kNN distance graph.
 calculate_shape_metrics
-    Compute morphological shape metrics (circularity, solidity, elongation) from boundary polygons.
+    Compute morphological shape metrics (area, perimeter, spans, aspect ratio, equivalent radius,
+    circularity, solidity, elongation, RNA density) from boundary polygons.
 calculate_transcript_assignment_qc
     QC metrics for transcript-to-cell assignment quality.
 normalize_total

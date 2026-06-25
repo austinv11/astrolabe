@@ -322,12 +322,12 @@ def _build_awkward_boundaries(
     vertex_count = np.zeros(n_cells, dtype=np.int64)
 
     # First pass: determine per-cell vertex counts
-    for _, row in bnd_df.iterrows():
-        cid = str(row[id_col])
+    for cid_raw, coords_raw in zip(bnd_df[id_col], bnd_df[coords_col]):
+        cid = str(cid_raw)
         idx = cell_pos.get(cid)
         if idx is None:
             continue
-        coords = _parse_coords(row[coords_col])
+        coords = _parse_coords(coords_raw)
         if coords is None or len(coords) == 0:
             continue
         vertex_count[idx] += len(coords)

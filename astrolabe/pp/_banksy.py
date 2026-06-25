@@ -29,7 +29,7 @@ def _build_weight_matrices(
     coords: np.ndarray | None,
     agf: bool,
 ) -> tuple[sp.csr_matrix, sp.csr_matrix | None, sp.csr_matrix | None]:
-    """Build row-normalised M0 weight matrix and optional AGF weight matrices."""
+    """Build row-normalized M0 weight matrix and optional AGF weight matrices."""
     coo = conn.tocoo()
     rows, cols = coo.row.astype(np.int32), coo.col.astype(np.int32)
     n = conn.shape[0]
@@ -66,7 +66,7 @@ def banksy_matrix(
 ) -> None:
     """Build the BANKSY spatially-augmented feature matrix.
 
-    Augments each cell's normalised expression with a λ-weighted contribution
+    Augments each cell's normalized expression with a λ-weighted contribution
     from its spatial neighborhood and stores the result in ``obsm``.  Feed
     the output into :func:`~astrolabe.tl.pca` + :func:`~astrolabe.tl.cluster`
     for spatially-coherent cell typing (low λ) or tissue-domain segmentation
@@ -148,6 +148,13 @@ def banksy_matrix(
 
     X = adata.layers[layer] if layer is not None else adata.X
     if sp.issparse(X):
+        dense_gb = X.shape[0] * X.shape[1] * 4 / 1e9
+        if dense_gb > 2.0:
+            log.warning(
+                "banksy_matrix: converting %d-cell × %d-feature sparse matrix to dense "
+                "(%.1f GB); this may be slow or exhaust memory.",
+                X.shape[0], X.shape[1], dense_gb,
+            )
         X = X.toarray()
     X = np.asarray(X, dtype=np.float32)
 

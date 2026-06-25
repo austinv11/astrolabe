@@ -58,6 +58,9 @@ __all__ = [
     "boundaries",
     "raster",
     "annotation",
+    "gradient_quiver",
+    "gradient_streamlines",
+    "divergence_plot",
     "rectangle",
     "circle",
     "arrow",
@@ -105,7 +108,8 @@ class Layer:
         eagerly in the public function, not at render time.
     """
 
-    kind: Literal["points", "image", "boundaries", "raster", "annotation"]
+    kind: Literal["points", "image", "boundaries", "raster", "annotation",
+                  "quiver", "streamplot", "divergence"]
     adata: ad.AnnData | None = None
 
     # --- shared spatial / color ---
@@ -136,10 +140,11 @@ class Layer:
     fill_alpha: float = 0.0
 
     # --- raster-specific ---
-    bin_shape: Literal["square", "hex"] = "square"
+    bin_shape: Literal["square", "hex", "kde"] = "square"
     bins: int = 100
     agg: Literal["mean", "sum"] = "mean"
     fill_color: str | None = None
+    bandwidth: float | str | None = None
 
     # --- annotation-specific ---
     shapes: list | None = None          # list of (n_verts, 2) ndarray in µm
@@ -148,6 +153,10 @@ class Layer:
 
     # --- image-specific: scale bar ---
     scale_bar: bool | dict = False  # False | True | dict of kwargs
+
+    # --- gradient/quiver/streamplot/divergence: pre-computed arrays ---
+    # Stored here (not extra_kwargs) so they are not forwarded to matplotlib.
+    precomputed: dict[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.kind != "annotation" and self.adata is None:
@@ -969,9 +978,10 @@ def raster(
     spatial_key: str = "spatial",
     x_col: str = "x_location",
     y_col: str = "y_location",
-    bin_shape: Literal["square", "hex"] = "square",
+    bin_shape: Literal["square", "hex", "kde"] = "square",
     bins: int = 100,
     agg: Literal["mean", "sum"] = "mean",
+    bandwidth: float | str | None = None,
     fill_color: str | None = None,
     cmap: str | None = None,
     palette: dict | list | None = None,
@@ -1011,7 +1021,7 @@ def raster(
         Gene name or ``obs`` column to aggregate per bin.
         ``None`` renders density (cell count).  Categorical columns (e.g.
         ``color='leiden'``) are supported: each bin shows the dominant
-        category, coloured by *palette* the same way as :func:`points`.
+        category, colored by *palette* the same way as :func:`points`.
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
     spatial_key
@@ -1019,14 +1029,22 @@ def raster(
     x_col, y_col
         Coordinate column names when *data* is a Table/DataFrame.
     bin_shape
-        ``'square'`` (default) renders as a pixel image via
-        ``imshow``; ``'hex'`` uses matplotlib hexagonal bins.
+        ``'square'`` (default) renders as a pixel image via ``imshow``;
+        ``'hex'`` uses matplotlib hexagonal bins;
+        ``'kde'`` computes a Gaussian KDE and renders the smooth density
+        surface (only valid for density or continuous *color*).
     bins
-        Number of bins along each axis for square bins, or the
-        ``gridsize`` argument for hexagonal bins.
+        Number of bins along each axis for square bins, the ``gridsize``
+        argument for hexagonal bins, or the evaluation grid resolution for
+        KDE.
     agg
         Aggregation function for continuous *color* values:
         ``'mean'`` (default) or ``'sum'``.
+    bandwidth
+        KDE bandwidth passed to ``scipy.stats.gaussian_kde`` as
+        ``bw_method``.  Accepts a scalar (Scott's-rule-scale factor),
+        ``'scott'``, or ``'silverman'``.  ``None`` uses Scott's rule.
+        Ignored when *bin_shape* is not ``'kde'``.
     fill_color
         Solid matplotlib color (e.g. ``'#2196F3'`` or ``'royalblue'``).
         When set, density / aggregated value modulates the *alpha* channel
@@ -1062,6 +1080,8 @@ def raster(
     >>> ab.pl.raster(mdata, "leiden")                    # dominant cluster
     >>> ab.pl.raster(mdata, bin_shape="hex", bins=60)    # hexagonal bins
     >>> ab.pl.raster(tx, color="feature_name", bin_shape="hex")
+    >>> ab.pl.raster(mdata, bin_shape="kde")             # smooth KDE density
+    >>> ab.pl.raster(mdata, "EPCAM", bin_shape="kde")    # weighted KDE by expression
     """
     try:
         import pyarrow as pa
@@ -1095,6 +1115,7 @@ def raster(
         bins=bins,
         agg=agg,
         fill_color=fill_color,
+        bandwidth=bandwidth,
     )
     return SpatialPanel(
         layers=[lay],
@@ -1266,6 +1287,12 @@ def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
             _draw_raster_layer(ax, lay)
         elif lay.kind == "annotation":
             _draw_annotation_layer(ax, lay)
+        elif lay.kind == "quiver":
+            _draw_quiver_layer(ax, lay)
+        elif lay.kind == "streamplot":
+            _draw_streamplot_layer(ax, lay)
+        elif lay.kind == "divergence":
+            _draw_divergence_layer(ax, lay)
         else:
             log.warning("Unknown layer kind %r; skipping.", lay.kind)
 
@@ -1327,7 +1354,7 @@ def _draw_points_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     _check_single_library(adata)
     coords = adata.obsm[lay.spatial_key]
     n_cells = len(coords)
-    size = lay.size if lay.size is not None else max(0.5, 120_000 / n_cells)
+    size = lay.size if lay.size is not None else max(0.5, min(50, 120_000 / n_cells))
 
     color_values, is_categorical = _resolve_color_values(adata, lay.color)
 
@@ -1365,7 +1392,7 @@ def _draw_points_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
 
 
-# Additive-blending colours for multi-channel fluorescence composites.
+# Additive-blending colors for multi-channel fluorescence composites.
 # Ch0 → blue (DAPI), Ch1 → green, Ch2 → red, Ch3 → magenta, Ch4 → cyan, Ch5 → yellow
 _CHANNEL_COLORS_RGB: np.ndarray = np.array(
     [
@@ -1973,10 +2000,72 @@ def _draw_raster_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     x = coords[:, 0].astype(np.float64)
     y = coords[:, 1].astype(np.float64)
     color_values, is_categorical = _resolve_color_values(adata, lay.color)
-    if lay.bin_shape == "hex":
+    if lay.bin_shape == "kde":
+        _draw_raster_kde(ax, lay, x, y, color_values, is_categorical)
+    elif lay.bin_shape == "hex":
         _draw_raster_hex(ax, lay, x, y, color_values, is_categorical)
     else:
         _draw_raster_square(ax, lay, x, y, color_values, is_categorical)
+
+
+def _draw_raster_kde(
+    ax: matplotlib.axes.Axes,
+    lay: Layer,
+    x: np.ndarray,
+    y: np.ndarray,
+    color_values: np.ndarray | None,
+    is_categorical: bool,
+) -> None:
+    from scipy.stats import gaussian_kde
+
+    if is_categorical:
+        raise ValueError(
+            "bin_shape='kde' is not supported for categorical color variables. "
+            "Use bin_shape='square' or 'hex' for categorical coloring."
+        )
+
+    bins = lay.bins
+    xgrid = np.linspace(x.min(), x.max(), bins)
+    ygrid = np.linspace(y.min(), y.max(), bins)
+    xx, yy = np.meshgrid(xgrid, ygrid)
+    grid_pts = np.vstack([xx.ravel(), yy.ravel()])
+    extent = [float(x.min()), float(x.max()), float(y.min()), float(y.max())]
+
+    if color_values is None:
+        kde = gaussian_kde(np.vstack([x, y]), bw_method=lay.bandwidth)
+        density = kde(grid_pts).reshape(bins, bins)
+        label = "density"
+    else:
+        vals = color_values.astype(np.float64)
+        # Weight points by their (absolute) value so the KDE reflects
+        # where the signal is concentrated spatially.
+        w = np.abs(vals)
+        total = w.sum()
+        weights = w / total if total > 0 else None
+        kde = gaussian_kde(np.vstack([x, y]), bw_method=lay.bandwidth, weights=weights)
+        density = kde(grid_pts).reshape(bins, bins)
+        if lay.agg == "sum":
+            # scale back to sum units
+            density = density * total
+        label = lay.color or "value"
+
+    if lay.fill_color is not None:
+        rgba = _density_to_rgba(density, lay.fill_color, lay.vmin, lay.vmax)
+        ax.imshow(rgba, extent=extent, origin="lower", aspect="equal",
+                  interpolation="bilinear")
+    else:
+        norm = (
+            mcolors.TwoSlopeNorm(lay.vcenter, vmin=lay.vmin, vmax=lay.vmax)
+            if lay.vcenter is not None else None
+        )
+        im = ax.imshow(
+            density, extent=extent, origin="lower", aspect="equal",
+            cmap=lay.cmap or _DEFAULT_CONTINUOUS_CMAP,
+            vmin=lay.vmin if norm is None else None,
+            vmax=lay.vmax if norm is None else None,
+            norm=norm, interpolation="bilinear",
+        )
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=label)
 
 
 def _draw_raster_square(
@@ -2151,7 +2240,7 @@ def _density_to_rgba(
     vmin: float | None,
     vmax: float | None,
 ) -> np.ndarray:
-    """Map a 2D float grid to RGBA using a solid color with alpha = normalised value."""
+    """Map a 2D float grid to RGBA using a solid color with alpha = normalized value."""
     r, g, b, _ = mcolors.to_rgba(fill_color)
     finite = grid[np.isfinite(grid)]
     lo = vmin if vmin is not None else (float(finite.min()) if len(finite) > 0 else 0.0)
@@ -2264,3 +2353,474 @@ def _resolve_channel_index(channel: int | str, adata: ad.AnnData) -> int:
     if hasattr(adata, "var_names") and channel in adata.var_names:
         return adata.var_names.get_loc(channel)
     raise KeyError(f"Channel '{channel}' not found in var_names.")
+
+
+# ---------------------------------------------------------------------------
+# Gradient / vector field public functions
+# ---------------------------------------------------------------------------
+
+
+def gradient_quiver(
+    data: ad.AnnData | md.MuData,
+    key: str,
+    *,
+    modality: str | None = None,
+    spatial_key: str = "spatial",
+    bin_size_um: float = 50.0,
+    scale: float | None = None,
+    cmap: str = "viridis",
+    alpha: float = 0.85,
+    title: str | None = None,
+    frameon: bool = True,
+    figsize: tuple[float, float] = (5, 5),
+) -> SpatialPanel:
+    """Quiver plot of expression gradient vectors binned to a coarse grid.
+
+    Reads per-cell gradient vectors from ``obsm['gradient_{key}']`` (computed
+    by :func:`~astrolabe.tl.expression_gradient`) and aggregates them into
+    spatial bins of size *bin_size_um* µm.  Mean (U, V) per bin is rendered
+    as a quiver plot colored by gradient magnitude.
+
+    Compose with other layers using ``+`` to overlay on a cell scatter or
+    image::
+
+        (ab.pl.points(mdata, color='leiden') +
+         ab.pl.gradient_quiver(mdata, 'EPCAM')).show()
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    key
+        Feature key (e.g. ``'EPCAM'``); reads ``obsm['gradient_{key}']``.
+    modality
+        Modality key when *data* is a MuData.
+    spatial_key
+        ``obsm`` key for µm coordinates.
+    bin_size_um
+        Size of spatial bins in µm.  Smaller bins show finer spatial detail
+        but may be noisy where cell density is low.
+    scale
+        Arrow scale passed to ``ax.quiver``.  Larger = shorter arrows.
+        Auto-scaled to gradient magnitude range when ``None``.
+    cmap
+        Colormap for magnitude.
+    alpha
+        Arrow transparency.
+    title
+        Panel title.
+    frameon
+        Draw axis frame and labels.
+    figsize
+        ``(width, height)`` in inches when rendered standalone.
+
+    Returns
+    -------
+    SpatialPanel
+    """
+    adata = _resolve_adata(data, modality)
+    grad_key = f"gradient_{key}"
+    if grad_key not in adata.obsm:
+        raise KeyError(
+            f"obsm['{grad_key}'] not found. "
+            f"Run ab.tl.expression_gradient(mdata, keys=['{key}']) first."
+        )
+    _check_single_library(adata)
+
+    coords = adata.obsm[spatial_key][:, :2].astype(np.float64)
+    grad = adata.obsm[grad_key].astype(np.float64)
+
+    x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
+    y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
+    n_x = max(2, int((x_max - x_min) / bin_size_um) + 1)
+    n_y = max(2, int((y_max - y_min) / bin_size_um) + 1)
+
+    # Bin cells into (n_y, n_x) grid and average U/V
+    xi = np.clip(
+        ((coords[:, 0] - x_min) / (x_max - x_min + 1e-8) * (n_x - 1)).astype(int),
+        0, n_x - 1,
+    )
+    yi = np.clip(
+        ((coords[:, 1] - y_min) / (y_max - y_min + 1e-8) * (n_y - 1)).astype(int),
+        0, n_y - 1,
+    )
+    flat_idx = yi * n_x + xi
+    n_bins = n_y * n_x
+    U_sum = np.zeros(n_bins, dtype=np.float64)
+    V_sum = np.zeros(n_bins, dtype=np.float64)
+    counts = np.zeros(n_bins, dtype=np.int64)
+    np.add.at(U_sum, flat_idx, grad[:, 0])
+    np.add.at(V_sum, flat_idx, grad[:, 1])
+    np.add.at(counts, flat_idx, 1)
+
+    has_cells = counts > 0
+    U_bin = np.where(has_cells, U_sum / np.where(has_cells, counts, 1), np.nan)
+    V_bin = np.where(has_cells, V_sum / np.where(has_cells, counts, 1), np.nan)
+    magnitude = np.sqrt(U_bin ** 2 + V_bin ** 2)
+
+    x_centers = x_min + (np.arange(n_x) + 0.5) * (x_max - x_min) / n_x
+    y_centers = y_min + (np.arange(n_y) + 0.5) * (y_max - y_min) / n_y
+    XC, YC = np.meshgrid(x_centers, y_centers)
+
+    lay = Layer(
+        kind="quiver",
+        adata=adata,
+        spatial_key=spatial_key,
+        color=key,
+        alpha=alpha,
+        cmap=cmap,
+        precomputed={
+            "X": XC.ravel()[has_cells],
+            "Y": YC.ravel()[has_cells],
+            "U": U_bin[has_cells],
+            "V": V_bin[has_cells],
+            "magnitude": magnitude[has_cells],
+            "scale": scale,
+            "key": key,
+        },
+    )
+    return SpatialPanel(
+        layers=[lay],
+        title=title if title is not None else f"∇{key}",
+        frameon=frameon,
+        figsize=figsize,
+    )
+
+
+def gradient_streamlines(
+    data: ad.AnnData | md.MuData,
+    key: str,
+    *,
+    modality: str | None = None,
+    spatial_key: str = "spatial",
+    density: float = 1.5,
+    linewidth: float | None = None,
+    color_by: str = "magnitude",
+    cmap: str = "viridis",
+    alpha: float = 0.8,
+    title: str | None = None,
+    frameon: bool = True,
+    figsize: tuple[float, float] = (5, 5),
+) -> SpatialPanel:
+    """Streamline plot of the interpolated expression gradient field.
+
+    Reads the pre-interpolated grid from ``uns['gradient_field_{key}']``
+    (computed by :func:`~astrolabe.tl.gradient_field`) and renders streamlines
+    via ``matplotlib.axes.Axes.streamplot``.
+
+    Streamlines are integral curves of the spatial ODE
+    ``dx/dt = ∇f(x)`` — field lines of the static expression gradient.
+    They show the *direction of steepest expression ascent*, not cell
+    movement or RNA velocity.  NaN values outside the tissue mask are
+    respected; streamlines do not enter masked voids.
+
+    Compose with other spatial layers::
+
+        (ab.pl.image(mdata) +
+         ab.pl.gradient_streamlines(mdata, 'EPCAM')).show()
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    key
+        Feature key; reads ``uns['gradient_field_{key}']``.
+    modality
+        Modality key when *data* is a MuData.
+    spatial_key
+        ``obsm`` key for µm coordinates.
+    density
+        Streamline density passed to ``ax.streamplot``.  Higher = more lines.
+    linewidth
+        Line width.  When ``None``, scaled by normalized magnitude.
+    color_by
+        ``'magnitude'`` to color by gradient magnitude, or ``'uniform'``
+        for a single color (black).
+    cmap
+        Colormap for ``color_by='magnitude'``.
+    alpha
+        Line transparency.
+    title
+        Panel title.
+    frameon
+        Draw axis frame and labels.
+    figsize
+        ``(width, height)`` in inches when rendered standalone.
+
+    Returns
+    -------
+    SpatialPanel
+    """
+    adata = _resolve_adata(data, modality)
+    field_key = f"gradient_field_{key}"
+    if field_key not in adata.uns:
+        raise KeyError(
+            f"uns['{field_key}'] not found. "
+            f"Run ab.tl.gradient_field(mdata, '{key}') first."
+        )
+    _check_single_library(adata)
+
+    gf = adata.uns[field_key]
+    U = np.array(gf["U"], dtype=np.float64)
+    V = np.array(gf["V"], dtype=np.float64)
+    x_grid = np.array(gf["X_grid"])
+    y_grid = np.array(gf["Y_grid"])
+    magnitude = np.sqrt(U ** 2 + V ** 2)
+
+    lay = Layer(
+        kind="streamplot",
+        adata=adata,
+        spatial_key=spatial_key,
+        color=key,
+        alpha=alpha,
+        cmap=cmap,
+        precomputed={
+            "U": U,
+            "V": V,
+            "X_grid": x_grid,
+            "Y_grid": y_grid,
+            "magnitude": magnitude,
+            "density": density,
+            "linewidth": linewidth,
+            "color_by": color_by,
+            "key": key,
+        },
+    )
+    return SpatialPanel(
+        layers=[lay],
+        title=title if title is not None else f"∇{key} streamlines",
+        frameon=frameon,
+        figsize=figsize,
+    )
+
+
+def divergence_plot(
+    data: ad.AnnData | md.MuData,
+    key: str,
+    *,
+    modality: str | None = None,
+    spatial_key: str = "spatial",
+    show_curl: bool = False,
+    cmap: str = "RdBu_r",
+    vcenter: float = 0.0,
+    alpha: float = 0.8,
+    title: str | None = None,
+    frameon: bool = True,
+    figsize: tuple[float, float] = (5, 5),
+) -> SpatialPanel:
+    """Heatmap of expression gradient divergence (or curl) on a spatial panel.
+
+    Reads ``uns['gradient_field_{key}']`` and renders the divergence field
+    ``∂U/∂x + ∂V/∂y`` as a pseudocolor overlay.  Positive divergence marks
+    expression *sources* (field expands outward); negative marks *sinks*.
+
+    ``show_curl=True`` renders curl ``∂V/∂x − ∂U/∂y`` instead.  For a pure
+    scalar gradient field, curl should be near zero everywhere — significant
+    curl indicates estimation noise or model misfit rather than biological
+    rotation.
+
+    Compose over a cell scatter or image::
+
+        (ab.pl.points(mdata, 'leiden') +
+         ab.pl.divergence_plot(mdata, 'EPCAM')).show()
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    key
+        Feature key; reads ``uns['gradient_field_{key}']``.
+    modality
+        Modality key when *data* is a MuData.
+    spatial_key
+        ``obsm`` key for µm coordinates.
+    show_curl
+        If ``True``, display curl instead of divergence.
+    cmap
+        Diverging colormap.  Defaults to ``'RdBu_r'`` (red = source,
+        blue = sink for divergence).
+    vcenter
+        Center of the diverging colormap.
+    alpha
+        Heatmap transparency.
+    title
+        Panel title.
+    frameon
+        Draw axis frame and labels.
+    figsize
+        ``(width, height)`` in inches when rendered standalone.
+
+    Returns
+    -------
+    SpatialPanel
+    """
+    adata = _resolve_adata(data, modality)
+    field_key = f"gradient_field_{key}"
+    if field_key not in adata.uns:
+        raise KeyError(
+            f"uns['{field_key}'] not found. "
+            f"Run ab.tl.gradient_field(mdata, '{key}') first."
+        )
+    _check_single_library(adata)
+
+    gf = adata.uns[field_key]
+    field_data = np.array(gf["curl"] if show_curl else gf["divergence"], dtype=np.float64)
+    x_grid = np.array(gf["X_grid"])
+    y_grid = np.array(gf["Y_grid"])
+
+    field_name = "curl" if show_curl else "divergence"
+    lay = Layer(
+        kind="divergence",
+        adata=adata,
+        spatial_key=spatial_key,
+        color=key,
+        alpha=alpha,
+        cmap=cmap,
+        vcenter=vcenter,
+        precomputed={
+            "field": field_data,
+            "X_grid": x_grid,
+            "Y_grid": y_grid,
+            "field_name": field_name,
+            "key": key,
+        },
+    )
+    return SpatialPanel(
+        layers=[lay],
+        title=title if title is not None else f"{field_name}(∇{key})",
+        frameon=frameon,
+        figsize=figsize,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gradient rendering functions (called from _render_panel dispatch)
+# ---------------------------------------------------------------------------
+
+
+def _draw_quiver_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+    p = lay.precomputed
+    X, Y = p["X"], p["Y"]
+    U, V, magnitude = p["U"], p["V"], p["magnitude"]
+    scale = p.get("scale")
+    key = p.get("key", "")
+
+    valid = np.isfinite(U) & np.isfinite(V)
+    if not valid.any():
+        return
+
+    # Auto-scale: make arrows ~10% of the axis range by default
+    if scale is None:
+        x_range = float(X.max() - X.min()) if len(X) > 1 else 1.0
+        mean_mag = float(magnitude[valid].mean()) if valid.any() else 1.0
+        scale = mean_mag / (x_range * 0.05 + 1e-12)
+        scale = max(scale, 1e-6)
+
+    norm = mcolors.Normalize(
+        vmin=float(np.nanmin(magnitude)),
+        vmax=float(np.nanmax(magnitude)),
+    )
+    qv = ax.quiver(
+        X[valid], Y[valid],
+        U[valid], V[valid],
+        magnitude[valid],
+        cmap=lay.cmap or "viridis",
+        norm=norm,
+        scale=scale,
+        scale_units="xy",
+        alpha=lay.alpha,
+        pivot="mid",
+        width=0.004,
+    )
+    plt.colorbar(qv, ax=ax, fraction=0.046, pad=0.04, label=f"‖∇{key}‖")
+    ax.autoscale_view()
+
+
+def _draw_streamplot_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+    p = lay.precomputed
+    U = p["U"]
+    V = p["V"]
+    x_grid = p["X_grid"]   # 1-D, shape (n_grid,)
+    y_grid = p["Y_grid"]   # 1-D, shape (n_grid,)
+    magnitude = p["magnitude"]
+    density = float(p.get("density", 1.5))
+    linewidth = p.get("linewidth")
+    color_by = p.get("color_by", "magnitude")
+    key = p.get("key", "")
+
+    # Replace NaN with 0 for streamplot (it stops at low-speed regions)
+    U_plot = np.where(np.isfinite(U), U, 0.0)
+    V_plot = np.where(np.isfinite(V), V, 0.0)
+    speed = np.sqrt(U_plot ** 2 + V_plot ** 2)
+
+    if color_by == "magnitude":
+        color = speed
+        finite_mag = magnitude[np.isfinite(magnitude)]
+        if len(finite_mag) == 0:
+            finite_mag = np.array([0.0, 1.0])
+        norm = mcolors.Normalize(
+            vmin=float(np.nanmin(finite_mag)),
+            vmax=float(np.nanmax(finite_mag)),
+        )
+        lw = linewidth if linewidth is not None else (
+            1 + 2 * np.clip(speed / (speed.max() + 1e-8), 0, 1)
+        )
+        sp_result = ax.streamplot(
+            x_grid, y_grid, U_plot, V_plot,
+            color=color,
+            cmap=lay.cmap or "viridis",
+            norm=norm,
+            linewidth=lw,
+            density=density,
+            arrowsize=1.2,
+        )
+        plt.colorbar(
+            sp_result.lines, ax=ax, fraction=0.046, pad=0.04,
+            label=f"‖∇{key}‖",
+        )
+    else:
+        lw = linewidth if linewidth is not None else 1.2
+        ax.streamplot(
+            x_grid, y_grid, U_plot, V_plot,
+            color="black",
+            linewidth=lw,
+            density=density,
+            arrowsize=1.2,
+        )
+
+    ax.set_xlim(x_grid[0], x_grid[-1])
+    ax.set_ylim(y_grid[0], y_grid[-1])
+
+
+def _draw_divergence_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+    p = lay.precomputed
+    field = p["field"]
+    x_grid = p["X_grid"]
+    y_grid = p["Y_grid"]
+    field_name = p.get("field_name", "divergence")
+    key = p.get("key", "")
+
+    valid_vals = field[np.isfinite(field)]
+    if len(valid_vals) == 0:
+        return
+
+    abs_max = float(np.nanmax(np.abs(valid_vals)))
+    vcenter = lay.vcenter if lay.vcenter is not None else 0.0
+    norm = mcolors.TwoSlopeNorm(
+        vcenter=vcenter,
+        vmin=float(np.nanmin(valid_vals)),
+        vmax=float(np.nanmax(valid_vals)),
+    )
+
+    XX, YY = np.meshgrid(x_grid, y_grid)
+    pm = ax.pcolormesh(
+        XX, YY, field,
+        cmap=lay.cmap or "RdBu_r",
+        norm=norm,
+        alpha=lay.alpha,
+        shading="auto",
+    )
+    label = f"{field_name}(∇{key})" if key else field_name
+    plt.colorbar(pm, ax=ax, fraction=0.046, pad=0.04, label=label)
+    ax.set_xlim(x_grid[0], x_grid[-1])
+    ax.set_ylim(y_grid[0], y_grid[-1])

@@ -25,6 +25,8 @@ annotate_clusters
     Map cluster IDs to cell type labels and write them to obs.
 geary_c
     Global Geary's C spatial autocorrelation for one or more keys; returns a DataFrame.
+colocation_quotient
+    Gene-pair co-location quotients (CLQ) in cell mode (expression matrix) or pixel mode (transcript grid).
 moran
     Global Moran's I spatial autocorrelation for one or more keys; returns a DataFrame.
 moran_local
@@ -55,6 +57,24 @@ banksy_sweep
     Run the BANKSY pipeline across a grid of λ values and Leiden resolutions.
 composition
     Compute cell-type fraction per spatial domain; returns (regions × cell_types) DataFrame.
+som
+    Train a SOM on any obsm embedding or X; assigns cells to BMU nodes for topology-aware clustering.
+som_gene_modules
+    Cluster genes into co-expression modules by training a SOM on the gene-by-cell matrix.
+som_subcellular_domains
+    Discover recurring subcellular spatial patterns by training a SOM on intracellular transcript positions.
+expression_gradient
+    Per-cell Moving Least Squares gradient of a gene or obs variable over the spatial graph.
+gradient_field
+    Interpolate per-cell gradients onto a regular grid; compute divergence and curl.
+gradient_significance
+    Permutation test for gradient magnitude and directional coherence.
+compartment_flux
+    Mean projected gradient flux across cell-type label boundaries in the spatial graph.
+spatial_diffusion
+    Graph-Laplacian (Coifman–Lafon) diffusion smoothing and optional spectral decomposition.
+decay_length
+    Phenomenological radial decay-length fit f(r) = f₀·exp(−r/λ) from a source point.
 """
 
 from astrolabe.tl._graph import spatial_neighbors
@@ -73,11 +93,13 @@ from astrolabe.tl._spatial_stats import (
     ripley_l,
     spatially_variable_genes,
     geary_c,
+    colocation_quotient,
 )
 from astrolabe.tl._micronuclei import identify_micronuclei, merge_micronuclei
 from astrolabe.tl._icg import interaction_changed_genes
 from astrolabe.tl._gene_modules import spatial_gene_modules
 from astrolabe.tl._banksy_sweep import banksy_sweep
+from astrolabe.tl._som import som, som_gene_modules, som_subcellular_domains
 from astrolabe.tl._neighborhood import (
     nhood_enrichment,
     co_occurrence,
@@ -85,6 +107,14 @@ from astrolabe.tl._neighborhood import (
     expression_by_distance,
     ligrec,
     composition,
+)
+from astrolabe.tl._gradient import (
+    expression_gradient,
+    gradient_field,
+    gradient_significance,
+    compartment_flux,
+    spatial_diffusion,
+    decay_length,
 )
 
 __all__ = [
@@ -108,6 +138,7 @@ __all__ = [
     "ripley_l",
     "spatially_variable_genes",
     "geary_c",
+    "colocation_quotient",
     "identify_micronuclei",
     "merge_micronuclei",
     "nhood_enrichment",
@@ -119,4 +150,13 @@ __all__ = [
     "interaction_changed_genes",
     "spatial_gene_modules",
     "banksy_sweep",
+    "som",
+    "som_gene_modules",
+    "som_subcellular_domains",
+    "expression_gradient",
+    "gradient_field",
+    "gradient_significance",
+    "compartment_flux",
+    "spatial_diffusion",
+    "decay_length",
 ]

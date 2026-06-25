@@ -56,7 +56,7 @@ def banksy_sweep(
     Parameters
     ----------
     data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with normalised
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with normalized
         expression and a spatial graph in ``obsp``.
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
@@ -67,7 +67,7 @@ def banksy_sweep(
     n_pcs
         Number of PCA components for the BANKSY embedding.
     n_neighbors
-        Neighbours used when building the KNN graph on the BANKSY PCA
+        Neighbors used when building the KNN graph on the BANKSY PCA
         embedding for Leiden.
     agf
         Include azimuthal Gabor features in the BANKSY matrix.
@@ -105,6 +105,9 @@ def banksy_sweep(
 
     n_pcs_eff = min(n_pcs, adata.n_obs - 1, adata.n_vars - 1)
     records = []
+
+    # Save original X_pca so the sweep doesn't clobber the user's expression PCA.
+    _saved_pca = adata.obsm.get("X_pca")
 
     for lam in lambda_params:
         lam_tag = f"{lam:.2f}".rstrip("0").rstrip(".")
@@ -157,6 +160,14 @@ def banksy_sweep(
 
         # clean up temporary obsm key
         del adata.obsm[tmp_key]
+
+    # Restore original X_pca (sweep wrote BANKSY PCAs; the user's expression PCA is
+    # preserved so downstream clustering / UMAP is not silently changed).
+    if _saved_pca is not None:
+        adata.obsm["X_pca"] = _saved_pca
+        log.info("banksy_sweep: restored original obsm['X_pca']")
+    elif "X_pca" in adata.obsm:
+        del adata.obsm["X_pca"]
 
     df = pd.DataFrame(records)
     adata.uns[key_added] = df

@@ -46,7 +46,7 @@ def _spatial_corr_matrix(
         return np.nan_to_num(corr, nan=0.0)
 
     else:  # moran_bv
-        # I_bi(i,j) = z_i^T W z_j / n  (for row-normalised W, S0 = n)
+        # I_bi(i,j) = z_i^T W z_j / n  (for row-normalized W, S0 = n)
         n = Z.shape[0]
         corr = (Z.T @ WZ) / n  # (n_genes, n_genes)
         corr = (corr + corr.T) / 2  # symmetrise floating-point asymmetry
@@ -133,11 +133,11 @@ def spatial_gene_modules(
         ``'spatial_lag'``
             Pearson correlation of each gene's spatially-lagged expression
             vector (W @ x) with every other gene's lag.  Fast and intuitive;
-            genes that are spatially co-expressed with similar neighbours will
+            genes that are spatially co-expressed with similar neighbors will
             cluster together.
         ``'moran_bv'``
             Vectorised bivariate Moran's I for every gene pair:
-            I(i,j) = zᵢᵀ W z_j / n (row-normalised W).  More formally
+            I(i,j) = zᵢᵀ W z_j / n (row-normalized W).  More formally
             grounded in spatial statistics; captures the degree to which
             high values of gene i coincide with spatially-lagged high values
             of gene j.  Values lie in [−1, 1].
@@ -150,7 +150,7 @@ def spatial_gene_modules(
             Spectral clustering with affinity = (corr + 1) / 2.
             Requires ``scikit-learn``.
     score_cells
-        Compute the mean (normalised) expression of each module's genes and
+        Compute the mean (normalized) expression of each module's genes and
         store the result in ``obsm[key_added + '_scores']``.
     layer
         Expression layer for scoring.  ``None`` uses ``adata.X``.

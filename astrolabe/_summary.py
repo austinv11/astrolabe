@@ -227,7 +227,7 @@ def _collect(data: ad.AnnData | md.MuData) -> dict:
         if col in adata.obs.columns:
             try:
                 return float(fn(adata.obs[col]))
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 pass
         return None
 

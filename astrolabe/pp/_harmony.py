@@ -78,7 +78,11 @@ def harmony(
         if batch_key not in adata.obs:
             raise KeyError(f"obs['{batch_key}'] not found")
         if random_state != 0:
-            log.debug("harmony GPU: random_state=%d ignored (rsc.pp.harmony_integrate does not expose it)", random_state)
+            log.warning(
+                "harmony GPU: random_state=%d is ignored (rsc.pp.harmony_integrate does not expose it); "
+                "GPU results are not reproducible.",
+                random_state,
+            )
         import cupy as cp
         moved = not _is_cupy(adata.obsm[basis])
         if moved:
@@ -126,5 +130,5 @@ def harmony(
         **kwargs,
     )
 
-    adata.obsm[key_added] = ho.Z_corr.T.astype(np.float32)
+    adata.obsm[key_added] = np.asarray(ho.Z_corr, dtype=np.float32)
     log.info("harmony: done → obsm['%s']", key_added)

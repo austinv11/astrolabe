@@ -159,7 +159,10 @@ def _transform_coords(coords: np.ndarray, M: np.ndarray) -> np.ndarray:
     """
     h = np.ones((len(coords), 3), dtype=np.float64)
     h[:, :2] = coords
-    return (M @ h.T).T[:, :2].astype(coords.dtype)
+    # Always return float32 — affine-transformed coordinates are continuous even
+    # when the input was integer pixel coordinates.
+    out_dtype = coords.dtype if np.issubdtype(coords.dtype, np.floating) else np.float32
+    return (M @ h.T).T[:, :2].astype(out_dtype)
 
 
 def with_adata(fn: _F) -> _F:

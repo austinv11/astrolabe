@@ -131,22 +131,22 @@ def nhood_enrichment(
     # Observed: (n_types × n_types) edge count matrix
     obs_counts = (C.T @ adj @ C).toarray().astype(np.float64)
 
-    # Permutations
+    # Permutations — Welford's online algorithm avoids catastrophic
+    # cancellation when computing variance via sum-of-squares minus mean².
     rng = np.random.default_rng(seed)
-    perm_sum = np.zeros_like(obs_counts)
-    perm_sq = np.zeros_like(obs_counts)
+    perm_mean = np.zeros_like(obs_counts)
+    perm_M2 = np.zeros_like(obs_counts)
     perm_codes = codes.copy()
 
-    for _ in range(n_perms):
+    for i in range(1, n_perms + 1):
         rng.shuffle(perm_codes)
         Cp = _one_hot(perm_codes, n_types)
         m = (Cp.T @ adj @ Cp).toarray().astype(np.float64)
-        perm_sum += m
-        perm_sq += m * m
+        delta = m - perm_mean
+        perm_mean += delta / i
+        perm_M2 += delta * (m - perm_mean)
 
-    perm_mean = perm_sum / n_perms
-    perm_var = perm_sq / n_perms - perm_mean ** 2
-    perm_std = np.sqrt(np.maximum(perm_var, 0.0))
+    perm_std = np.sqrt(perm_M2 / n_perms)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         zscore = np.where(perm_std > 0, (obs_counts - perm_mean) / perm_std, 0.0)
@@ -439,7 +439,7 @@ def expression_by_distance(
     Results stored in ``adata.uns[key_added]``
     ------------------------------------------
     ``mean``
-        :class:`pandas.DataFrame` (n_bins × n_genes); index = bin centres in µm.
+        :class:`pandas.DataFrame` (n_bins × n_genes); index = bin centers in µm.
     ``se``
         :class:`pandas.DataFrame` — standard error (same shape as ``mean``).
     ``n_cells``

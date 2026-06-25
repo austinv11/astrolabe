@@ -34,7 +34,7 @@ def paga(
     graph, enabling trajectory and lineage inference at coarser resolution.
 
     Wraps :func:`scanpy.tl.paga`.  Results are stored in ``uns['paga']``
-    and can be visualised with :func:`scanpy.pl.paga` or overlaid onto a
+    and can be visualized with :func:`scanpy.pl.paga` or overlaid onto a
     UMAP with ``sc.pl.umap(adata, color=groupby, edges=True)``.
 
     .. note::
@@ -177,11 +177,19 @@ def dpt(
                 f"No cells found where obs['{root_obs_key}'] == {root_obs_val!r}. "
                 f"Available values: {sorted(adata.obs[root_obs_key].unique().tolist())!r}"
             )
+        n_matches = int(matches.sum())
         adata.uns["iroot"] = int(matches.argmax())
-        log.info(
-            "dpt: root cell set to index %d (first cell where obs['%s'] == %r)",
-            adata.uns["iroot"], root_obs_key, root_obs_val,
-        )
+        if n_matches > 1:
+            log.warning(
+                "dpt: %d cells match root condition (obs['%s'] == %r); "
+                "using first match (index %d). Pass root_cell= for reproducibility.",
+                n_matches, root_obs_key, root_obs_val, adata.uns["iroot"],
+            )
+        else:
+            log.info(
+                "dpt: root cell set to index %d (first cell where obs['%s'] == %r)",
+                adata.uns["iroot"], root_obs_key, root_obs_val,
+            )
     elif "iroot" not in adata.uns:
         raise ValueError(
             "Root cell not specified. Pass root_cell=<int> or "
@@ -189,8 +197,17 @@ def dpt(
         )
 
     # ── Diffusion map (prerequisite for DPT) ─────────────────────────────────
-    if "X_diffmap" not in adata.obsm:
+    existing_diffmap = adata.obsm.get("X_diffmap")
+    if existing_diffmap is None:
         log.info("dpt: computing diffusion map (n_dcs=%d)", n_dcs)
+        sc.tl.diffmap(adata, n_comps=n_dcs, neighbors_key=neighbors_key,
+                      random_state=random_state)
+    elif existing_diffmap.shape[1] != n_dcs:
+        log.warning(
+            "dpt: existing X_diffmap has %d components but n_dcs=%d was requested; "
+            "recomputing diffusion map.",
+            existing_diffmap.shape[1], n_dcs,
+        )
         sc.tl.diffmap(adata, n_comps=n_dcs, neighbors_key=neighbors_key,
                       random_state=random_state)
 

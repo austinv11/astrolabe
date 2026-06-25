@@ -101,8 +101,8 @@ def read_he(
         it in ``ImageSpec.stain_matrix`` so that rendering produces
         ``[hematoxylin, eosin, residual]`` channels instead of raw RGB.
     method
-        Stain estimation method.  ``'ruifrok'`` (default) uses the published
-        Ruifrok-Johnston matrix and requires no pixel sampling.  ``'macenko'``
+        Stain estimation method.  ``'ruifrok'`` uses the published
+        Ruifrok-Johnston matrix and requires no pixel sampling.  ``'macenko'`` (default)
         fits the matrix to the slide via SVD on optical-density space pixels
         sampled from the coarsest pyramid level.
     mdata
@@ -345,6 +345,7 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
 
     # Remove background (low OD norm → mostly white background)
     od_norm = np.linalg.norm(od, axis=1)
+    # 0.15 OD is a standard minimum tissue threshold; below this is glass/background
     od_fg = od[od_norm > 0.15]
     if len(od_fg) < 10:
         log.warning("Too few foreground pixels for Macenko; falling back to Ruifrok matrix.")

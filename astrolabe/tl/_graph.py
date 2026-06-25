@@ -52,7 +52,7 @@ def spatial_neighbors(
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     n_neighbors
-        Number of nearest neighbours per cell.  Ignored for
+        Number of nearest neighbors per cell.  Ignored for
         ``coord_type='delaunay'``; only used with ``'generic'`` and
         ``'grid'``
     radius
@@ -69,7 +69,7 @@ def spatial_neighbors(
         ``'delaunay'``
             Delaunay triangulation — connects cells that share a triangle
             edge.  Adapts to local cell density without a fixed k or
-            radius; typically 5–7 neighbours per cell.  Long convex-hull
+            radius; typically 5–7 neighbors per cell.  Long convex-hull
             edges can be pruned with *delaunay_max_dist*.
         ``'grid'``
             Chebyshev 8-connected grid (for Visium-style spot arrays).
@@ -112,15 +112,16 @@ def spatial_neighbors(
         from scipy.spatial import Delaunay as _Delaunay
 
         tri = _Delaunay(coords)
-        # Extract unique undirected edges from triangle simplices
+        # Extract unique undirected edges from triangle simplices — numpy path
+        # avoids a Python set of 300K+ tuples for large datasets.
         simplices = tri.simplices  # (n_tri, 3)
-        edge_set: set[tuple[int, int]] = set()
-        for a, b, c in simplices:
-            edge_set.add((min(a, b), max(a, b)))
-            edge_set.add((min(b, c), max(b, c)))
-            edge_set.add((min(a, c), max(a, c)))
-
-        edge_arr = np.array(list(edge_set), dtype=np.int32)  # (n_edges, 2)
+        edges = np.concatenate([
+            simplices[:, [0, 1]],
+            simplices[:, [1, 2]],
+            simplices[:, [0, 2]],
+        ], axis=0)
+        edges = np.sort(edges, axis=1)  # canonical order: i < j
+        edge_arr = np.unique(edges, axis=0).astype(np.int32)  # (n_edges, 2)
         dists = np.linalg.norm(
             coords[edge_arr[:, 0]] - coords[edge_arr[:, 1]], axis=1
         ).astype(np.float32)
@@ -154,18 +155,23 @@ def spatial_neighbors(
         else:
             distances, indices = nn.kneighbors(coords)
 
-        rows_list, cols_list, dist_list = [], [], []
-        for i in range(n_cells):
-            d, idx = distances[i], indices[i]
-            not_self = idx != i
-            d, idx = d[not_self], idx[not_self]
-            rows_list.append(np.full(len(idx), i, dtype=np.int32))
-            cols_list.append(idx.astype(np.int32))
-            dist_list.append(d.astype(np.float32))
-
-        rows = np.concatenate(rows_list)
-        cols = np.concatenate(cols_list)
-        dists = np.concatenate(dist_list)
+        if radius is not None:
+            # Radius returns variable-length arrays per cell; filter self-edges after concat
+            rows = np.concatenate([np.full(len(idx), i, dtype=np.int32)
+                                    for i, idx in enumerate(indices)])
+            cols = np.concatenate([idx.astype(np.int32) for idx in indices])
+            dists = np.concatenate([d.astype(np.float32) for d in distances])
+            not_self = cols != rows
+            rows, cols, dists = rows[not_self], cols[not_self], dists[not_self]
+        else:
+            # kneighbors returns a regular (n_cells, k) matrix — fully vectorized
+            flat_rows = np.repeat(np.arange(n_cells, dtype=np.int32), indices.shape[1])
+            flat_cols = indices.ravel().astype(np.int32)
+            flat_dists = distances.ravel().astype(np.float32)
+            not_self = flat_cols != flat_rows
+            rows = flat_rows[not_self]
+            cols = flat_cols[not_self]
+            dists = flat_dists[not_self]
 
     # ── Build sparse matrices ─────────────────────────────────────────────────
     dist_matrix = sp.csr_matrix(

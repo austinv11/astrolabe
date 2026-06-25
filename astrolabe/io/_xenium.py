@@ -548,7 +548,7 @@ def _annotate_xenium_var(
 ) -> ad.AnnData:
     """Post-hoc annotation of var from sc.read_10x_h5 output.
 
-    Normalises column names, optionally reindexes to gene_id, adds the
+    Normalizes column names, optionally reindexes to gene_id, adds the
     is_control_probe flag, and casts X to the requested dtype.
     """
     if var_names not in ("gene_name", "gene_id"):

@@ -58,8 +58,50 @@ def _resolve_spec(
     )
 
 
-def _load_channel(spec: ImageSpec, channel: int | str) -> np.ndarray:
-    """Load one channel from a pyramidal TIFF at full resolution. Returns (H, W) float32."""
+def _um_to_px(
+    xmin_um: float, ymin_um: float, xmax_um: float, ymax_um: float, spec: ImageSpec
+) -> tuple[int, int, int, int]:
+    """Convert µm bbox to (row_min, row_max, col_min, col_max) pixel bbox."""
+    affine = spec.registration_affine
+    pxum = spec.pixel_size_um or 1.0
+    if affine is not None:
+        inv = np.linalg.inv(affine)
+
+        def _um_to_col_row(x_um: float, y_um: float) -> tuple[float, float]:
+            xy_px = inv @ np.array([x_um, y_um, 1.0])
+            return float(xy_px[0]), float(xy_px[1])
+
+        c0, r0 = _um_to_col_row(xmin_um, ymin_um)
+        c1, r1 = _um_to_col_row(xmax_um, ymax_um)
+    else:
+        c0, r0 = xmin_um / pxum, ymin_um / pxum
+        c1, r1 = xmax_um / pxum, ymax_um / pxum
+
+    row_min = max(0, int(min(r0, r1)))
+    row_max = int(np.ceil(max(r0, r1)))
+    col_min = max(0, int(min(c0, c1)))
+    col_max = int(np.ceil(max(c0, c1)))
+    return row_min, row_max, col_min, col_max
+
+
+def _load_channel(
+    spec: ImageSpec,
+    channel: int | str,
+    region_px: tuple[int, int, int, int] | None = None,
+) -> np.ndarray:
+    """Load one channel from a pyramidal TIFF. Returns (H, W) float32.
+
+    Handles CYX, ZYX (where Z = z-planes / channels), TCYX, and YX layouts.
+    When there is no C axis, Z is treated as the channel axis (common in Xenium
+    morphology OME-TIFFs that encode multiple z-planes as SizeZ with SizeC=1).
+
+    Parameters
+    ----------
+    region_px
+        Optional ``(row_min, row_max, col_min, col_max)`` pixel crop to load.
+        Uses zarr for the partial read, then slices to the exact region.
+        Falls back to loading the full level and slicing when zarr is unavailable.
+    """
     import tifffile
 
     ch_idx: int
@@ -73,28 +115,90 @@ def _load_channel(spec: ImageSpec, channel: int | str) -> np.ndarray:
     else:
         ch_idx = int(channel)
 
+    dim = spec.dimension_order  # numpy axis order, e.g. 'CYX', 'ZYX', 'YX'
+    has_c = "C" in dim
+
+    if region_px is not None:
+        row_min, row_max, col_min, col_max = region_px
+        # Use zarr for efficient region reads from large pyramidal TIFFs.
+        try:
+            import zarr
+            with tifffile.TiffFile(spec.path) as tf:
+                store = tf.series[0].levels[0].aszarr()
+            z = zarr.open(store, mode="r")
+            # Build one index/slice per axis in dim order.
+            slices: list = []
+            for ax in dim:
+                if ax == "T":
+                    slices.append(0)
+                elif ax == "C":
+                    slices.append(ch_idx)
+                elif ax == "Z":
+                    # Z is the channel axis when there is no C axis
+                    slices.append(ch_idx if not has_c else 0)
+                elif ax == "Y":
+                    slices.append(slice(row_min, row_max))
+                elif ax == "X":
+                    slices.append(slice(col_min, col_max))
+                else:
+                    slices.append(0)
+            img = np.asarray(z[tuple(slices)])
+            if img.ndim == 3 and img.shape[0] == 1:
+                img = img[0]
+            return img.astype(np.float32)
+        except Exception:
+            # Fallback: load full level and slice.
+            with tifffile.TiffFile(spec.path) as tf:
+                img = tf.series[0].levels[0].asarray()
+            img = _select_channel_from_ndarray(img, dim, ch_idx, has_c)
+            return img[row_min:row_max, col_min:col_max].astype(np.float32)
+
     with tifffile.TiffFile(spec.path) as tf:
         img = tf.series[0].levels[0].asarray()
 
-    dim = spec.dimension_order  # numpy axis order, e.g. 'CYX'
+    return _select_channel_from_ndarray(img, dim, ch_idx, has_c).astype(np.float32)
 
-    for ax in ("T", "Z"):
+
+def _select_channel_from_ndarray(
+    img: np.ndarray, dim: str, ch_idx: int, has_c: bool
+) -> np.ndarray:
+    """Reduce a loaded TIFF array to a (H, W) image by selecting channel/z/t."""
+    for ax in ("T",):
         pos = dim.find(ax)
         if pos >= 0:
             img = img.take(0, axis=pos)
             dim = dim[:pos] + dim[pos + 1:]
-
-    if "C" in dim:
-        img = img.take(ch_idx, axis=dim.index("C"))
-
-    return img.astype(np.float32)
+    if has_c:
+        # Collapse Z=0 first, then select C
+        pos = dim.find("Z")
+        if pos >= 0:
+            img = img.take(0, axis=pos)
+            dim = dim[:pos] + dim[pos + 1:]
+        pos = dim.find("C")
+        if pos >= 0:
+            img = img.take(ch_idx, axis=pos)
+    else:
+        # No C axis — treat Z as channel selector
+        pos = dim.find("Z")
+        if pos >= 0:
+            img = img.take(ch_idx, axis=pos)
+    return img
 
 
 def _masks_to_adata(
     masks: np.ndarray,
     spec: ImageSpec,
+    offset_yx: tuple[int, int] = (0, 0),
 ) -> ad.AnnData:
-    """Convert a 2-D integer label mask to AnnData with spatial obsm in µm."""
+    """Convert a 2-D integer label mask to AnnData with spatial obsm in µm.
+
+    Parameters
+    ----------
+    offset_yx
+        ``(row_offset, col_offset)`` in pixels to add to all centroids and
+        boundary vertices before converting to µm.  Use when *masks* was
+        extracted from a region of the full image rather than the full image.
+    """
     from skimage.measure import find_contours, regionprops_table
 
     cell_ids = np.unique(masks)
@@ -103,25 +207,34 @@ def _masks_to_adata(
 
     if n_cells == 0:
         log.warning("No cells found in segmentation mask.")
-        adata = ad.AnnData(n_obs=0)
+        adata = ad.AnnData()
         adata.obsm["spatial"] = np.zeros((0, 2), dtype=np.float32)
         adata.obsm["cell_boundaries"] = ak.Array([])
         return adata
 
     log.info("Converting %d segmented cells to AnnData", n_cells)
 
-    # Centroids in pixel (y, x)
+    row_off, col_off = offset_yx
+
+    # Centroids in pixel (y, x), offset to full-image coordinates
     props = regionprops_table(masks, properties=["label", "centroid"])
     label_order = props["label"]  # same order as unique cell_ids
-    centroids_yx_px = np.column_stack([props["centroid-0"], props["centroid-1"]])
+    centroids_yx_px = np.column_stack([
+        props["centroid-0"] + row_off,
+        props["centroid-1"] + col_off,
+    ])
 
-    # Per-cell contours in pixel (row, col) = (y, x)
+    # Per-cell contours in pixel (row, col) = (y, x), offset to full-image coordinates
     polys_yx_px: list[np.ndarray] = []
     for cell_id in label_order:
         cell_mask = (masks == cell_id).astype(np.uint8)
         contours = find_contours(cell_mask, level=0.5)
         if contours:
-            poly = max(contours, key=len).astype(np.float32)  # (N, 2) as (y, x)
+            # Select by area (shoelace) — avoids picking a large internal hole
+            # as the "outer" boundary when len() would favor the wrong contour.
+            poly = max(contours, key=lambda c: _shoelace_area(c[:, ::-1])).astype(np.float32)  # (N, 2) as (y, x)
+            poly[:, 0] += row_off
+            poly[:, 1] += col_off
         else:
             poly = np.zeros((0, 2), dtype=np.float32)
         polys_yx_px.append(poly)
@@ -148,9 +261,9 @@ def _masks_to_adata(
     # Compute cell areas via Shoelace formula
     areas = np.array([_shoelace_area(p) for p in polys_um], dtype=np.float32)
 
-    adata = ad.AnnData(n_obs=n_cells)
-    adata.obs_names = [str(int(cid)) for cid in label_order]
-    adata.obs["cell_area"] = areas
+    import pandas as pd
+    obs_names = [str(int(cid)) for cid in label_order]
+    adata = ad.AnnData(obs=pd.DataFrame({"cell_area": areas}, index=obs_names))
     adata.obsm["spatial"] = centroids_um
     adata.obsm["cell_boundaries"] = ak.Array(polys_um)
 
@@ -178,6 +291,7 @@ def segment_cellpose(
     library_id: str | None = None,
     image_key: str = "full",
     gpu: bool = False,
+    region_um: tuple[float, float, float, float] | None = None,
 ) -> ad.AnnData:
     """Segment cells in a fluorescence image channel using Cellpose.
 
@@ -214,6 +328,11 @@ def segment_cellpose(
         Image key within the library's ``images`` dict (default ``'full'``).
     gpu
         Use GPU acceleration.  Requires a CUDA-enabled environment.
+    region_um
+        Optional ``(xmin, ymin, xmax, ymax)`` bounding box in µm.  Only the
+        portion of the morphology image that overlaps this region is loaded and
+        segmented.  Useful for avoiding loading a multi-GB full-tissue image
+        when you only need cells in a cropped sub-region.
 
     Returns
     -------
@@ -241,8 +360,19 @@ def segment_cellpose(
         ) from e
 
     spec, lib_meta = _resolve_spec(source, library_id, image_key)
+
+    region_px: tuple[int, int, int, int] | None = None
+    offset_yx: tuple[int, int] = (0, 0)
+    if region_um is not None:
+        region_px = _um_to_px(*region_um, spec)
+        offset_yx = (region_px[0], region_px[2])  # (row_min, col_min)
+        log.info(
+            "segment_cellpose: restricting to region_um=%s → pixel bbox rows=%d:%d cols=%d:%d",
+            region_um, region_px[0], region_px[1], region_px[2], region_px[3],
+        )
+
     log.info("segment_cellpose: loading channel %r from %s", channel, spec.path)
-    img = _load_channel(spec, channel)
+    img = _load_channel(spec, channel, region_px=region_px)
 
     model = cp_models.CellposeModel(model_type=model_type, gpu=gpu)
     log.info(
@@ -259,7 +389,7 @@ def segment_cellpose(
 
     n_found = int(masks.max())
     log.info("segment_cellpose: found %d cells", n_found)
-    return _masks_to_adata(masks, spec)
+    return _masks_to_adata(masks, spec, offset_yx=offset_yx)
 
 
 def segment_stardist(
@@ -274,6 +404,7 @@ def segment_stardist(
     norm_pct_high: float = 99.8,
     library_id: str | None = None,
     image_key: str = "full",
+    region_um: tuple[float, float, float, float] | None = None,
 ) -> ad.AnnData:
     """Segment nuclei/cells in a fluorescence image channel using StarDist.
 
@@ -306,6 +437,11 @@ def segment_stardist(
         more than one library.
     image_key
         Image key within the library's ``images`` dict (default ``'full'``).
+    region_um
+        Optional ``(xmin, ymin, xmax, ymax)`` bounding box in µm.  Only the
+        portion of the image overlapping this region is loaded and segmented.
+        Useful for avoiding loading a multi-GB full-tissue image when only a
+        cropped sub-region is needed.
 
     Returns
     -------
@@ -326,15 +462,26 @@ def segment_stardist(
     try:
         from stardist.models import StarDist2D
         from csbdeep.utils import normalize as csbdeep_normalize
-    except ImportError as e:
+    except (ImportError, RuntimeError) as e:
         raise ImportError(
-            "stardist and csbdeep are required for segment_stardist. "
-            "Install them with: pip install stardist"
+            "stardist, csbdeep, and TensorFlow are required for segment_stardist. "
+            "Install them with: pip install stardist tensorflow"
         ) from e
 
     spec, lib_meta = _resolve_spec(source, library_id, image_key)
+
+    region_px: tuple[int, int, int, int] | None = None
+    offset_yx: tuple[int, int] = (0, 0)
+    if region_um is not None:
+        region_px = _um_to_px(*region_um, spec)
+        offset_yx = (region_px[0], region_px[2])  # (row_min, col_min)
+        log.info(
+            "segment_stardist: restricting to region_um=%s → pixel bbox rows=%d:%d cols=%d:%d",
+            region_um, region_px[0], region_px[1], region_px[2], region_px[3],
+        )
+
     log.info("segment_stardist: loading channel %r from %s", channel, spec.path)
-    img = _load_channel(spec, channel)
+    img = _load_channel(spec, channel, region_px=region_px)
 
     if normalize:
         img = csbdeep_normalize(img, norm_pct_low, norm_pct_high)
@@ -358,6 +505,13 @@ def segment_stardist(
     # Use them instead of running find_contours on the label mask.
     coord_yx = details["coord"]  # (n_cells, n_verts, 2)
 
+    # Apply region offset so coordinates are in full-image pixel space.
+    if offset_yx != (0, 0):
+        row_off, col_off = offset_yx
+        coord_yx = coord_yx.copy()
+        coord_yx[:, :, 0] += row_off  # y (row)
+        coord_yx[:, :, 1] += col_off  # x (col)
+
     affine = spec.registration_affine
     pxum = spec.pixel_size_um
 
@@ -377,11 +531,10 @@ def segment_stardist(
     ).astype(np.float32)
 
     areas = np.array([_shoelace_area(p) for p in polys_um], dtype=np.float32)
-    n_cells = len(polys_um)
 
-    adata = ad.AnnData(n_obs=n_cells)
-    adata.obs_names = [str(i + 1) for i in range(n_cells)]
-    adata.obs["cell_area"] = areas
+    import pandas as pd
+    obs_names = [str(i + 1) for i in range(len(polys_um))]
+    adata = ad.AnnData(obs=pd.DataFrame({"cell_area": areas}, index=obs_names))
     adata.obsm["spatial"] = centroids_um
     adata.obsm["cell_boundaries"] = ak.Array(polys_um)
 

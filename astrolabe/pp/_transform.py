@@ -91,7 +91,16 @@ def _transform_boundary_obsm(
 
 def _append_image_transform(adata: ad.AnnData, M: np.ndarray) -> None:
     """Append µm-space affine *M* to all ImageSpec transform_chains in *adata.uns*."""
-    for lib_data in adata.uns.get("spatial", {}).values():
+    libs = adata.uns.get("spatial", {})
+    if len(libs) > 1:
+        log.warning(
+            "rotate/flip: multiple libraries in uns['spatial'] (%s); "
+            "the same affine will be applied to ALL library images. "
+            "If libraries have different coordinate frames, pass a single-library "
+            "AnnData (mdata['<modality>']) and handle each library separately.",
+            list(libs.keys()),
+        )
+    for lib_data in libs.values():
         for spec in lib_data.get("images", {}).values():
             if isinstance(spec, ImageSpec):
                 spec.transform_chain.append(M)
@@ -240,7 +249,7 @@ def rotate(
     angle_deg
         Rotation angle in degrees (positive = counter-clockwise).
     center
-        ``(x, y)`` centre of rotation in µm.  Defaults to the mean centroid
+        ``(x, y)`` center of rotation in µm.  Defaults to the mean centroid
         of ``obsm[spatial_key]``.
     spatial_key
         Key in ``obsm`` for cell centroids.

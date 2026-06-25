@@ -99,6 +99,14 @@ def concat_samples(
     # ------------------------------------------------------------------
     # Normalize input → {library_id: MuData}
     # ------------------------------------------------------------------
+    if len(mdatas) > 1:
+        log.warning(
+            "concat_samples: spatial coordinates from different runs are NOT "
+            "comparable — each run has its own independent µm coordinate frame. "
+            "Filter to a single library_id before plotting. "
+            "Use obs['%s'] to split by sample.",
+            library_id_key,
+        )
     if isinstance(mdatas, list):
         id_to_mdata: dict[str, md.MuData] = {}
         for mdata in mdatas:

@@ -30,6 +30,20 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
+def _add_nucleus_metrics(adata: ad.AnnData) -> None:
+    """Append nucleus_to_cell_area_ratio and has_nucleus columns to obs."""
+    if "nucleus_area" in adata.obs.columns and "cell_area" in adata.obs.columns:
+        nuc = adata.obs["nucleus_area"].to_numpy(dtype=np.float64)
+        cell = adata.obs["cell_area"].to_numpy(dtype=np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = np.where(cell > 0, nuc / cell, np.nan)
+        adata.obs["nucleus_to_cell_area_ratio"] = ratio
+    if "nucleus_count" in adata.obs.columns:
+        adata.obs["has_nucleus"] = adata.obs["nucleus_count"].to_numpy(dtype=np.int32) >= 1
+    elif "nucleus_area" in adata.obs.columns:
+        adata.obs["has_nucleus"] = adata.obs["nucleus_area"].to_numpy(dtype=np.float64) > 0.0
+
+
 @with_adata
 def calculate_qc_metrics(
     adata: ad.AnnData,
@@ -41,8 +55,10 @@ def calculate_qc_metrics(
 ):
     """Compute per-cell and per-gene QC metrics.
 
-    Thin wrapper around :func:`scanpy.pp.calculate_qc_metrics` that accepts
-    :class:`~mudata.MuData` via the ``modality`` kwarg.
+    Wraps :func:`scanpy.pp.calculate_qc_metrics` and adds spatial QC columns
+    when the relevant ``obs`` columns are present:
+    ``nucleus_to_cell_area_ratio`` (ratio of nucleus area to cell area) and
+    ``has_nucleus`` (bool flag derived from ``nucleus_count`` or ``nucleus_area``).
 
     Parameters
     ----------
@@ -65,6 +81,9 @@ def calculate_qc_metrics(
     -------
     None, or ``(obs_df, var_df)`` when ``inplace=False``.
     """
+    if percent_top is not None:
+        percent_top = [n for n in percent_top if n <= adata.n_vars] or None
+
     if gpu_enabled():
         rsc = _require_rapids()
         with _gpu_X(adata):
@@ -76,16 +95,7 @@ def calculate_qc_metrics(
                 inplace=inplace,
             )
         if inplace:
-            if "nucleus_area" in adata.obs.columns and "cell_area" in adata.obs.columns:
-                nuc = adata.obs["nucleus_area"].to_numpy(dtype=np.float64)
-                cell = adata.obs["cell_area"].to_numpy(dtype=np.float64)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ratio = np.where(cell > 0, nuc / cell, np.nan)
-                adata.obs["nucleus_to_cell_area_ratio"] = ratio
-            if "nucleus_count" in adata.obs.columns:
-                adata.obs["has_nucleus"] = adata.obs["nucleus_count"].to_numpy(dtype=np.int32) >= 1
-            elif "nucleus_area" in adata.obs.columns:
-                adata.obs["has_nucleus"] = adata.obs["nucleus_area"].to_numpy(dtype=np.float64) > 0.0
+            _add_nucleus_metrics(adata)
         return result
     result = sc.pp.calculate_qc_metrics(
         adata,
@@ -94,22 +104,8 @@ def calculate_qc_metrics(
         log1p=log1p,
         inplace=inplace,
     )
-
     if inplace:
-        # Nucleus-to-cell area ratio: fraction of cell area occupied by the nucleus.
-        if "nucleus_area" in adata.obs.columns and "cell_area" in adata.obs.columns:
-            nuc = adata.obs["nucleus_area"].to_numpy(dtype=np.float64)
-            cell = adata.obs["cell_area"].to_numpy(dtype=np.float64)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ratio = np.where(cell > 0, nuc / cell, np.nan)
-            adata.obs["nucleus_to_cell_area_ratio"] = ratio
-
-        # has_nucleus: True when nucleus_count >= 1 or nucleus_area > 0.
-        if "nucleus_count" in adata.obs.columns:
-            adata.obs["has_nucleus"] = adata.obs["nucleus_count"].to_numpy(dtype=np.int32) >= 1
-        elif "nucleus_area" in adata.obs.columns:
-            adata.obs["has_nucleus"] = adata.obs["nucleus_area"].to_numpy(dtype=np.float64) > 0.0
-
+        _add_nucleus_metrics(adata)
     return result
 
 
@@ -650,23 +646,54 @@ def filter_isolated(
 # ---------------------------------------------------------------------------
 
 
+def _min_rect_axes(gs) -> tuple[np.ndarray, np.ndarray]:
+    """Return (major_axis, minor_axis) lengths for each polygon's minimum rotated rectangle."""
+    majors: list[float] = []
+    minors: list[float] = []
+    for geom in gs:
+        if geom.is_empty:
+            majors.append(np.nan)
+            minors.append(np.nan)
+            continue
+        rect = geom.minimum_rotated_rectangle
+        coords = np.array(rect.exterior.coords)[:4]
+        s1 = float(np.linalg.norm(coords[1] - coords[0]))
+        s2 = float(np.linalg.norm(coords[2] - coords[1]))
+        if s1 >= s2:
+            majors.append(s1); minors.append(s2)
+        else:
+            majors.append(s2); minors.append(s1)
+    return np.array(majors, dtype=np.float32), np.array(minors, dtype=np.float32)
+
+
 @with_adata
 def calculate_shape_metrics(
     adata: ad.AnnData,
     *,
     boundaries_key: str = "cell_boundaries",
     prefix: str | None = None,
+    counts_key: str | None = "total_counts",
 ) -> None:
     """Compute morphological shape metrics from cell or nucleus boundary polygons.
 
-    Writes three metrics to ``obs``:
+    Writes the following metrics to ``obs`` (all float32):
 
+    - **area** — polygon area in µm².
+    - **perimeter** — polygon perimeter in µm.
+    - **span_x** / **span_y** — bounding-box width and height in µm.
+    - **equivalent_radius** — radius of a circle with the same area (√(A/π)) in µm.
+    - **major_axis_length** / **minor_axis_length** — side lengths of the minimum
+      rotated bounding rectangle in µm.
+    - **aspect_ratio** — ``major_axis_length / minor_axis_length``; 1 = square/circle,
+      higher values indicate elongation. ``NaN`` when the minor axis is zero.
     - **circularity** (``esda.shape.isoperimetric_quotient``) — 4π·A / P²;
       1 = perfect circle, lower values indicate elongated or irregular shapes.
     - **solidity** (``esda.shape.convex_hull_ratio``) — polygon area /
       convex-hull area; values < 1 indicate concave or lobular boundaries.
     - **elongation** (``esda.shape.diameter_ratio``) — length / width;
       higher values indicate elongated cells (fibroblasts, neurons).
+    - **rna_density** — ``obs[counts_key] / area`` in counts/µm². Written only
+      when *counts_key* is present in ``obs`` and the area is non-zero.
 
     Parameters
     ----------
@@ -678,9 +705,15 @@ def calculate_shape_metrics(
         Defaults to ``'cell_'`` for cell boundaries, ``'nucleus_'`` for
         nucleus boundaries; otherwise the key name with trailing
         ``'_boundaries'`` stripped.
+    counts_key
+        ``obs`` column containing raw transcript/count totals used to
+        compute ``rna_density``.  Set to ``None`` to skip RNA density.
+        The column is written by :func:`calculate_qc_metrics`
+        (default ``'total_counts'``).
 
     Examples
     --------
+    >>> ab.pp.calculate_qc_metrics(mdata)          # populates total_counts
     >>> ab.pp.calculate_shape_metrics(mdata)
     >>> ab.pp.calculate_shape_metrics(mdata, boundaries_key='nucleus_boundaries')
     """
@@ -713,14 +746,49 @@ def calculate_shape_metrics(
 
     gs = gpd.GeoSeries(polys)
 
-    adata.obs[f"{prefix}circularity"] = isoperimetric_quotient(gs).to_numpy(dtype=np.float32)
-    adata.obs[f"{prefix}solidity"] = convex_hull_ratio(gs).to_numpy(dtype=np.float32)
-    adata.obs[f"{prefix}elongation"] = diameter_ratio(gs).to_numpy(dtype=np.float32)
+    # ── Shapely vectorised metrics ────────────────────────────────────────────
+    area = np.asarray(gs.area, dtype=np.float32)
+    adata.obs[f"{prefix}area"] = area
+    adata.obs[f"{prefix}perimeter"] = np.asarray(gs.length, dtype=np.float32)
 
-    log.info(
-        "calculate_shape_metrics: wrote %scircularity, %ssolidity, %selongation",
-        prefix, prefix, prefix,
-    )
+    bounds = gs.bounds  # DataFrame: minx, miny, maxx, maxy
+    adata.obs[f"{prefix}span_x"] = (bounds["maxx"] - bounds["minx"]).to_numpy(dtype=np.float32)
+    adata.obs[f"{prefix}span_y"] = (bounds["maxy"] - bounds["miny"]).to_numpy(dtype=np.float32)
+
+    adata.obs[f"{prefix}equivalent_radius"] = np.sqrt(area / np.pi).astype(np.float32)
+
+    major, minor = _min_rect_axes(gs)
+    adata.obs[f"{prefix}major_axis_length"] = major
+    adata.obs[f"{prefix}minor_axis_length"] = minor
+    with np.errstate(invalid="ignore", divide="ignore"):
+        aspect = np.where(minor > 0, major / minor, np.nan).astype(np.float32)
+    adata.obs[f"{prefix}aspect_ratio"] = aspect
+
+    # ── esda shape metrics ────────────────────────────────────────────────────
+    adata.obs[f"{prefix}circularity"] = np.asarray(isoperimetric_quotient(gs), dtype=np.float32)
+    adata.obs[f"{prefix}solidity"] = np.asarray(convex_hull_ratio(gs), dtype=np.float32)
+    adata.obs[f"{prefix}elongation"] = np.asarray(diameter_ratio(gs), dtype=np.float32)
+
+    # ── RNA density ───────────────────────────────────────────────────────────
+    new_cols = [
+        f"{prefix}area", f"{prefix}perimeter", f"{prefix}span_x", f"{prefix}span_y",
+        f"{prefix}equivalent_radius", f"{prefix}major_axis_length", f"{prefix}minor_axis_length",
+        f"{prefix}aspect_ratio", f"{prefix}circularity", f"{prefix}solidity", f"{prefix}elongation",
+    ]
+    if counts_key is not None and counts_key in adata.obs.columns:
+        counts = adata.obs[counts_key].to_numpy(dtype=np.float32)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            density = np.where(area > 0, counts / area, np.nan).astype(np.float32)
+        adata.obs[f"{prefix}rna_density"] = density
+        new_cols.append(f"{prefix}rna_density")
+    elif counts_key is not None and counts_key not in adata.obs.columns:
+        log.debug(
+            "calculate_shape_metrics: obs['%s'] not found; skipping rna_density. "
+            "Run ab.pp.calculate_qc_metrics() first.",
+            counts_key,
+        )
+
+    log.info("calculate_shape_metrics: wrote %s", ", ".join(new_cols))
 
 
 @with_adata
@@ -776,6 +844,7 @@ def calculate_transcript_assignment_qc(
     -------
     None or AnnData
     """
+    import pyarrow as pa
     import pyarrow.compute as pc
 
     if not inplace:
@@ -799,10 +868,16 @@ def calculate_transcript_assignment_qc(
         columns={gene_col: "gene", f"{gene_col}_count": "n_total"}
     ).set_index("gene")
 
-    # Unassigned transcripts per gene
+    # Unassigned transcripts per gene — cast unassigned_id to match the column type
+    # so pc.equal works regardless of whether cell_id is stored as int or string.
+    col_type = transcripts.schema.field(cell_id_col).type
+    if pa.types.is_string(col_type) or pa.types.is_large_string(col_type):
+        unassigned_scalar = str(unassigned_id)
+    else:
+        unassigned_scalar = unassigned_id
     unassigned_tbl = (
         transcripts
-        .filter(pc.equal(transcripts[cell_id_col], unassigned_id))
+        .filter(pc.equal(transcripts[cell_id_col], unassigned_scalar))
         .group_by(gene_col)
         .aggregate([(gene_col, "count")])
     )
