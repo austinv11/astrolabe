@@ -47,7 +47,12 @@ def _log_step(step: str, n_before: int, n_after: int, axis: str = "cells") -> No
     pct = removed / n_before * 100 if n_before else 0.0
     log.info(
         "  [%s] %d → %d %s  (removed %d, %.1f%%)",
-        step, n_before, n_after, axis, removed, pct,
+        step,
+        n_before,
+        n_after,
+        axis,
+        removed,
+        pct,
     )
 
 
@@ -224,6 +229,8 @@ def filter_xenium(
        *transcripts*.
     2–5. All shared steps from :func:`filter_cells` (``calculate_qc_metrics``,
        ``filter_cells``, ``filter_genes``, spatial isolation).
+    6. Optionally removes control probe features from ``X`` when
+       *remove_controls* is ``True``.
 
     Parameters
     ----------
@@ -277,9 +284,7 @@ def filter_xenium(
     import astrolabe.pp as pp
 
     if not isinstance(mdata, md.MuData):
-        raise TypeError(
-            f"filter_xenium expects a MuData; got {type(mdata).__name__}"
-        )
+        raise TypeError(f"filter_xenium expects a MuData; got {type(mdata).__name__}")
     if xenium_key not in mdata.mod:
         raise KeyError(f"Modality '{xenium_key}' not found in mdata")
 
@@ -295,7 +300,6 @@ def filter_xenium(
         mdata,
         transcripts=transcripts,
         modality=xenium_key,
-        remove_controls=remove_controls,
     )
 
     # Shared steps
@@ -315,8 +319,16 @@ def filter_xenium(
         inplace=True,
     )
 
+    # Remove control probe features from X
+    if remove_controls and "is_control_probe" in adata.var.columns:
+        n_before = adata.n_vars
+        pp.filter_genes(mdata, modality=xenium_key, exclude_controls=True, inplace=True)
+        _log_step("remove_controls", n_before, adata.n_vars, axis="genes")
+
     log.info(
-        "filter_xenium: done — %d cells × %d genes", adata.n_obs, adata.n_vars,
+        "filter_xenium: done — %d cells × %d genes",
+        adata.n_obs,
+        adata.n_vars,
     )
     return None if inplace else mdata
 
@@ -400,9 +412,7 @@ def filter_merscope(
     import astrolabe.pp as pp
 
     if not isinstance(mdata, md.MuData):
-        raise TypeError(
-            f"filter_merscope expects a MuData; got {type(mdata).__name__}"
-        )
+        raise TypeError(f"filter_merscope expects a MuData; got {type(mdata).__name__}")
     if merscope_key not in mdata.mod:
         raise KeyError(f"Modality '{merscope_key}' not found in mdata")
 
@@ -443,11 +453,15 @@ def filter_merscope(
     # Remove blank probe features from X
     if remove_controls and "is_control_probe" in adata.var.columns:
         n_before = adata.n_vars
-        pp.filter_genes(mdata, modality=merscope_key, exclude_controls=True, inplace=True)
+        pp.filter_genes(
+            mdata, modality=merscope_key, exclude_controls=True, inplace=True
+        )
         _log_step("remove_controls", n_before, adata.n_vars, axis="genes")
 
     log.info(
-        "filter_merscope: done — %d cells × %d genes", adata.n_obs, adata.n_vars,
+        "filter_merscope: done — %d cells × %d genes",
+        adata.n_obs,
+        adata.n_vars,
     )
     return None if inplace else mdata
 
@@ -531,9 +545,7 @@ def filter_cosmx(
     import astrolabe.pp as pp
 
     if not isinstance(mdata, md.MuData):
-        raise TypeError(
-            f"filter_cosmx expects a MuData; got {type(mdata).__name__}"
-        )
+        raise TypeError(f"filter_cosmx expects a MuData; got {type(mdata).__name__}")
     if cosmx_key not in mdata.mod:
         raise KeyError(f"Modality '{cosmx_key}' not found in mdata")
 
@@ -578,6 +590,8 @@ def filter_cosmx(
         _log_step("remove_controls", n_before, adata.n_vars, axis="genes")
 
     log.info(
-        "filter_cosmx: done — %d cells × %d genes", adata.n_obs, adata.n_vars,
+        "filter_cosmx: done — %d cells × %d genes",
+        adata.n_obs,
+        adata.n_vars,
     )
     return None if inplace else mdata

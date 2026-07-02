@@ -117,10 +117,15 @@ def calculate_xenium_qc_metrics(
         *,
         qv_col: str = "qv",
         gene_col: str = "feature_name",
-        remove_controls: bool = True,
         inplace: bool = True,
 ) -> ad.AnnData | None:
     """Compute per-cell and per-gene Xenium probe-specific QC metrics and store in obs/var.
+
+    This function only computes metrics and flags control features in
+    ``var['is_control']`` — it never removes features. Use
+    :func:`~astrolabe.pp.filter_genes` (``exclude_controls=True``) or
+    :func:`~astrolabe.pipeline.filter_xenium` (``remove_controls=True``) to
+    remove them.
 
     Per-cell metrics added to ``obs``
     ---------------------------------
@@ -188,8 +193,6 @@ def calculate_xenium_qc_metrics(
         Column in *transcripts* containing per-transcript quality values
     gene_col
         Column in *transcripts* containing gene/feature names
-    remove_controls
-        When ``True`` (the default), remove all features that are not gene expression after computing summary stats.
     inplace
         If ``True`` (default), modify the input AnnData in place and return ``None``. If ``False``, return a modified copy.
 
@@ -276,8 +279,9 @@ def calculate_xenium_qc_metrics(
             "Run ab.io.read_xenium_transcripts(mdata) or pass transcripts= explicitly."
         )
 
-    # Stash per-gene control stats before optional removal so gene_qv_scatter
-    # can still show individual control probe points even after controls are removed from var.
+    # Stash per-gene control stats so gene_qv_scatter can still show individual
+    # control probe points even if a caller later removes controls via
+    # pp.filter_genes(exclude_controls=True) (e.g. pipeline.filter_xenium).
     ctrl_bool = adata.var['is_control'].values
     if ctrl_bool.any():
         col_sums = np.asarray(adata.X.sum(axis=0)).ravel()
@@ -290,9 +294,6 @@ def calculate_xenium_qc_metrics(
     # Populate the generic obs['pct_counts_control'] so filter_cells works
     # uniformly regardless of whether data came from Xenium or another source.
     flag_controls(adata, var_col="is_control")
-
-    if remove_controls:
-        adata._inplace_subset_var(~adata.var['is_control'])
 
     return None if inplace else adata
 

@@ -41,6 +41,7 @@ dependencies = [
     "shapely>=2.1.2",
     "tifffile>=2024.1.1",
     "nbconvert>=7.17.1",
+    "ipykernel>=7.2.0",
 ]
 
 [project.urls]
@@ -58,7 +59,12 @@ harmony  = [
 som      = [
     "minisom",
 ]
-dev      = ["ipykernel>=6", "pytest>=8"]
+dev      = [
+    "ipykernel>=6",
+    "jupyter>=1.1.1",
+    "jupyterlab>=4.6.1",
+    "pytest>=8",
+]
 # gpu is intentionally absent from 'all': install rapids-singlecell-cu12 or -cu13 directly
 all      = ["astrolabe[napari,cellpose,stardist,harmony,som]"]
 
