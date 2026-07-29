@@ -36,10 +36,10 @@ import matplotlib.axes
 import matplotlib.collections
 import matplotlib.colors as mcolors
 import matplotlib.figure
-import matplotlib.patches as mpatches
 import tifffile
 from matplotlib.collections import PolyCollection
 from matplotlib.legend import Legend as _Legend
+from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 import mudata as md
 import numpy as np
@@ -47,7 +47,15 @@ import pandas as pd
 import scipy.sparse as sp
 
 from astrolabe._shapes import arrow, circle, rectangle
-from astrolabe._utils import ImageSpec, _resolve_adata, _transform_coords, with_adata
+from astrolabe._utils import ImageSpec, _resolve_adata, _resolve_field, _transform_coords, with_adata
+from astrolabe.pl._theme import (
+    _extended_cat_colors,
+    _legend_handles,
+    _place_legend,
+    _register_colorbar,
+    _style_axes,
+    get_theme,
+)
 
 if TYPE_CHECKING:
     pass
@@ -76,12 +84,15 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_CONTINUOUS_CMAP = "viridis"
-_DEFAULT_CATEGORICAL_CMAP = "tab20"
+_DEFAULT_CONTINUOUS_CMAP = "astrolabe_seq"
+_DEFAULT_DIVERGING_CMAP = "astrolabe_div"
 
+# Core-palette slot 1 (orange) / slot 2 (aqua) -- replaces the old raw CSS
+# color names ('lightsalmon'/'cyan') so default boundary tints stay part of
+# the validated categorical family. See astrolabe.pl._theme for the palette.
 _BOUNDARY_DEFAULT_COLORS: dict[str, str] = {
-    "cell_boundaries": "lightsalmon",
-    "nucleus_boundaries": "cyan",
+    "cell_boundaries": "#eb6834",
+    "nucleus_boundaries": "#1baf7a",
 }
 
 
@@ -122,7 +133,7 @@ class Layer:
     vmin: float | None = None
     vmax: float | None = None
     vcenter: float | None = None
-    na_color: str = "#d3d3d3"
+    na_color: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
 
     # --- image-specific ---
@@ -161,6 +172,16 @@ class Layer:
     def __post_init__(self) -> None:
         if self.kind != "annotation" and self.adata is None:
             raise ValueError(f"adata is required for Layer kind={self.kind!r}")
+
+    @property
+    def resolved_na_color(self) -> str:
+        """``na_color`` if explicitly set, else the active theme's muted gray.
+
+        Resolved at draw time (not construction time) so a ``Layer`` built
+        before a :func:`~astrolabe.pl.set_theme` call still tracks the
+        theme that's active when it's actually rendered.
+        """
+        return self.na_color if self.na_color is not None else get_theme().muted
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +225,7 @@ class _Renderable(ABC):
             Additional keyword arguments forwarded to ``figure.savefig()``.
         """
         fig = self.to_figure()
+        savefig_kwargs.setdefault("bbox_extra_artists", getattr(fig, "_ab_extra_artists", None))
         fig.savefig(path, dpi=dpi, bbox_inches="tight", **savefig_kwargs)
         plt.close(fig)
 
@@ -215,7 +237,10 @@ class _Renderable(ABC):
         """Jupyter display hook — renders to SVG bytes."""
         fig = self.to_figure()
         buf = io.BytesIO()
-        fig.savefig(buf, format="svg", bbox_inches="tight")
+        fig.savefig(
+            buf, format="svg", bbox_inches="tight",
+            bbox_extra_artists=getattr(fig, "_ab_extra_artists", None),
+        )
         plt.close(fig)
         buf.seek(0)
         return {"image/svg+xml": buf.getvalue().decode("utf-8")}
@@ -319,9 +344,14 @@ class SpatialPanel(_Renderable):
         self,
         figsize: tuple[float, float] | None = None,
     ) -> matplotlib.figure.Figure:
-        fig, ax = plt.subplots(1, 1, figsize=figsize or self.figsize)
+        # layout="constrained" (matching PlotGrid.to_figure), not a trailing
+        # plt.tight_layout() call -- tight_layout() run AFTER _render_panel
+        # can shift the colorbar's position one more time, invalidating the
+        # legend-dodge measurement _place_legend already took mid-render
+        # (see _theme.py). constrained_layout applies continuously and is
+        # stable once converged, so nothing moves out from under it after.
+        fig, ax = plt.subplots(1, 1, figsize=figsize or self.figsize, layout="constrained")
         _render_panel(ax, self)
-        plt.tight_layout()
         return fig
 
     def __repr__(self) -> str:
@@ -391,9 +421,171 @@ class FigurePanel(_Renderable):
     ) -> matplotlib.figure.Figure:
         return self.figure
 
+    def show(self, *, figsize: tuple[float, float] | None = None) -> None:
+        """Display the wrapped figure.
+
+        The QC-plot functions that build a :class:`FigurePanel` call
+        ``plt.close(fig)`` on their own figure right after drawing it, so that
+        a bare (non-``.show()``) call doesn't get double-rendered by
+        matplotlib's inline-backend end-of-cell auto-show. That means the
+        figure is no longer registered with pyplot by the time ``.show()``
+        runs here, so the base :meth:`_Renderable.show` (which delegates to
+        ``plt.show()``, and only shows *registered* figures) would silently
+        display nothing.
+
+        In a notebook, render through IPython's display machinery directly
+        (the same path :meth:`_repr_mimebundle_` uses) rather than
+        ``plt.show()`` — it never touches pyplot's figure registry, so it
+        can't collide with the inline backend's end-of-cell auto-flush
+        (which re-scans that registry and would otherwise show the figure a
+        second time). Outside a notebook, fall back to re-registering the
+        figure with pyplot so an interactive GUI backend has something to
+        pop up.
+        """
+        fig = self.to_figure(figsize=figsize)
+        try:
+            from IPython.display import display
+        except ImportError:
+            display = None
+
+        if display is not None:
+            display(self)
+        else:
+            if fig.number not in plt.get_fignums():
+                manager = plt._get_backend_mod().new_figure_manager_given_figure(fig.number, fig)
+                gcf = plt._pylab_helpers.Gcf
+                if hasattr(gcf, "_set_new_active_manager"):
+                    gcf._set_new_active_manager(manager)
+                else:
+                    gcf.set_active(manager)
+            plt.show()
+        plt.close(fig)
+
     def __repr__(self) -> str:
         size = tuple(self.figure.get_size_inches())
         return f"FigurePanel(size={size})"
+
+
+# ---------------------------------------------------------------------------
+# Panel extent / aspect ratio -- for aspect-aware PlotGrid sizing
+# ---------------------------------------------------------------------------
+
+
+def _panel_crop_bounds(panel: SpatialPanel) -> dict | None:
+    """Return the ``pp.crop()``-set bounds for *panel*, if any.
+
+    Factored out of ``_render_panel`` (which uses this same lookup to
+    override the drawn extent) so aspect-ratio sizing and actual rendering
+    can never drift out of sync -- both read the same crop-bounds-first
+    priority.
+    """
+    return next(
+        (
+            lay.adata.uns["spatial_bounds"]
+            for lay in panel.layers
+            if lay.adata is not None and "spatial_bounds" in lay.adata.uns
+        ),
+        None,
+    )
+
+
+def _layer_extent(lay: Layer) -> tuple[float, float, float, float] | None:
+    """Cheap, metadata-only ``(xmin, xmax, ymin, ymax)`` bbox for *lay*.
+
+    Mirrors the exact coordinate source each ``_draw_*_layer`` function uses
+    to set its own axis limits, so the aspect ratio computed here matches
+    what actually gets drawn. Never loads pixel/zarr data. Returns ``None``
+    for a layer kind this can't (yet) estimate cheaply -- callers treat that
+    as "no opinion" rather than an error.
+    """
+    try:
+        if lay.kind in ("points", "boundaries", "raster") and lay.adata is not None:
+            coords = lay.adata.obsm[lay.spatial_key]
+            return (
+                float(coords[:, 0].min()), float(coords[:, 0].max()),
+                float(coords[:, 1].min()), float(coords[:, 1].max()),
+            )
+        if lay.kind == "image" and lay.adata is not None:
+            spec: ImageSpec = lay.adata.uns["spatial"][lay.library_id]["images"][lay.image_key]
+            h_full, w_full = spec.full_shape[-2], spec.full_shape[-1]
+            xmin, xmax, ymin, ymax = _compute_extent(spec, h_full, w_full)
+            return xmin, xmax, ymin, ymax
+        if lay.kind == "annotation" and lay.shapes:
+            verts = np.concatenate(lay.shapes, axis=0)
+            return (
+                float(verts[:, 0].min()), float(verts[:, 0].max()),
+                float(verts[:, 1].min()), float(verts[:, 1].max()),
+            )
+        if lay.kind in ("quiver", "streamplot", "divergence") and lay.precomputed:
+            p = lay.precomputed
+            xk = "X" if "X" in p else "X_grid"
+            yk = "Y" if "Y" in p else "Y_grid"
+            x, y = np.asarray(p[xk]), np.asarray(p[yk])
+            return (
+                float(np.nanmin(x)), float(np.nanmax(x)),
+                float(np.nanmin(y)), float(np.nanmax(y)),
+            )
+    except Exception:
+        log.debug("Could not estimate extent for layer kind=%r", lay.kind, exc_info=True)
+    return None
+
+
+def _panel_extent(panel: SpatialPanel) -> tuple[float, float, float, float] | None:
+    """Unioned ``(xmin, xmax, ymin, ymax)`` bbox for every layer in *panel*.
+
+    Crop bounds (``pp.crop()``) win if present, exactly as ``_render_panel``
+    prioritizes them at draw time; otherwise the bbox is the union of every
+    layer's :func:`_layer_extent`, so a ``+``-stacked multi-kind panel gets
+    one bbox reflecting everything actually drawn.
+    """
+    bounds = _panel_crop_bounds(panel)
+    if bounds is not None:
+        return bounds["xmin"], bounds["xmax"], bounds["ymin"], bounds["ymax"]
+
+    xmins, xmaxs, ymins, ymaxs = [], [], [], []
+    for lay in panel.layers:
+        ext = _layer_extent(lay)
+        if ext is None:
+            continue
+        xmin, xmax, ymin, ymax = ext
+        xmins.append(xmin)
+        xmaxs.append(xmax)
+        ymins.append(ymin)
+        ymaxs.append(ymax)
+    if not xmins:
+        return None
+    return min(xmins), max(xmaxs), min(ymins), max(ymaxs)
+
+
+def _cell_aspect(cell: _Renderable | None) -> float | None:
+    """Width/height aspect ratio for one grid cell, or ``None`` if unknown.
+
+    Only :class:`SpatialPanel` cells carry a real, trustworthy aspect ratio
+    (µm-space data extent). A :class:`FigurePanel` wraps an arbitrary
+    already-rendered figure -- its declared ``figsize`` says nothing
+    reliable about the actual plotted content (e.g. a legend can widen a
+    figure well past a square axes), so it is deliberately *not*
+    introspected here: returning ``None`` lets the caller's default (1.0,
+    "assume equal aspect ratio") apply instead. See
+    :func:`_pad_figure_panel_to_aspect` for how that assumption is kept
+    honest at render time -- the raster is padded with transparent margin
+    to fit its assigned box rather than stretched to it.
+    """
+    if cell is None:
+        return None
+    if isinstance(cell, SpatialPanel):
+        ext = _panel_extent(cell)
+        if ext is not None:
+            xmin, xmax, ymin, ymax = ext
+            w, h = xmax - xmin, ymax - ymin
+            if w > 0 and h > 0:
+                return w / h
+        if cell.figsize:
+            fw, fh = cell.figsize
+            if fw > 0 and fh > 0:
+                return fw / fh
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +623,32 @@ class PlotGrid(_Renderable):
     def to_figure(
         self,
         figsize: tuple[float, float] | None = None,
+        *,
+        dynamic_sizing: bool = True,
     ) -> matplotlib.figure.Figure:
+        """Render the grid to a new matplotlib Figure.
+
+        Parameters
+        ----------
+        figsize
+            Absolute total figure size in inches. Overrides both the
+            per-panel scale and (when set) the aspect-ratio-driven split
+            between columns/rows -- the grid still gets proportional
+            ``width_ratios``/``height_ratios`` within this total unless
+            *dynamic_sizing* is also ``False``.
+        dynamic_sizing
+            When ``True`` (default), each column/row is sized proportionally
+            to the real µm-space aspect ratio of the panels it contains --
+            e.g. a wide, short tissue section claims more figure width than
+            a square UMAP panel next to it, instead of both getting an
+            identical box. For a single row (``|``) or single column
+            (``/``) -- the common case -- every panel keeps its own true
+            aspect ratio exactly, with no distortion: the figure's total
+            size grows or shrinks to fit rather than forcing panels into a
+            fixed-size box. Grids where every cell already has the same
+            aspect ratio render identically either way. Pass ``False`` to
+            restore the old equal-box behavior.
+        """
         nrows, ncols = self.shape
         ref = _first_non_none(self.rows)
         if ref is not None and hasattr(ref, "figsize") and ref.figsize is not None:
@@ -441,11 +658,74 @@ class PlotGrid(_Renderable):
         else:
             per_w, per_h = 5.0, 5.0
 
-        effective = figsize or (ncols * per_w, nrows * per_h)
+        width_ratios = [1.0] * ncols
+        height_ratios = [1.0] * nrows
+        explicit_total: tuple[float, float] | None = None
+        if dynamic_sizing:
+            col_aspects: list[list[float]] = [[] for _ in range(ncols)]
+            row_aspects: list[list[float]] = [[] for _ in range(nrows)]
+            for i, row in enumerate(self.rows):
+                for j in range(ncols):
+                    a = _cell_aspect(row[j] if j < len(row) else None)
+                    if a is not None and a > 0:
+                        # Clamp: one extreme-aspect layer shouldn't warp the
+                        # whole grid -- this is a greedy per-row/per-column
+                        # heuristic, not an exact NxM layout solver.
+                        a = min(max(a, 0.2), 5.0)
+                        col_aspects[j].append(a)
+                        row_aspects[i].append(a)
+            col_aspect = [max(v) if v else 1.0 for v in col_aspects]
+            row_aspect = [max(v) if v else 1.0 for v in row_aspects]
+
+            if nrows == 1:
+                # Exact: every column renders at its own true aspect ratio
+                # simultaneously -- there's no other cell in the column to
+                # compete with for row height, so the figure's total WIDTH
+                # grows/shrinks to fit instead of squeezing/stretching any
+                # panel to hit a pre-decided total.
+                widths = [a * per_h for a in col_aspect]
+                width_ratios = widths
+                explicit_total = (sum(widths), per_h)
+            elif ncols == 1:
+                heights = [per_w / a for a in row_aspect]
+                height_ratios = heights
+                explicit_total = (per_w, sum(heights))
+            else:
+                # General NxM grid: a shared row height and column width
+                # can't simultaneously satisfy every cell's own aspect, so
+                # fall back to the same representative-ratio heuristic as
+                # before, normalized to the legacy total figure size.
+                width_ratios = col_aspect
+                height_ratios = [max(1.0 / x for x in v) if v else 1.0 for v in row_aspects]
+
+        if explicit_total is not None:
+            effective = figsize or explicit_total
+        else:
+            # Normalize so the mean column/row still equals per_w/per_h --
+            # a grid where every cell has the same aspect ratio renders
+            # with the exact same total figure size as before this
+            # feature existed.
+            w_scale = per_w / (sum(width_ratios) / ncols)
+            h_scale = per_h / (sum(height_ratios) / nrows)
+            col_widths = [w * w_scale for w in width_ratios]
+            row_heights = [h * h_scale for h in height_ratios]
+            effective = figsize or (sum(col_widths), sum(row_heights))
+
         fig, axes_grid = plt.subplots(
-            nrows, ncols, figsize=effective, layout="constrained", squeeze=False
+            nrows, ncols, figsize=effective, layout="constrained", squeeze=False,
+            gridspec_kw={"width_ratios": width_ratios, "height_ratios": height_ratios},
         )
 
+        # FigurePanel cells are deferred: the nominal gridspec ratios above
+        # don't account for how much margin constrained_layout will actually
+        # reserve for a neighboring SpatialPanel's axis labels/title/legend,
+        # so a target_aspect computed from those ratios alone can be visibly
+        # off (a few percent in a simple grid, worse once real chrome is
+        # sharing a row/column). Turning each FigurePanel axes chrome-free
+        # up front and resolving layout once before rasterizing means the
+        # aspect used for padding is read from the actual final axes box,
+        # not an estimate of it.
+        pending_figure_panels: list[tuple[matplotlib.axes.Axes, "FigurePanel"]] = []
         for i, row in enumerate(self.rows):
             for j in range(ncols):
                 panel = row[j] if j < len(row) else None
@@ -455,9 +735,29 @@ class PlotGrid(_Renderable):
                 elif isinstance(panel, SpatialPanel):
                     _render_panel(ax, panel)
                 else:
-                    _render_figure_panel(ax, panel.to_figure())
+                    ax.axis("off")
+                    pending_figure_panels.append((ax, panel))
+
+        if pending_figure_panels:
+            fig.canvas.draw()  # resolve constrained_layout with final chrome in place
+            fig_w, fig_h = fig.get_size_inches()
+            for ax, panel in pending_figure_panels:
+                pos = ax.get_position()
+                target_aspect = (pos.width * fig_w) / (pos.height * fig_h)
+                _render_figure_panel(ax, panel.to_figure(), target_aspect=target_aspect)
 
         return fig
+
+    def show(
+        self,
+        *,
+        figsize: tuple[float, float] | None = None,
+        dynamic_sizing: bool = True,
+    ) -> None:
+        """Render and display. See :meth:`to_figure` for *dynamic_sizing*."""
+        fig = self.to_figure(figsize=figsize, dynamic_sizing=dynamic_sizing)
+        plt.show()
+        plt.close(fig)
 
     def __repr__(self) -> str:
         return f"PlotGrid(shape={self.shape})"
@@ -655,7 +955,7 @@ def points(
     vmin: float | None = None,
     vmax: float | None = None,
     vcenter: float | None = None,
-    na_color: str = "#d3d3d3",
+    na_color: str | None = None,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -706,7 +1006,8 @@ def points(
     vcenter
         Midpoint of a diverging colormap.
     na_color
-        Color for points with ``NaN`` in the color column.
+        Color for points with ``NaN`` in the color column.  ``None``
+        (default) uses the active theme's muted color.
     title
         Panel title.  Defaults to the *color* variable name.
     frameon
@@ -886,7 +1187,7 @@ def boundaries(
     alpha: float = 0.8,
     palette: dict | list | None = None,
     cmap: str | None = None,
-    na_color: str = "#d3d3d3",
+    na_color: str | None = None,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -925,7 +1226,8 @@ def boundaries(
     cmap
         Colormap for continuous color variables.
     na_color
-        color for polygons with ``NaN`` in the color column.
+        Color for polygons with ``NaN`` in the color column.  ``None``
+        (default) uses the active theme's muted color.
     title
         Panel title.
     frameon
@@ -988,7 +1290,7 @@ def raster(
     vmin: float | None = None,
     vmax: float | None = None,
     vcenter: float | None = None,
-    na_color: str = "#d3d3d3",
+    na_color: str | None = None,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -1060,7 +1362,8 @@ def raster(
         Midpoint of a diverging colormap (ignored when *fill_color*
         is set).
     na_color
-        color for empty bins in categorical mode.
+        Color for empty bins in categorical mode.  ``None`` (default) uses
+        the active theme's muted color.
     title
         Panel title.
     frameon
@@ -1278,13 +1581,13 @@ def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
 
     for lay in panel.layers:
         if lay.kind == "points":
-            _draw_points_layer(ax, lay)
+            _draw_points_layer(ax, lay, shared_legend)
         elif lay.kind == "image":
             _draw_image_layer(ax, lay, shared_legend)
         elif lay.kind == "boundaries":
             _draw_boundary_layer(ax, lay, shared_legend)
         elif lay.kind == "raster":
-            _draw_raster_layer(ax, lay)
+            _draw_raster_layer(ax, lay, shared_legend)
         elif lay.kind == "annotation":
             _draw_annotation_layer(ax, lay)
         elif lay.kind == "quiver":
@@ -1299,25 +1602,10 @@ def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
     if shared_legend:
         handles = [h for h, _ in shared_legend]
         labels = [lb for _, lb in shared_legend]
-        combined = _Legend(
-            ax, handles, labels,
-            bbox_to_anchor=(1.01, 1),
-            loc="upper left",
-            frameon=False,
-            fontsize=8,
-        )
-        combined.set_clip_on(False)
-        ax.add_artist(combined)
+        _place_legend(ax, handles, labels)
 
     # Auto-zoom to crop region stored by pp.crop()
-    bounds = next(
-        (
-            lay.adata.uns["spatial_bounds"]
-            for lay in panel.layers
-            if lay.adata is not None and "spatial_bounds" in lay.adata.uns
-        ),
-        None,
-    )
+    bounds = _panel_crop_bounds(panel)
     if bounds is not None:
         ax.set_xlim(bounds["xmin"], bounds["xmax"])
         ax.set_ylim(bounds["ymin"], bounds["ymax"])
@@ -1331,30 +1619,150 @@ def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
         ax.set_xlabel("x (µm)")
         ax.set_ylabel("y (µm)")
 
+    # Spatial (µm-space) panels intentionally get no gridline -- they read
+    # as a photographic/image-like view, not a statistical chart.
+    _style_axes(ax, grid=False)
+
     if any(lay.kind == "image" and lay.dark_bg for lay in panel.layers):
         _apply_dark_theme(ax)
+
+
+def _pad_to_aspect(
+    img: np.ndarray,
+    target_aspect: float,
+    fill_rgba: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Pad *img* (H, W, C) with margin to reach *target_aspect*.
+
+    Used instead of stretching so a wrapped figure's own content is never
+    distorted to fit its assigned grid cell -- any gap between the raster's
+    native aspect and the cell's is filled with margin, split evenly on
+    both sides. ``bbox_inches="tight"`` can make a figure's exported raster
+    wider than its nominal square ``figsize`` when it contains a legend
+    that extends past the axes (the crop follows the legend, not the
+    declared canvas size) -- padding back to the assigned cell's aspect
+    keeps that legend from squeezing the actual plot.
+
+    *fill_rgba* should match the theme surface color the wrapped figure was
+    itself rendered against (opaque, not transparent): a transparent pad
+    reveals whatever the destination axes' own facecolor is, and any
+    sub-pixel difference from the raster's own background at the seam --
+    plus anti-aliasing at that raster's tight-cropped edge -- shows as a
+    visible border line once matplotlib stretches the low-res source into
+    its (often much larger) final box.
+    """
+    h, w = img.shape[:2]
+    if h == 0 or w == 0 or target_aspect <= 0:
+        return img
+    if img.shape[2] == 3:
+        img = np.concatenate([img, np.ones((h, w, 1), dtype=img.dtype)], axis=2)
+    fill = np.array(fill_rgba, dtype=img.dtype)
+
+    current_aspect = w / h
+    # Ignore near-equal aspects -- avoids a 1px pad from floating-point noise.
+    if abs(current_aspect - target_aspect) / target_aspect < 1e-3:
+        return img
+
+    if current_aspect < target_aspect:
+        target_w = max(w, int(round(h * target_aspect)))
+        pad_left = (target_w - w) // 2
+        pad_right = target_w - w - pad_left
+        left = np.tile(fill, (h, pad_left, 1))
+        right = np.tile(fill, (h, pad_right, 1))
+        return np.concatenate([left, img, right], axis=1)
+    else:
+        target_h = max(h, int(round(w / target_aspect)))
+        pad_top = (target_h - h) // 2
+        pad_bottom = target_h - h - pad_top
+        top = np.tile(fill, (pad_top, w, 1))
+        bottom = np.tile(fill, (pad_bottom, w, 1))
+        return np.concatenate([top, img, bottom], axis=0)
 
 
 def _render_figure_panel(
     ax: matplotlib.axes.Axes,
     src: matplotlib.figure.Figure,
+    *,
+    target_aspect: float = 1.0,
 ) -> None:
-    """Embed *src* into *ax* by rasterising to PNG and displaying via imshow."""
+    """Embed *src* into *ax* by rasterising to PNG and displaying via imshow.
+
+    The raster is padded (not stretched) to *target_aspect* -- the aspect
+    ratio of the grid cell *ax* actually occupies -- before display, so a
+    wrapped figure's own content (e.g. a UMAP scatter with its legend) is
+    never distorted to fill a cell shaped differently than its raster.
+
+    Rasterizes at the theme's ``savefig.dpi`` (300 by default -- see
+    ``_rcparams_for`` in ``_theme.py``), not the source figure's own dpi:
+    this raster is the actual thing displayed (embedded via imshow, not
+    re-rendered as vectors like the outer SVG-exported figure), and it is
+    routinely stretched into a box larger than the source figure's own
+    declared figsize once dynamic sizing or a wide sibling panel grows the
+    grid, so it needs real margin above "just enough for its own canvas"
+    to still look sharp once enlarged.
+    """
     import matplotlib.image as mpimg
+    rc_dpi = plt.rcParams.get("savefig.dpi", 300)
+    dpi = max(300, rc_dpi) if isinstance(rc_dpi, (int, float)) else 300
     buf = io.BytesIO()
-    src.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    src.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
     buf.seek(0)
     img = mpimg.imread(buf)
+    surface_rgba = mcolors.to_rgba(get_theme().surface)
+    img = _pad_to_aspect(img, target_aspect, fill_rgba=surface_rgba)
     ax.imshow(img, aspect="auto")
     ax.axis("off")
 
 
-def _draw_points_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+def _auto_point_size(ax: matplotlib.axes.Axes, coords: np.ndarray, n_cells: int) -> float:
+    """Default marker area (matplotlib scatter ``s``, in points²).
+
+    Sized from the axes' *actual* physical dimensions, not just ``n_cells``
+    -- a panel dynamically resized by :class:`PlotGrid` (e.g. compressed to
+    a short strip to preserve a neighboring panel's true aspect) renders at
+    a very different µm-per-point scale than a standalone default panel, so
+    a purely count-based marker size can come out wildly too large (cells
+    completely overlapping) or too small once the physical box changes.
+    Instead this targets a marker diameter that's a fixed fraction of the
+    average cell spacing implied by the visible extent and cell count, then
+    converts that µm target to points using the axes' real scale -- so
+    markers read as "cells at roughly their natural spacing" regardless of
+    how the panel ends up sized.
+    """
+    x_range = float(coords[:, 0].max() - coords[:, 0].min())
+    y_range = float(coords[:, 1].max() - coords[:, 1].min())
+    if x_range <= 0 or y_range <= 0 or n_cells <= 0:
+        return max(0.5, min(50, 120_000 / max(n_cells, 1)))
+
+    fig = ax.get_figure()
+    pos = ax.get_position()
+    fig_w_in, fig_h_in = fig.get_size_inches()
+    ax_w_pts = pos.width * fig_w_in * 72.0
+    ax_h_pts = pos.height * fig_h_in * 72.0
+    if ax_w_pts <= 0 or ax_h_pts <= 0:
+        return max(0.5, min(50, 120_000 / n_cells))
+
+    # points per µm -- equal in x/y since panels render at aspect="equal";
+    # averaging both guards against using a stale pre-layout ax box where
+    # they haven't quite converged to the same value yet.
+    scale = (ax_w_pts / x_range + ax_h_pts / y_range) / 2.0
+
+    avg_spacing_um = (x_range * y_range / n_cells) ** 0.5
+    target_diameter_pts = avg_spacing_um * 0.7 * scale
+    size = np.pi * (target_diameter_pts / 2.0) ** 2
+    return max(0.3, min(200.0, size))
+
+
+def _draw_points_layer(
+    ax: matplotlib.axes.Axes,
+    lay: Layer,
+    legend_entries: list | None = None,
+) -> None:
     adata = lay.adata
     _check_single_library(adata)
     coords = adata.obsm[lay.spatial_key]
     n_cells = len(coords)
-    size = lay.size if lay.size is not None else max(0.5, min(50, 120_000 / n_cells))
+    size = lay.size if lay.size is not None else _auto_point_size(ax, coords, n_cells)
 
     color_values, is_categorical = _resolve_color_values(adata, lay.color)
 
@@ -1367,6 +1775,7 @@ def _draw_points_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             size=size,
             alpha=lay.alpha,
             na_color=lay.na_color,
+            legend_entries=legend_entries,
             **lay.extra_kwargs,
         )
     else:
@@ -1389,7 +1798,7 @@ def _draw_points_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             **lay.extra_kwargs,
         )
         if color_values is not None:
-            plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+            _register_colorbar(ax, plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label=lay.color))
 
 
 # Additive-blending colors for multi-channel fluorescence composites.
@@ -1863,10 +2272,8 @@ def _draw_image_layer(
             ch_names = [f"Ch{i}" for i in range(n_ch)]
         if legend_entries is not None:
             for i in range(n_ch):
-                handle = mpatches.Patch(
-                    color=tuple(float(v) for v in _CHANNEL_COLORS_RGB[i % len(_CHANNEL_COLORS_RGB)]),
-                    label=ch_names[i],
-                )
+                color = tuple(float(v) for v in _CHANNEL_COLORS_RGB[i % len(_CHANNEL_COLORS_RGB)])
+                handle = _legend_handles([ch_names[i]], [color])[0]
                 legend_entries.append((handle, ch_names[i]))
 
 
@@ -1917,8 +2324,9 @@ def _draw_boundary_layer(
 
     if is_categorical and color_values is not None:
         unique_cats = sorted(set(color_values[valid_indices]))
-        cat_colors = _build_cat_colors(unique_cats, lay.palette, lay.na_color)
-        base_c = [mcolors.to_rgb(cat_colors.get(str(color_values[i]), lay.na_color)) for i in valid_indices]
+        resolved_na = lay.resolved_na_color
+        cat_colors = _build_cat_colors(unique_cats, lay.palette, resolved_na)
+        base_c = [mcolors.to_rgb(cat_colors.get(str(color_values[i]), resolved_na)) for i in valid_indices]
         edge_c = [(*rgb, lay.alpha) for rgb in base_c]
         face_c = [(*rgb, lay.fill_alpha) for rgb in base_c]
         col = PolyCollection(
@@ -1929,16 +2337,9 @@ def _draw_boundary_layer(
             rasterized=rasterized,
         )
         ax.add_collection(col)
-        ax.legend(
-            handles=[
-                mpatches.Patch(color=cat_colors.get(str(c), lay.na_color), label=str(c))
-                for c in unique_cats
-            ],
-            bbox_to_anchor=(1.01, 1),
-            loc="upper left",
-            frameon=False,
-            fontsize=8,
-        )
+        if legend_entries is not None:
+            handles = _legend_handles(unique_cats, [cat_colors.get(str(c), resolved_na) for c in unique_cats])
+            legend_entries.extend(zip(handles, (str(c) for c in unique_cats)))
     elif color_values is not None:
         vals = color_values[valid_indices].astype(np.float64)
         vmin = lay.vmin if lay.vmin is not None else float(np.nanmin(vals))
@@ -1962,9 +2363,9 @@ def _draw_boundary_layer(
         ax.add_collection(col)
         sm = plt.cm.ScalarMappable(cmap=cmap_fn, norm=norm)
         sm.set_array([])
-        plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+        _register_colorbar(ax, plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04, label=lay.color))
     else:
-        edge_color = literal_color if literal_color is not None else "#555555"
+        edge_color = literal_color if literal_color is not None else get_theme().muted
         face_rgb = mcolors.to_rgb(edge_color) if literal_color is not None else (0.0, 0.0, 0.0)
         edge_rgba = (*mcolors.to_rgb(edge_color), lay.alpha)
         col = PolyCollection(
@@ -1977,11 +2378,11 @@ def _draw_boundary_layer(
         ax.add_collection(col)
         if legend_entries is not None:
             label = lay.boundaries_key.replace("_", " ").title()
-            handle = mpatches.Patch(
-                facecolor="none",
-                edgecolor=edge_color,
-                linewidth=1.5,
-                label=label,
+            # Unfilled ring (not a solid dot) to reflect that this layer draws
+            # outlines only, matching the finalized dot-marker legend style.
+            handle = Line2D(
+                [0], [0], marker="o", linestyle="none", markersize=6,
+                markerfacecolor="none", markeredgecolor=edge_color, label=label,
             )
             legend_entries.append((handle, label))
 
@@ -1993,7 +2394,11 @@ def _draw_boundary_layer(
         ax.autoscale_view()
 
 
-def _draw_raster_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
+def _draw_raster_layer(
+    ax: matplotlib.axes.Axes,
+    lay: Layer,
+    legend_entries: list | None = None,
+) -> None:
     adata = lay.adata
     _check_single_library(adata)
     coords = adata.obsm[lay.spatial_key]
@@ -2003,9 +2408,9 @@ def _draw_raster_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     if lay.bin_shape == "kde":
         _draw_raster_kde(ax, lay, x, y, color_values, is_categorical)
     elif lay.bin_shape == "hex":
-        _draw_raster_hex(ax, lay, x, y, color_values, is_categorical)
+        _draw_raster_hex(ax, lay, x, y, color_values, is_categorical, legend_entries)
     else:
-        _draw_raster_square(ax, lay, x, y, color_values, is_categorical)
+        _draw_raster_square(ax, lay, x, y, color_values, is_categorical, legend_entries)
 
 
 def _draw_raster_kde(
@@ -2065,7 +2470,7 @@ def _draw_raster_kde(
             vmax=lay.vmax if norm is None else None,
             norm=norm, interpolation="bilinear",
         )
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=label)
+        _register_colorbar(ax, plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=label))
 
 
 def _draw_raster_square(
@@ -2075,6 +2480,7 @@ def _draw_raster_square(
     y: np.ndarray,
     color_values: np.ndarray | None,
     is_categorical: bool,
+    legend_entries: list | None = None,
 ) -> None:
     bins = lay.bins
     x_edges = np.linspace(x.min(), x.max(), bins + 1)
@@ -2096,7 +2502,7 @@ def _draw_raster_square(
             im = ax.imshow(grid, extent=extent, origin="lower", aspect="equal",
                            cmap=lay.cmap or _DEFAULT_CONTINUOUS_CMAP,
                            vmin=lay.vmin, vmax=lay.vmax, interpolation="nearest")
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="count")
+            _register_colorbar(ax, plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="count"))
 
     elif is_categorical:
         unique_cats = sorted(set(color_values))
@@ -2110,22 +2516,19 @@ def _draw_raster_square(
             np.add.at(cat_counts[cat_idx], (yi[mask], xi[mask]), 1)
 
         dominant = np.argmax(cat_counts, axis=0)
-        cat_colors = _build_cat_colors(unique_cats, lay.palette, lay.na_color)
+        resolved_na = lay.resolved_na_color
+        cat_colors = _build_cat_colors(unique_cats, lay.palette, resolved_na)
         rgba = np.zeros((bins, bins, 4), dtype=np.float32)
         occupied = count_grid > 0
         for cat_idx, cat in enumerate(unique_cats):
             mask_2d = (dominant == cat_idx) & occupied
-            rgba[mask_2d] = mcolors.to_rgba(cat_colors.get(str(cat), lay.na_color))
+            rgba[mask_2d] = mcolors.to_rgba(cat_colors.get(str(cat), resolved_na))
 
         ax.imshow(rgba, extent=extent, origin="lower", aspect="equal",
                   interpolation="nearest")
-        ax.legend(
-            handles=[
-                mpatches.Patch(color=cat_colors.get(str(c), lay.na_color), label=str(c))
-                for c in unique_cats
-            ],
-            bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False, fontsize=8,
-        )
+        if legend_entries is not None:
+            handles = _legend_handles(unique_cats, [cat_colors.get(str(c), resolved_na) for c in unique_cats])
+            legend_entries.extend(zip(handles, (str(c) for c in unique_cats)))
 
     else:
         val_sum = np.zeros((bins, bins), dtype=np.float64)
@@ -2150,7 +2553,7 @@ def _draw_raster_square(
                 vmax=lay.vmax if norm is None else None,
                 norm=norm, interpolation="nearest",
             )
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            _register_colorbar(ax, plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=lay.color or "value"))
 
 
 def _draw_raster_hex(
@@ -2160,6 +2563,7 @@ def _draw_raster_hex(
     y: np.ndarray,
     color_values: np.ndarray | None,
     is_categorical: bool,
+    legend_entries: list | None = None,
 ) -> None:
     bins = lay.bins
 
@@ -2172,7 +2576,7 @@ def _draw_raster_hex(
                            cmap=lay.cmap or _DEFAULT_CONTINUOUS_CMAP,
                            linewidths=0.2,
                            extent=[x.min(), x.max(), y.min(), y.max()])
-            plt.colorbar(hb, ax=ax, fraction=0.046, pad=0.04, label="count")
+            _register_colorbar(ax, plt.colorbar(hb, ax=ax, fraction=0.046, pad=0.04, label="count"))
 
     elif is_categorical:
         unique_cats = sorted(set(color_values))
@@ -2183,9 +2587,10 @@ def _draw_raster_hex(
             counts = np.bincount(vals.astype(np.intp), minlength=len(unique_cats))
             return float(counts.argmax())
 
-        cat_colors = _build_cat_colors(unique_cats, lay.palette, lay.na_color)
+        resolved_na = lay.resolved_na_color
+        cat_colors = _build_cat_colors(unique_cats, lay.palette, resolved_na)
         cat_cmap = mcolors.ListedColormap(
-            [cat_colors.get(str(c), lay.na_color) for c in unique_cats]
+            [cat_colors.get(str(c), resolved_na) for c in unique_cats]
         )
         ax.hexbin(
             x, y, C=int_vals, gridsize=bins,
@@ -2194,13 +2599,9 @@ def _draw_raster_hex(
             linewidths=0.2,
             extent=[x.min(), x.max(), y.min(), y.max()],
         )
-        ax.legend(
-            handles=[
-                mpatches.Patch(color=cat_colors.get(str(c), lay.na_color), label=str(c))
-                for c in unique_cats
-            ],
-            bbox_to_anchor=(1.01, 1), loc="upper left", frameon=False, fontsize=8,
-        )
+        if legend_entries is not None:
+            handles = _legend_handles(unique_cats, [cat_colors.get(str(c), resolved_na) for c in unique_cats])
+            legend_entries.extend(zip(handles, (str(c) for c in unique_cats)))
 
     else:
         reduce_fn = np.sum if lay.agg == "sum" else np.mean
@@ -2223,7 +2624,7 @@ def _draw_raster_hex(
                 norm=norm, linewidths=0.2,
                 extent=[x.min(), x.max(), y.min(), y.max()],
             )
-            plt.colorbar(hb, ax=ax, fraction=0.046, pad=0.04)
+            _register_colorbar(ax, plt.colorbar(hb, ax=ax, fraction=0.046, pad=0.04, label=lay.color or "value"))
 
 
 def _fill_alpha_cmap(fill_color: str) -> mcolors.LinearSegmentedColormap:
@@ -2268,28 +2669,12 @@ def _resolve_color_values(
     """Return ``(values_array, is_categorical)``.
 
     Searches ``var_names`` first (gene expression), then ``obs`` columns.
-    Returns ``(None, False)`` when *col_name* is ``None``.
+    Returns ``(None, False)`` when *col_name* is ``None``. Thin wrapper
+    around the shared :func:`astrolabe._utils._resolve_field`.
     """
     if col_name is None:
         return None, False
-
-    if col_name in adata.var_names:
-        idx = adata.var_names.get_loc(col_name)
-        x_col = adata.X[:, idx]
-        if sp.issparse(x_col):
-            x_col = np.asarray(x_col.todense()).ravel()
-        return x_col.astype(np.float64), False
-
-    if col_name in adata.obs.columns:
-        col = adata.obs[col_name]
-        if hasattr(col, "cat") or col.dtype == object:
-            return col.astype(str).to_numpy(), True
-        return col.to_numpy(dtype=np.float64), False
-
-    raise KeyError(
-        f"'{col_name}' not found in var_names or obs columns. "
-        f"Available obs columns: {list(adata.obs.columns)}"
-    )
+    return _resolve_field(adata, col_name, axis="obs")
 
 
 def _plot_categorical(
@@ -2300,16 +2685,18 @@ def _plot_categorical(
     palette: dict | list | None,
     size: float,
     alpha: float,
-    na_color: str = "#d3d3d3",
+    na_color: str | None = None,
+    legend_entries: list | None = None,
     **scatter_kwargs: Any,
 ) -> None:
+    resolved_na = na_color if na_color is not None else get_theme().muted
     unique_cats = sorted(set(categories))
-    cat_colors = _build_cat_colors(unique_cats, palette, na_color)
+    cat_colors = _build_cat_colors(unique_cats, palette, resolved_na)
     n_cells = len(coords)
 
     for cat in unique_cats:
         mask = categories == cat
-        color = cat_colors.get(str(cat), na_color)
+        color = cat_colors.get(str(cat), resolved_na)
         ax.scatter(
             coords[mask, 0],
             coords[mask, 1],
@@ -2321,16 +2708,9 @@ def _plot_categorical(
             **scatter_kwargs,
         )
 
-    ax.legend(
-        handles=[
-            mpatches.Patch(color=cat_colors.get(str(c), na_color), label=str(c))
-            for c in unique_cats
-        ],
-        bbox_to_anchor=(1.01, 1),
-        loc="upper left",
-        frameon=False,
-        fontsize=8,
-    )
+    if legend_entries is not None:
+        handles = _legend_handles(unique_cats, [cat_colors.get(str(c), resolved_na) for c in unique_cats])
+        legend_entries.extend(zip(handles, (str(c) for c in unique_cats)))
 
 
 def _build_cat_colors(
@@ -2339,9 +2719,12 @@ def _build_cat_colors(
     na_color: str,
 ) -> dict[str, Any]:
     if palette is None:
-        cmap = plt.get_cmap(_DEFAULT_CATEGORICAL_CMAP)
-        n = max(len(unique_cats) - 1, 1)
-        return {str(cat): cmap(i / n) for i, cat in enumerate(unique_cats)}
+        t = get_theme()
+        n_cats = len(unique_cats)
+        colors = (
+            t.cat_core if n_cats <= 8 else _extended_cat_colors(n_cats, t.name)
+        )
+        return {str(cat): colors[i] for i, cat in enumerate(unique_cats)}
     if isinstance(palette, dict):
         return {str(k): v for k, v in palette.items()}
     return {str(cat): palette[i % len(palette)] for i, cat in enumerate(unique_cats)}
@@ -2724,7 +3107,7 @@ def _draw_quiver_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         X[valid], Y[valid],
         U[valid], V[valid],
         magnitude[valid],
-        cmap=lay.cmap or "viridis",
+        cmap=lay.cmap or _DEFAULT_CONTINUOUS_CMAP,
         norm=norm,
         scale=scale,
         scale_units="xy",
@@ -2732,7 +3115,7 @@ def _draw_quiver_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         pivot="mid",
         width=0.004,
     )
-    plt.colorbar(qv, ax=ax, fraction=0.046, pad=0.04, label=f"‖∇{key}‖")
+    _register_colorbar(ax, plt.colorbar(qv, ax=ax, fraction=0.046, pad=0.04, label=f"‖∇{key}‖"))
     ax.autoscale_view()
 
 
@@ -2768,21 +3151,21 @@ def _draw_streamplot_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         sp_result = ax.streamplot(
             x_grid, y_grid, U_plot, V_plot,
             color=color,
-            cmap=lay.cmap or "viridis",
+            cmap=lay.cmap or _DEFAULT_CONTINUOUS_CMAP,
             norm=norm,
             linewidth=lw,
             density=density,
             arrowsize=1.2,
         )
-        plt.colorbar(
+        _register_colorbar(ax, plt.colorbar(
             sp_result.lines, ax=ax, fraction=0.046, pad=0.04,
             label=f"‖∇{key}‖",
-        )
+        ))
     else:
         lw = linewidth if linewidth is not None else 1.2
         ax.streamplot(
             x_grid, y_grid, U_plot, V_plot,
-            color="black",
+            color=get_theme().primary_ink,
             linewidth=lw,
             density=density,
             arrowsize=1.2,
@@ -2815,12 +3198,12 @@ def _draw_divergence_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     XX, YY = np.meshgrid(x_grid, y_grid)
     pm = ax.pcolormesh(
         XX, YY, field,
-        cmap=lay.cmap or "RdBu_r",
+        cmap=lay.cmap or _DEFAULT_DIVERGING_CMAP,
         norm=norm,
         alpha=lay.alpha,
         shading="auto",
     )
     label = f"{field_name}(∇{key})" if key else field_name
-    plt.colorbar(pm, ax=ax, fraction=0.046, pad=0.04, label=label)
+    _register_colorbar(ax, plt.colorbar(pm, ax=ax, fraction=0.046, pad=0.04, label=label))
     ax.set_xlim(x_grid[0], x_grid[-1])
     ax.set_ylim(y_grid[0], y_grid[-1])

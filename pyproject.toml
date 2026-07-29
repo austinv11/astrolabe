@@ -71,5 +71,10 @@ all      = ["astrolabe[napari,cellpose,stardist,harmony,som]"]
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build.targets.wheel]
+packages = ["astrolabe"]
+# Bundled Inter font files (astrolabe/pl/_fonts/) for the plot theme system
+artifacts = ["astrolabe/pl/_fonts/*.ttf"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

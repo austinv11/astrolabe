@@ -13,7 +13,8 @@ import numpy as np
 import pandas as pd
 
 from astrolabe._utils import _resolve_adata
-from astrolabe.pl._spatial import FigurePanel
+from astrolabe.pl._spatial import _DEFAULT_DIVERGING_CMAP, FigurePanel
+from astrolabe.pl._theme import _style_axes, _style_colorbar, _style_legend, get_theme
 
 __all__ = ["flux_plot", "direction_histogram"]
 
@@ -23,7 +24,7 @@ def flux_plot(
     key: str,
     *,
     modality: str | None = None,
-    cmap: str = "RdBu_r",
+    cmap: str = _DEFAULT_DIVERGING_CMAP,
     figsize: tuple[float, float] = (6, 5),
     annotate: bool = True,
     fmt: str = ".2f",
@@ -54,7 +55,7 @@ def flux_plot(
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
     cmap
-        Diverging colormap; defaults to ``'RdBu_r'``.
+        Diverging colormap; defaults to the active theme's diverging colormap.
     figsize
         Figure size in inches.
     annotate
@@ -89,6 +90,7 @@ def flux_plot(
     if abs_max == 0:
         abs_max = 1.0
 
+    t = get_theme()
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(
         mat,
@@ -97,7 +99,7 @@ def flux_plot(
         vmax=abs_max,
         aspect="auto",
     )
-    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="mean flux (a.u.)")
+    _style_colorbar(plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="mean flux (a.u.)"))
 
     ax.set_xticks(range(len(groups)))
     ax.set_yticks(range(len(groups)))
@@ -112,7 +114,12 @@ def flux_plot(
             for j in range(len(groups)):
                 val = mat[i, j]
                 if np.isfinite(val):
-                    text_color = "white" if abs(val) > 0.6 * abs_max else "black"
+                    # Contrast against the cell's own fill: strong (saturated
+                    # pole) values get the surface color, weak (near-neutral-
+                    # midpoint) values get the primary ink -- these are each
+                    # theme's own opposite extremes, so this flips correctly
+                    # for dark mode rather than hardcoding white/black.
+                    text_color = t.surface if abs(val) > 0.6 * abs_max else t.primary_ink
                     ax.text(
                         j, i,
                         format(val, fmt),
@@ -120,6 +127,7 @@ def flux_plot(
                         color=text_color, fontsize=8,
                     )
 
+    _style_axes(ax)
     fig.tight_layout()
     return FigurePanel(fig)
 
@@ -213,8 +221,9 @@ def direction_histogram(
     if len(keys) == 1:
         ax.set_title(f"∇{keys[0]} direction", pad=12)
     else:
-        ax.legend(loc="lower right", bbox_to_anchor=(1.3, -0.1), fontsize=8)
+        _style_legend(ax.legend(loc="lower right", bbox_to_anchor=(1.3, -0.1), fontsize=8))
         ax.set_title("gradient directions", pad=12)
 
+    _style_axes(ax)
     fig.tight_layout()
     return FigurePanel(fig)

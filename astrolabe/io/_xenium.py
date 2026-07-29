@@ -85,9 +85,11 @@ _OBS_ALWAYS = [
 _CONTROL_PREFIXES = (
     "NegControlProbe_",
     "NegControlCodeword_",
+    "UnassignedCodeword_",
+    "DeprecatedCodeword_",
+    "GenomicControl_",
     "BLANK_",
     "antisense_",
-    "Deprecated_",
 )
 
 # Xenium cells table filenames in preference order (newer runs use parquet).
@@ -265,7 +267,7 @@ def read_xenium_transcripts(
     genes: list[str] | None = None,
     min_qv: float | None = 20.0,
     z_range: tuple[float, float] | None = None,
-    include_controls: bool = False,
+    include_controls: bool = True,
     columns: list[str] | None = None,
     chunksize: int = 500_000,
 ) -> "md.MuData | None":

@@ -53,7 +53,8 @@ import numpy as np
 import pandas as pd
 
 from astrolabe._utils import ImageSpec, _resolve_adata
-from astrolabe.pl._spatial import _build_cat_colors, _resolve_color_values
+from astrolabe.pl._spatial import _DEFAULT_CONTINUOUS_CMAP, _build_cat_colors, _resolve_color_values
+from astrolabe.pl._theme import get_theme
 
 if TYPE_CHECKING:
     import napari
@@ -271,14 +272,15 @@ def _add_shapes_layer(
         viewer.add_shapes(
             polys,
             shape_type="polygon",
-            edge_color="#aaaaaa",
+            edge_color=get_theme().muted,
             face_color="transparent",
             name=name,
         )
     elif is_cat:
+        na_color = get_theme().muted
         unique_cats = sorted(set(values))
-        cat_colors = _build_cat_colors(unique_cats, None, "#d3d3d3")
-        edge_colors = [cat_colors.get(str(v), "#d3d3d3") for v in values]
+        cat_colors = _build_cat_colors(unique_cats, None, na_color)
+        edge_colors = [cat_colors.get(str(v), na_color) for v in values]
         viewer.add_shapes(
             polys,
             shape_type="polygon",
@@ -291,7 +293,7 @@ def _add_shapes_layer(
 
         vmin, vmax = float(np.nanpercentile(values, 2)), float(np.nanpercentile(values, 98))
         normed = np.clip((values - vmin) / max(vmax - vmin, 1e-12), 0.0, 1.0)
-        cmap = plt.get_cmap("viridis")
+        cmap = plt.get_cmap(_DEFAULT_CONTINUOUS_CMAP)
         edge_colors = [cmap(float(v)) for v in normed]
         viewer.add_shapes(
             polys,
@@ -587,16 +589,17 @@ def view_napari(
     if values is None:
         viewer.add_points(coords_yx, name=pt_name, size=size)
     elif is_cat:
+        na_color = get_theme().muted
         unique_cats = sorted(set(values))
-        cat_colors = _build_cat_colors(unique_cats, None, "#d3d3d3")
-        face_colors = np.array([cat_colors.get(str(v), "#d3d3d3") for v in values])
+        cat_colors = _build_cat_colors(unique_cats, None, na_color)
+        face_colors = np.array([cat_colors.get(str(v), na_color) for v in values])
         viewer.add_points(coords_yx, face_color=face_colors, name=pt_name, size=size)
     else:
         viewer.add_points(
             coords_yx,
             features={"value": values},
             face_color="value",
-            face_colormap="viridis",
+            face_colormap=_DEFAULT_CONTINUOUS_CMAP,
             name=pt_name,
             size=size,
         )

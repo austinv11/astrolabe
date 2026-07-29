@@ -10,19 +10,28 @@ import anndata as ad
 import matplotlib.axes
 import matplotlib.colors as mcolors
 import matplotlib.figure
-import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from astrolabe._utils import with_adata
-from astrolabe.pl._spatial import FigurePanel
+from astrolabe._utils import _resolve_field, with_adata
+from astrolabe.pl._generic import histogram as _generic_histogram, scatter as _generic_scatter
+from astrolabe.pl._spatial import _DEFAULT_CONTINUOUS_CMAP, _DEFAULT_DIVERGING_CMAP, FigurePanel
+from astrolabe.pl._theme import (
+    TITLE_FONT,
+    _extended_cat_colors,
+    _legend_handles,
+    _style_axes,
+    _style_colorbar,
+    _style_legend,
+    get_theme,
+)
 
 __all__ = [
     "violin",
     "dotplot",
-    "heatmap",
+    "expression_heatmap",
     "embedding_scatter",
     "volcano_plot",
     "paga_plot",
@@ -34,6 +43,8 @@ __all__ = [
     "nucleus_area_histogram",
     "genes_per_cell_histogram",
     "transcripts_per_cell_histogram",
+    "genes_vs_area_scatter",
+    "transcripts_vs_area_scatter",
     "intensity_histogram",
     "intensity_histograms",
     "scatter_gate",
@@ -51,15 +62,28 @@ __all__ = [
     "som_subcellular_plot",
 ]
 
-# Default colors for known feature types (controls visually distinct from Gene Expression).
-_FEATURE_TYPE_PALETTE: dict[str, str] = {
-    "Gene Expression": "#AAAAAA",
-    "Negative Control Probe": "#D94F3D",
-    "Negative Control Codeword": "#F4883B",
-    "Unassigned Codeword": "#6A7FC1",
-    "Deprecated Codeword": "#5BAD6F",
-    "Genomic Control": "#B05DBF",
-}
+def _feature_type_palette() -> dict[str, str]:
+    """Default colors for known feature types, from the active theme's core palette.
+
+    Gene Expression (the expected/background category) gets the theme's
+    muted gray so controls read as the visually distinct ones.
+    """
+    t = get_theme()
+    return {
+        "Gene Expression": t.muted,
+        "Negative Control Probe": t.cat_core[7],
+        "Negative Control Codeword": t.cat_core[1],
+        "Unassigned Codeword": t.cat_core[0],
+        "Deprecated Codeword": t.cat_core[2],
+        "Genomic Control": t.cat_core[6],
+    }
+
+
+def _categorical_cmap(name: str | None) -> mcolors.Colormap:
+    """Resolve a categorical colormap: *name* if given, else the theme's core palette."""
+    if name is not None:
+        return plt.get_cmap(name)
+    return mcolors.ListedColormap(get_theme().cat_core)
 
 
 @with_adata
@@ -132,7 +156,10 @@ def violin(
         ax=ax,
         **kwargs,
     )
-    return FigurePanel.from_obj(result)
+    panel = FigurePanel.from_obj(result)
+    for ax_ in panel.figure.axes:
+        _style_axes(ax_)
+    return panel
 
 
 @with_adata
@@ -212,11 +239,14 @@ def dotplot(
         **kwargs,
     )
 
-    return FigurePanel.from_obj(dp)
+    panel = FigurePanel.from_obj(dp)
+    for ax_ in panel.figure.axes:
+        _style_axes(ax_)
+    return panel
 
 
 @with_adata
-def heatmap(
+def expression_heatmap(
     adata: ad.AnnData,
     var_names: "list[str] | dict[str, list[str]]",
     groupby: str,
@@ -276,12 +306,12 @@ def heatmap(
     FigurePanel
         Composable panel — use ``|`` or ``/`` to combine with spatial plots::
 
-            ab.pl.heatmap(mdata, markers, "leiden") | ab.pl.points(mdata, "leiden")
+            ab.pl.expression_heatmap(mdata, markers, "leiden") | ab.pl.points(mdata, "leiden")
 
     Examples
     --------
     >>> markers = {"T cell": ["CD3D", "CD8A"], "Epithelial": ["EPCAM", "KRT8"]}
-    >>> ab.pl.heatmap(mdata, markers, groupby="leiden_annotation").show()
+    >>> ab.pl.expression_heatmap(mdata, markers, groupby="leiden_annotation").show()
     """
     import matplotlib.pyplot as plt
 
@@ -300,7 +330,10 @@ def heatmap(
         **kwargs,
     )
 
-    return FigurePanel.from_obj(plt.gcf())
+    panel = FigurePanel.from_obj(plt.gcf())
+    for ax_ in panel.figure.axes:
+        _style_axes(ax_)
+    return panel
 
 
 @with_adata
@@ -393,6 +426,8 @@ def embedding_scatter(
     )
 
     fig = ax.get_figure() if not made_ax else FigurePanel.from_obj(result).figure
+    for ax_ in fig.axes:
+        _style_axes(ax_)
     plt.close(fig)
     return FigurePanel(fig)
 
@@ -410,9 +445,9 @@ def volcano_plot(
     top_n: int = 10,
     point_size: float = 5.0,
     alpha: float = 0.5,
-    up_color: str = "#D94F3D",
-    down_color: str = "#6A7FC1",
-    ns_color: str = "#AAAAAA",
+    up_color: str | None = None,
+    down_color: str | None = None,
+    ns_color: str | None = None,
     title: "str | None" = None,
     ax: "matplotlib.axes.Axes | None" = None,
     figsize: "tuple[float, float]" = (6, 5),
@@ -497,6 +532,11 @@ def volcano_plot(
     pvals_raw = np.clip(pvals_raw, 1e-300, 1.0)
     neg_log_p = -np.log10(pvals_raw)
 
+    t = get_theme()
+    up_color = up_color if up_color is not None else t.cat_core[7]
+    down_color = down_color if down_color is not None else t.cat_core[0]
+    ns_color = ns_color if ns_color is not None else t.muted
+
     # Categorize points
     sig_up   = (pvals_raw < pval_threshold) & (lfc >  lfc_threshold)
     sig_down = (pvals_raw < pval_threshold) & (lfc < -lfc_threshold)
@@ -518,9 +558,9 @@ def volcano_plot(
             )
 
     # Reference lines
-    ax.axhline(-np.log10(pval_threshold), color="#555555", linestyle="--", linewidth=0.9)
-    ax.axvline( lfc_threshold, color="#555555", linestyle="--", linewidth=0.9)
-    ax.axvline(-lfc_threshold, color="#555555", linestyle="--", linewidth=0.9)
+    ax.axhline(-np.log10(pval_threshold), color=t.muted, linestyle="--", linewidth=0.9)
+    ax.axvline( lfc_threshold, color=t.muted, linestyle="--", linewidth=0.9)
+    ax.axvline(-lfc_threshold, color=t.muted, linestyle="--", linewidth=0.9)
 
     # Label top-n significant genes per direction
     def _label_top(mask: np.ndarray, n: int) -> None:
@@ -542,13 +582,13 @@ def volcano_plot(
     ax.set_ylabel("−log₁₀(p-value)", fontsize=9)
     ax.set_title(title or f"Volcano — group {group}", fontsize=10)
 
-    handles = [
-        mpatches.Patch(color=up_color, label=f"Up (n={sig_up.sum()})"),
-        mpatches.Patch(color=down_color, label=f"Down (n={sig_down.sum()})"),
-        mpatches.Patch(color=ns_color, label="NS"),
-    ]
-    ax.legend(handles=handles, fontsize=7, framealpha=0.7)
+    handles = _legend_handles(
+        [f"Up (n={sig_up.sum()})", f"Down (n={sig_down.sum()})", "NS"],
+        [up_color, down_color, ns_color],
+    )
+    _style_legend(ax.legend(handles=handles, fontsize=7, framealpha=0.7))
 
+    _style_axes(ax)
     if own_fig:
         fig.tight_layout()
         plt.close(fig)
@@ -612,6 +652,7 @@ def paga_plot(
         ax=ax,
         **kwargs,
     )
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -623,7 +664,7 @@ def ripley_plot(
     *,
     key: str = "ripley_l",
     cell_types: "list[str] | None" = None,
-    cmap: str = "tab10",
+    cmap: str | None = None,
     title: "str | None" = None,
     ax: "matplotlib.axes.Axes | None" = None,
     figsize: "tuple[float, float]" = (6, 4),
@@ -677,7 +718,8 @@ def ripley_plot(
     else:
         fig = ax.get_figure()
 
-    cmap_obj = plt.get_cmap(cmap)
+    cmap_obj = _categorical_cmap(cmap)
+    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 10
     for i, ct in enumerate(cell_types):
         if ct not in result:
             continue
@@ -693,7 +735,7 @@ def ripley_plot(
             l_vals = stats["L"].to_numpy(dtype=float) if hasattr(stats, "columns") else np.asarray(stats, dtype=float)
 
         l_d = l_vals - bins[:len(l_vals)]
-        color = cmap_obj(i % 10)
+        color = cmap_obj(i % n_colors)
         ax.plot(bins[:len(l_d)], l_d, label=ct, color=color)
         # Draw simulation envelope if available
         if hasattr(entry, "columns") and "L_hi" in entry.columns and "L_lo" in entry.columns:
@@ -701,15 +743,16 @@ def ripley_plot(
             l_lo = entry["L_lo"].to_numpy(dtype=float) - bins[:len(l_vals)]
             ax.fill_between(bins[:len(l_d)], l_lo, l_hi, alpha=0.15, color=color)
 
-    ax.axhline(0, color="#555555", linestyle="--", linewidth=0.8)
+    ax.axhline(0, color=get_theme().muted, linestyle="--", linewidth=0.8)
     ax.set_xlabel("Distance d (µm)", fontsize=9)
     ax.set_ylabel("L(d) − d", fontsize=9)
     ax.set_title(title or "Ripley's L", fontsize=10)
 
     n = len(cell_types)
     if n <= 15:
-        ax.legend(fontsize=7, framealpha=0.7, loc="upper left")
+        _style_legend(ax.legend(fontsize=7, framealpha=0.7, loc="upper left"))
 
+    _style_axes(ax)
     if own_fig:
         fig.tight_layout()
         plt.close(fig)
@@ -742,6 +785,15 @@ def gene_qv_scatter(
 
     Mean Q-score per gene is computed from *transcripts* (grouped by
     *gene_col*) or read from a pre-computed ``var`` column (*mean_qv_key*).
+
+    .. note::
+        ``read_xenium``'s default auto-loaded ``uns['transcripts']`` excludes
+        control-probe transcripts (``include_controls=False``), so by default
+        control feature types have no Q-score to plot and only show up as an
+        empty legend entry. Call
+        ``ab.io.read_xenium_transcripts(data, include_controls=True)`` first
+        to repopulate ``uns['transcripts']`` with controls included, or pass
+        a controls-inclusive table via *transcripts=* directly.
 
     Parameters
     ----------
@@ -835,7 +887,7 @@ def gene_qv_scatter(
                 f"var['{mean_qv_key}'] not found. "
                 "Either pass transcripts= or pre-compute the column"
             )
-        mean_qv = adata.var[mean_qv_key].to_numpy(dtype=np.float64)
+        mean_qv, _ = _resolve_field(adata, mean_qv_key, axis="var")
     else:
         raise ValueError(
             "No Q-score source found. Either: run ab.io.read_xenium_transcripts(mdata) "
@@ -843,78 +895,67 @@ def gene_qv_scatter(
             "or supply mean_qv_key= if the column is pre-computed in var"
         )
 
-    counts = adata.var[total_counts_key].to_numpy(dtype=np.float64) + 1
-    feature_types = adata.var[feature_type_key].astype(str).to_numpy()
+    counts, _ = _resolve_field(adata, total_counts_key, axis="var")
+    counts = counts + 1
+    feature_types, _ = _resolve_field(adata, feature_type_key, axis="var")
 
-    # Augment with per-gene control stats stashed by calculate_xenium_qc_metrics.
-    # This restores individual control probe points even after controls are removed from var.
+    # Merge in per-gene control stats stashed by calculate_xenium_qc_metrics
+    # (computed independently from raw X, so always populated regardless of
+    # what mean_qv/total_counts_key ended up NaN for): backfill control genes
+    # still present in var whose own count/QV came out NaN — e.g.
+    # calculate_qc_metrics(exclude_controls=True) leaves control rows' own
+    # total_counts NaN, or the transcripts table used for QV excluded some
+    # control types — and append stash-only rows for control genes already
+    # removed from var entirely (e.g. after pipeline.filter_xenium). Genes
+    # still in var are backfilled in place rather than appended again, to
+    # avoid plotting every control gene twice.
     ctrl_stash = adata.uns.get('control_probe_summary', {})
     if ctrl_stash and 'total_counts' in ctrl_stash:
+        name_key = next(
+            k for k in ctrl_stash if k not in ('feature_type', 'total_counts', 'mean_qv')
+        )
+        ctrl_names = np.asarray(ctrl_stash[name_key], dtype=object)
         ctrl_counts = np.array(ctrl_stash['total_counts'], dtype=np.float64) + 1
         ctrl_qv = np.array(
             ctrl_stash.get('mean_qv', [np.nan] * len(ctrl_counts)), dtype=np.float64
         )
-        ctrl_types = np.array(ctrl_stash['feature_type'])
-        counts = np.concatenate([counts, ctrl_counts])
-        mean_qv = np.concatenate([mean_qv, ctrl_qv])
-        feature_types = np.concatenate([feature_types, ctrl_types])
+        ctrl_types = np.array(ctrl_stash['feature_type'], dtype=object)
+
+        var_pos = {name: i for i, name in enumerate(adata.var_names)}
+        still_present = np.array([n in var_pos for n in ctrl_names])
+        for i in np.flatnonzero(still_present):
+            j = var_pos[ctrl_names[i]]
+            if not np.isfinite(counts[j]):
+                counts[j] = ctrl_counts[i]
+            if not np.isfinite(mean_qv[j]):
+                mean_qv[j] = ctrl_qv[i]
+
+        removed = ~still_present
+        counts = np.concatenate([counts, ctrl_counts[removed]])
+        mean_qv = np.concatenate([mean_qv, ctrl_qv[removed]])
+        feature_types = np.concatenate([feature_types, ctrl_types[removed]])
 
     # --- resolve palette ---
-    effective_palette = {**_FEATURE_TYPE_PALETTE, **(palette or {})}
+    effective_palette = {**_feature_type_palette(), **(palette or {})}
     unique_types = sorted(set(feature_types))
 
     # Assign a color to any feature type not in the palette
-    fallback_cmap = plt.get_cmap("tab10")
+    fallback_cmap = _categorical_cmap(None)
     known = set(effective_palette)
     extra = [ft for ft in unique_types if ft not in known]
     for i, ft in enumerate(extra):
-        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 10))
-
-    # --- plot ---
-    own_fig = ax is None
-    if own_fig:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.get_figure()
+        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 8))
 
     # Draw Gene Expression first (background), controls on top
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
-    for ft in draw_order:
-        mask = feature_types == ft
-        if not mask.any():
-            continue
-        ax.scatter(
-            counts[mask],
-            mean_qv[mask],
-            c=effective_palette.get(ft, "#888888"),
-            s=size,
-            alpha=alpha,
-            label=ft,
-            rasterized=mask.sum() > 5_000,
-            **scatter_kwargs,
-        )
 
-    ax.set_xscale("log")
-    ax.set_xlabel("total transcripts + 1")
-    ax.set_ylabel("Mean calibrated Q-score")
-    ax.set_title(title)
-
-    legend_handles = [
-        mpatches.Patch(color=effective_palette.get(ft, "#888888"), label=ft)
-        for ft in unique_types
-    ]
-    ax.legend(
-        handles=legend_handles,
-        bbox_to_anchor=(1.01, 1),
-        loc="upper left",
-        frameon=False,
-        fontsize=8,
+    return _generic_scatter(
+        adata, x=counts, y=mean_qv, color=feature_types, axis="var",
+        palette=effective_palette, category_order=draw_order,
+        log_x=True, size=size, alpha=alpha,
+        xlabel="total transcripts + 1", ylabel="Mean calibrated Q-score",
+        title=title, ax=ax, figsize=figsize, **scatter_kwargs,
     )
-
-    if own_fig:
-        fig.tight_layout()
-        plt.close(fig)
-    return FigurePanel(fig)
 
 
 
@@ -1008,13 +1049,15 @@ def gene_detection_scatter(
                 "Run ab.pp.calculate_qc_metrics(data) first."
             )
 
-    counts = adata.var[total_counts_key].to_numpy(dtype=np.float64) + 1
-    detection_rate = 1.0 - adata.var[pct_dropout_key].to_numpy(dtype=np.float64) / 100.0
+    counts, _ = _resolve_field(adata, total_counts_key, axis="var")
+    counts = counts + 1
+    dropout, _ = _resolve_field(adata, pct_dropout_key, axis="var")
+    detection_rate = 1.0 - dropout / 100.0
 
     # --- resolve feature labels ---
     if feature_type_key in adata.var.columns:
-        feature_types = adata.var[feature_type_key].astype(str).to_numpy()
-        effective_palette = {**_FEATURE_TYPE_PALETTE, **(palette or {})}
+        feature_types, _ = _resolve_field(adata, feature_type_key, axis="var")
+        effective_palette = {**_feature_type_palette(), **(palette or {})}
 
         # Restore stashed controls (Xenium: after calculate_xenium_qc_metrics + filter_genes)
         ctrl_stash = adata.uns.get("control_probe_summary", {})
@@ -1028,68 +1071,36 @@ def gene_detection_scatter(
     else:
         _ctrl_col = control_key if control_key in adata.var.columns else "is_control_probe"
         if _ctrl_col in adata.var.columns:
-            is_ctrl = adata.var[_ctrl_col].astype(bool).to_numpy()
+            is_ctrl_arr, _ = _resolve_field(adata, _ctrl_col, axis="var")
+            is_ctrl = is_ctrl_arr.astype(bool)
             feature_types = np.where(is_ctrl, "Control Probe", "Gene Expression")
         else:
             feature_types = np.full(len(counts), "Gene Expression")
+        t = get_theme()
         effective_palette = {
-            "Gene Expression": "#AAAAAA",
-            "Control Probe": "#D94F3D",
+            "Gene Expression": t.muted,
+            "Control Probe": t.cat_core[7],
             **(palette or {}),
         }
 
     # Assign fallback colors for any unlisted types
     unique_types = sorted(set(feature_types))
-    fallback_cmap = plt.get_cmap("tab10")
+    fallback_cmap = _categorical_cmap(None)
     known = set(effective_palette)
     for i, ft in enumerate(ft for ft in unique_types if ft not in known):
-        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 10))
-
-    # --- plot ---
-    own_fig = ax is None
-    if own_fig:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.get_figure()
+        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 8))
 
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
-    for ft in draw_order:
-        mask = feature_types == ft
-        if not mask.any():
-            continue
-        ax.scatter(
-            counts[mask],
-            detection_rate[mask],
-            c=effective_palette.get(ft, "#888888"),
-            s=size,
-            alpha=alpha,
-            label=ft,
-            rasterized=mask.sum() > 5_000,
-            **scatter_kwargs,
-        )
 
-    ax.set_xscale("log")
-    ax.set_xlabel("total transcripts + 1")
-    ax.set_ylabel("Detection rate (fraction of cells)")
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_title(title)
-
-    legend_handles = [
-        mpatches.Patch(color=effective_palette.get(ft, "#888888"), label=ft)
-        for ft in unique_types
-    ]
-    ax.legend(
-        handles=legend_handles,
-        bbox_to_anchor=(1.01, 1),
-        loc="upper left",
-        frameon=False,
-        fontsize=8,
+    panel = _generic_scatter(
+        adata, x=counts, y=detection_rate, color=feature_types, axis="var",
+        palette=effective_palette, category_order=draw_order,
+        log_x=True, size=size, alpha=alpha,
+        xlabel="total transcripts + 1", ylabel="Detection rate (fraction of cells)",
+        title=title, ax=ax, figsize=figsize, **scatter_kwargs,
     )
-
-    if own_fig:
-        fig.tight_layout()
-        plt.close(fig)
-    return FigurePanel(fig)
+    panel.figure.axes[0].set_ylim(-0.05, 1.05)
+    return panel
 
 
 # ---------------------------------------------------------------------------
@@ -1101,6 +1112,7 @@ def gene_detection_scatter(
 def mean_variance_plot(
     adata: ad.AnnData,
     *,
+    layer: str | None = None,
     feature_type_key: str = "feature_type",
     control_key: str = "is_control",
     palette: dict[str, str] | None = None,
@@ -1121,16 +1133,21 @@ def mean_variance_plot(
 
     .. note::
         Call this on raw counts (before :func:`~astrolabe.pp.normalize_total`
-        or :func:`~astrolabe.pp.log1p`).  After transformation the
-        mean-variance relationship no longer follows Poisson statistics.
+        or :func:`~astrolabe.pp.log1p`) — either by calling it before those
+        run, or by pointing *layer* at a layer holding a raw-count copy
+        stashed beforehand.  After transformation the mean-variance
+        relationship no longer follows Poisson statistics.
 
     Parameters
     ----------
     data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.  ``X`` must
-        contain raw integer counts.
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.  ``X`` (or
+        *layer*) must contain raw integer counts.
     modality
         Modality key when *data* is a :class:`~mudata.MuData`.
+    layer
+        Layer holding raw counts.  ``None`` reads ``X`` directly — only
+        correct if ``X`` has not yet been normalized/log-transformed.
     feature_type_key
         ``var`` column containing feature-type labels (e.g. ``'feature_type'``
         from :func:`~astrolabe.io.read_xenium`).  Used to color points by
@@ -1160,7 +1177,7 @@ def mean_variance_plot(
     """
     import scipy.sparse as sp
 
-    X = adata.X
+    X = adata.layers[layer] if layer is not None else adata.X
     if sp.issparse(X):
         mean = np.asarray(X.mean(axis=0)).ravel().astype(np.float64)
         mean_sq = np.asarray(X.power(2).mean(axis=0)).ravel().astype(np.float64)
@@ -1173,156 +1190,80 @@ def mean_variance_plot(
 
     # ---- feature-type grouping ----------------------------------------
     if feature_type_key in adata.var.columns:
-        feature_types = adata.var[feature_type_key].astype(str).to_numpy()
+        feature_types, _ = _resolve_field(adata, feature_type_key, axis="var")
     elif control_key in adata.var.columns:
-        is_ctrl = adata.var[control_key].to_numpy(dtype=bool)
-        feature_types = np.where(is_ctrl, "Negative Control", "Gene Expression")
+        is_ctrl_arr, _ = _resolve_field(adata, control_key, axis="var")
+        feature_types = np.where(is_ctrl_arr.astype(bool), "Negative Control", "Gene Expression")
     elif "is_control_probe" in adata.var.columns:
-        is_ctrl = adata.var["is_control_probe"].to_numpy(dtype=bool)
-        feature_types = np.where(is_ctrl, "Negative Control Probe", "Gene Expression")
+        is_ctrl_arr, _ = _resolve_field(adata, "is_control_probe", axis="var")
+        feature_types = np.where(is_ctrl_arr.astype(bool), "Negative Control Probe", "Gene Expression")
     else:
         feature_types = np.full(adata.n_vars, "Gene Expression", dtype=object)
 
-    effective_palette = {**_FEATURE_TYPE_PALETTE, **(palette or {})}
+    effective_palette = {**_feature_type_palette(), **(palette or {})}
     unique_types = sorted(set(feature_types))
 
-    fallback_cmap = plt.get_cmap("tab10")
+    fallback_cmap = _categorical_cmap(None)
     extra = [ft for ft in unique_types if ft not in effective_palette]
     for i, ft in enumerate(extra):
-        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 10))
-
-    # ---- plot ------------------------------------------------------------
-    own_fig = ax is None
-    if own_fig:
-        fig, ax_plot = plt.subplots(figsize=figsize)
-    else:
-        ax_plot = ax
-        fig = ax_plot.get_figure()
+        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 8))
 
     # Gene Expression first (background), controls on top
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
-    for ft in draw_order:
-        mask = feature_types == ft
-        if not mask.any():
-            continue
-        ax_plot.scatter(
-            mean[mask],
-            variance[mask],
-            c=effective_palette.get(ft, "#888888"),
-            s=size,
-            alpha=alpha,
-            label=ft,
-            rasterized=int(mask.sum()) > 5_000,
-            **scatter_kwargs,
-        )
 
-    ax_plot.set_xscale("log")
-    ax_plot.set_yscale("log")
+    panel = _generic_scatter(
+        adata, x=mean, y=variance, color=feature_types, axis="var",
+        palette=effective_palette, category_order=draw_order,
+        log_x=True, log_y=True, size=size, alpha=alpha,
+        xlabel="Mean expression (counts per cell)", ylabel="Variance",
+        title=title, ax=ax, figsize=figsize, **scatter_kwargs,
+    )
+    ax_plot = panel.figure.axes[0]
 
-    # Poisson reference line: variance = mean  (y = x on log-log)
+    # Poisson reference line: variance = mean  (y = x on log-log).
+    # Uses primary_ink rather than muted -- muted is also "Gene Expression"'s
+    # color (_feature_type_palette), and the two would otherwise be indistinguishable.
     pos = mean[mean > 0]
     if len(pos) > 0:
         lo, hi = float(pos.min()), float(pos.max())
         x_ref = np.logspace(np.log10(lo), np.log10(hi), 300)
         ax_plot.plot(
             x_ref, x_ref,
-            color="#D94F3D", linestyle="--", linewidth=1.2,
+            color=get_theme().primary_ink, linestyle="--", linewidth=1.2,
             zorder=5, label="Poisson (var = mean)",
         )
 
-    ax_plot.set_xlabel("Mean expression (counts per cell)")
-    ax_plot.set_ylabel("Variance")
-    ax_plot.set_title(title)
-
-    legend_handles = [
-        mpatches.Patch(color=effective_palette.get(ft, "#888888"), label=ft)
-        for ft in unique_types
-    ] + [
-        plt.Line2D(
-            [0], [0],
-            color="#D94F3D", linestyle="--", linewidth=1.2,
-            label="Poisson (var = mean)",
+        legend_handles = _legend_handles(
+            unique_types, [effective_palette.get(ft, get_theme().muted) for ft in unique_types]
+        ) + [
+            plt.Line2D(
+                [0], [0],
+                color=get_theme().primary_ink, linestyle="--", linewidth=1.2,
+                label="Poisson (var = mean)",
+            )
+        ]
+        leg = ax_plot.legend(
+            handles=legend_handles,
+            bbox_to_anchor=(1.01, 1),
+            loc="upper left",
+            frameon=False,
+            fontsize=8,
         )
-    ]
-    ax_plot.legend(
-        handles=legend_handles,
-        bbox_to_anchor=(1.01, 1),
-        loc="upper left",
-        frameon=False,
-        fontsize=8,
-    )
+        _style_legend(leg)
 
-    if own_fig:
-        fig.tight_layout()
-        plt.close(fig)
-    return FigurePanel(fig)
+    return panel
 
 
 # ---------------------------------------------------------------------------
 # Histogram helpers
 # ---------------------------------------------------------------------------
 
-def _obs_histogram(
-    adata: ad.AnnData,
-    key: str,
-    *,
-    bins: int | np.ndarray = 50,
-    log: bool = False,
-    color: str = "#4C72B0",
-    xlabel: str | None = None,
-    ylabel: str = "Number of cells",
-    title: str | None = None,
-    vlines: list[float] | None = None,
-    vline_color: str = "#D94F3D",
-    ax: matplotlib.axes.Axes | None = None,
-    figsize: tuple[float, float] = (6, 4),
-    **hist_kwargs: Any,
-) -> FigurePanel:
-    """Shared implementation for per-cell obs-column histograms."""
-    if key not in adata.obs.columns:
-        raise KeyError(
-            f"obs['{key}'] not found. Run ab.pp.calculate_qc_metrics(data) first"
-        )
-    values = adata.obs[key].to_numpy(dtype=np.float64)
-
-    own_fig = ax is None
-    if own_fig:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.get_figure()
-
-    if log and isinstance(bins, int):
-        pos = values[values > 0]
-        bins = np.logspace(np.log10(pos.min()), np.log10(pos.max()), bins + 1) if len(pos) else bins
-
-    ax.hist(values, bins=bins, color=color, edgecolor="none", **hist_kwargs)
-
-    if log:
-        ax.set_xscale("log")
-
-    if vlines:
-        for v in vlines:
-            ax.axvline(v, color=vline_color, linestyle="--", linewidth=1.2)
-
-    ax.set_xlabel(xlabel or key)
-    ax.set_ylabel(ylabel)
-    if title:
-        ax.set_title(title)
-    ax.yaxis.grid(True, linestyle="--", alpha=0.4)
-    ax.set_axisbelow(True)
-
-    if own_fig:
-        fig.tight_layout()
-        plt.close(fig)
-    return FigurePanel(fig)
-
-
 @with_adata
 def cell_area_histogram(
     adata: ad.AnnData,
     *,
     bins: int | np.ndarray = 50,
-    color: str = "#4C72B0",
+    color: str | None = None,
     title: str = "Cell area",
     vlines: list[float] | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -1358,8 +1299,8 @@ def cell_area_histogram(
     -------
     matplotlib.figure.Figure
     """
-    return _obs_histogram(
-        adata, "cell_area",
+    return _generic_histogram(
+        adata, "cell_area", axis="obs",
         bins=bins, color=color, xlabel="Cell area (µm²)", title=title,
         vlines=vlines, ax=ax, figsize=figsize, **hist_kwargs,
     )
@@ -1370,7 +1311,7 @@ def nucleus_area_histogram(
     adata: ad.AnnData,
     *,
     bins: int | np.ndarray = 50,
-    color: str = "#4C72B0",
+    color: str | None = None,
     title: str = "Nucleus area",
     vlines: list[float] | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -1406,8 +1347,8 @@ def nucleus_area_histogram(
     -------
     FigurePanel
     """
-    return _obs_histogram(
-        adata, "nucleus_area",
+    return _generic_histogram(
+        adata, "nucleus_area", axis="obs",
         bins=bins, color=color, xlabel="Nucleus area (µm²)", title=title,
         vlines=vlines, ax=ax, figsize=figsize, **hist_kwargs,
     )
@@ -1418,7 +1359,7 @@ def genes_per_cell_histogram(
     adata: ad.AnnData,
     *,
     bins: int | np.ndarray = 50,
-    color: str = "#4C72B0",
+    color: str | None = None,
     title: str = "Genes per cell",
     vlines: list[float] | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -1455,8 +1396,8 @@ def genes_per_cell_histogram(
     -------
     matplotlib.figure.Figure
     """
-    return _obs_histogram(
-        adata, "n_genes_by_counts",
+    return _generic_histogram(
+        adata, "n_genes_by_counts", axis="obs",
         bins=bins, color=color, xlabel="Genes per cell", title=title,
         vlines=vlines, ax=ax, figsize=figsize, **hist_kwargs,
     )
@@ -1468,7 +1409,7 @@ def transcripts_per_cell_histogram(
     *,
     bins: int | np.ndarray = 50,
     log: bool = True,
-    color: str = "#4C72B0",
+    color: str | None = None,
     title: str = "Transcripts per cell",
     vlines: list[float] | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -1510,10 +1451,158 @@ def transcripts_per_cell_histogram(
     -------
     matplotlib.figure.Figure
     """
-    return _obs_histogram(
-        adata, "total_counts",
+    return _generic_histogram(
+        adata, "total_counts", axis="obs",
         bins=bins, log=log, color=color, xlabel="Transcripts per cell", title=title,
         vlines=vlines, ax=ax, figsize=figsize, **hist_kwargs,
+    )
+
+
+@with_adata
+def genes_vs_area_scatter(
+    adata: ad.AnnData,
+    *,
+    area_key: str = "cell_area",
+    log_x: bool = False,
+    log_y: bool = False,
+    density: bool = True,
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
+    point_size: float = 4.0,
+    alpha: float = 0.5,
+    annotate_corr: bool = True,
+    title: str = "Genes detected vs. area area",
+    ax: matplotlib.axes.Axes | None = None,
+    figsize: tuple[float, float] = (6, 5),
+    **scatter_kwargs: Any,
+) -> FigurePanel:
+    """Scatter of genes detected per cell vs. cell (or nucleus) area.
+
+    A positive relationship is expected biologically (bigger cells hold more
+    mRNA), but a suspiciously tight/linear one can flag over-segmentation —
+    cell size driving detected gene counts rather than genuine expression
+    differences. Points are colored by local 2-D density by default so
+    overplotting stays readable at high cell counts.
+
+    Requires ``obs['n_genes_by_counts']`` and ``obs[area_key]`` — both
+    populated by :func:`~astrolabe.pp.calculate_qc_metrics` (the counts) and
+    the platform reader (the area).
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        Modality key when *data* is a MuData.
+    area_key
+        ``obs`` column with the area measurement (µm²). Default
+        ``'cell_area'``; pass ``'nucleus_area'`` to compare against nucleus
+        size instead.
+    log_x, log_y
+        Log-scale the area / gene-count axis.
+    density
+        Color points by local 2-D density (default) rather than a flat color.
+    cmap
+        Colormap used for density coloring.
+    point_size
+        Marker size in points².
+    alpha
+        Marker opacity.
+    annotate_corr
+        Annotate the Spearman correlation coefficient in the corner.
+    title
+        Axes title.
+    ax
+        Existing axes to draw into.
+    figsize
+        Figure size when *ax* is ``None``.
+    **scatter_kwargs
+        Forwarded to ``ax.scatter``.
+
+    Returns
+    -------
+    FigurePanel
+    """
+    return _generic_scatter(
+        adata, x=area_key, y="n_genes_by_counts", axis="obs",
+        xlabel=f"{area_key.replace('_', ' ').capitalize()} (µm²)",
+        ylabel="Genes per cell",
+        log_x=log_x, log_y=log_y, density=density, cmap=cmap,
+        size=point_size, alpha=alpha, annotate_corr=annotate_corr,
+        title=title, ax=ax, figsize=figsize, **scatter_kwargs,
+    )
+
+
+@with_adata
+def transcripts_vs_area_scatter(
+    adata: ad.AnnData,
+    *,
+    area_key: str = "cell_area",
+    log_x: bool = False,
+    log_y: bool = True,
+    density: bool = True,
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
+    point_size: float = 4.0,
+    alpha: float = 0.5,
+    annotate_corr: bool = True,
+    title: str = "Transcripts vs. area",
+    ax: matplotlib.axes.Axes | None = None,
+    figsize: tuple[float, float] = (6, 5),
+    **scatter_kwargs: Any,
+) -> FigurePanel:
+    """Scatter of total transcript counts per cell vs. cell (or nucleus) area.
+
+    Uses a log y-axis by default since transcript counts span several orders
+    of magnitude, matching :func:`transcripts_per_cell_histogram`. As with
+    :func:`genes_vs_area_scatter`, a suspiciously tight relationship between
+    counts and area can indicate over-segmentation rather than genuine
+    biology.
+
+    Requires ``obs['total_counts']`` and ``obs[area_key]`` — both populated
+    by :func:`~astrolabe.pp.calculate_qc_metrics` (the counts) and the
+    platform reader (the area).
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        Modality key when *data* is a MuData.
+    area_key
+        ``obs`` column with the area measurement (µm²). Default
+        ``'cell_area'``; pass ``'nucleus_area'`` to compare against nucleus
+        size instead.
+    log_x, log_y
+        Log-scale the area / transcript-count axis.
+    density
+        Color points by local 2-D density (default) rather than a flat color.
+    cmap
+        Colormap used for density coloring.
+    point_size
+        Marker size in points².
+    alpha
+        Marker opacity.
+    annotate_corr
+        Annotate the Spearman correlation coefficient in the corner.
+    title
+        Axes title.
+    ax
+        Existing axes to draw into.
+    figsize
+        Figure size when *ax* is ``None``.
+    **scatter_kwargs
+        Forwarded to ``ax.scatter``.
+
+    Returns
+    -------
+    FigurePanel
+    """
+    return _generic_scatter(
+        adata, x=area_key, y="total_counts", axis="obs",
+        xlabel=f"{area_key.replace('_', ' ').capitalize()} (µm²)",
+        ylabel="Transcripts per cell",
+        log_x=log_x, log_y=log_y, density=density, cmap=cmap,
+        size=point_size, alpha=alpha, annotate_corr=annotate_corr,
+        title=title, ax=ax, figsize=figsize, **scatter_kwargs,
     )
 
 
@@ -1533,13 +1622,15 @@ def _array_histogram(
     *,
     bins: int | np.ndarray = 50,
     log: bool = False,
-    color: str = "#4C72B0",
+    color: str | None = None,
     xlabel: str = "",
     ax: "matplotlib.axes.Axes | None" = None,
     figsize: tuple[float, float] = (6, 4),
     **hist_kwargs: Any,
 ) -> FigurePanel:
     """Histogram of an arbitrary float array (does not read from obs)."""
+    t = get_theme()
+    color = color if color is not None else t.cat_core[0]
     own_fig = ax is None
     if own_fig:
         fig, ax = plt.subplots(figsize=figsize)
@@ -1561,9 +1652,10 @@ def _array_histogram(
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Number of cells")
-    ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+    ax.yaxis.grid(True, color=t.gridline, linewidth=0.6)
     ax.set_axisbelow(True)
 
+    _style_axes(ax)
     if own_fig:
         fig.tight_layout()
         plt.close(fig)
@@ -1579,7 +1671,7 @@ def shape_distribution_plot(
     ncols: int = 3,
     bins: int | np.ndarray = 50,
     log: bool = False,
-    color: str = "#4C72B0",
+    color: str | None = None,
     figsize_per_panel: tuple[float, float] = (4, 3),
     **hist_kwargs: Any,
 ) -> FigurePanel:
@@ -1652,8 +1744,8 @@ def shape_distribution_plot(
     axes_flat = axes.ravel()
 
     for ax, key in zip(axes_flat, keys):
-        _obs_histogram(
-            adata, key,
+        _generic_histogram(
+            adata, key, axis="obs",
             bins=bins, log=log, color=color, ax=ax, **hist_kwargs,
         )
         ax.set_title(key.replace("_", " "))
@@ -1674,7 +1766,7 @@ def shape_ratio_plot(
     ncols: int = 3,
     bins: int | np.ndarray = 50,
     log: bool = False,
-    color: str = "#4C72B0",
+    color: str | None = None,
     figsize_per_panel: tuple[float, float] = (4, 3),
     **hist_kwargs: Any,
 ) -> FigurePanel:
@@ -1762,26 +1854,23 @@ def shape_ratio_plot(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_channel(adata: ad.AnnData, channel: int | str) -> tuple[np.ndarray, str]:
-    """Return ``(values, channel_name)`` for a channel index or name."""
-    import scipy.sparse as sp
-
+def _channel_name(adata: ad.AnnData, channel: int | str) -> str:
+    """Resolve a channel index or name to its ``var_names`` string label."""
     if isinstance(channel, str):
         if channel not in adata.var_names:
             raise KeyError(
                 f"Channel '{channel}' not found in var_names. "
                 f"Available: {list(adata.var_names)}"
             )
-        idx = adata.var_names.get_loc(channel)
-        name = channel
-    else:
-        idx = int(channel)
-        name = adata.var_names[idx] if idx < len(adata.var_names) else f"ch{idx}"
+        return channel
+    return adata.var_names[int(channel)]
 
-    col = adata.X[:, idx]
-    if sp.issparse(col):
-        col = np.asarray(col.todense()).ravel()
-    return col.astype(np.float64), name
+
+def _resolve_channel(adata: ad.AnnData, channel: int | str) -> tuple[np.ndarray, str]:
+    """Return ``(values, channel_name)`` for a channel index or name."""
+    name = _channel_name(adata, channel)
+    values, _ = _resolve_field(adata, name, axis="obs")
+    return values, name
 
 
 @with_adata
@@ -1790,10 +1879,10 @@ def intensity_histogram(
     channel: int | str = 0,
     *,
     bins: int = 60,
-    color: str = "#4C72B0",
+    color: str | None = None,
     otsu: bool = True,
     vlines: list[float] | None = None,
-    vline_color: str = "#D94F3D",
+    vline_color: str | None = None,
     log: bool = False,
     title: str | None = None,
     ax: "matplotlib.axes.Axes | None" = None,
@@ -1839,6 +1928,9 @@ def intensity_histogram(
     FigurePanel
     """
     values, ch_name = _resolve_channel(adata, channel)
+    t = get_theme()
+    color = color if color is not None else t.cat_core[0]
+    vline_color = vline_color if vline_color is not None else t.muted
 
     own_fig = ax is None
     if own_fig:
@@ -1876,7 +1968,7 @@ def intensity_histogram(
         ax.axvline(v, color=vline_color, linestyle="--", linewidth=1.2, label=label)
 
     if all_vlines:
-        ax.legend(frameon=False, fontsize=8)
+        _style_legend(ax.legend(frameon=False, fontsize=8))
 
     if log:
         ax.set_xscale("log")
@@ -1884,9 +1976,10 @@ def intensity_histogram(
     ax.set_xlabel(f"Intensity — {ch_name}")
     ax.set_ylabel("Number of cells")
     ax.set_title(title or ch_name)
-    ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+    ax.yaxis.grid(True, color=t.gridline, linewidth=0.6)
     ax.set_axisbelow(True)
 
+    _style_axes(ax)
     if own_fig:
         fig.tight_layout()
         plt.close(fig)
@@ -1899,10 +1992,10 @@ def intensity_histograms(
     *,
     channels: "list[int | str] | None" = None,
     bins: int = 60,
-    color: str = "#4C72B0",
+    color: str | None = None,
     otsu: bool = True,
     vlines: "list[float] | None" = None,
-    vline_color: str = "#D94F3D",
+    vline_color: str | None = None,
     log: bool = False,
     ncols: int = 4,
     figsize_per_panel: tuple[float, float] = (4, 3),
@@ -1933,6 +2026,10 @@ def intensity_histograms(
     """
     if channels is None:
         channels = list(range(adata.n_vars))
+
+    t = get_theme()
+    color = color if color is not None else t.cat_core[0]
+    vline_color = vline_color if vline_color is not None else t.muted
 
     n = len(channels)
     ncols = min(ncols, n)
@@ -1974,7 +2071,7 @@ def intensity_histograms(
         for v, label in panel_vlines:
             ax_i.axvline(v, color=vline_color, linestyle="--", linewidth=1.0, label=label)
         if panel_vlines:
-            ax_i.legend(frameon=False, fontsize=6)
+            _style_legend(ax_i.legend(frameon=False, fontsize=6))
 
         if log:
             ax_i.set_xscale("log")
@@ -1982,8 +2079,9 @@ def intensity_histograms(
         ax_i.set_xlabel("Intensity", fontsize=8)
         ax_i.set_ylabel("Cells", fontsize=8)
         ax_i.tick_params(labelsize=7)
-        ax_i.yaxis.grid(True, linestyle="--", alpha=0.4)
+        ax_i.yaxis.grid(True, color=t.gridline, linewidth=0.6)
         ax_i.set_axisbelow(True)
+        _style_axes(ax_i)
 
     # Hide unused subplots
     for j in range(n, nrows * ncols):
@@ -2030,7 +2128,7 @@ def scatter_gate(
     marginal_bins: int = 60,
     log_x: bool = False,
     log_y: bool = False,
-    cmap: str = "viridis",
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
     point_size: float = 2.0,
     alpha: float = 0.4,
     show_counts: bool = True,
@@ -2165,7 +2263,8 @@ def scatter_gate(
     # ------------------------------------------------------------------ #
     # Marginals                                                           #
     # ------------------------------------------------------------------ #
-    marginal_color = "#4C72B0"
+    t = get_theme()
+    marginal_color = t.cat_core[0]
 
     def _marginal_bins(vals, n):
         if log_x or log_y:
@@ -2192,15 +2291,15 @@ def scatter_gate(
     plt.setp(ax_right.get_yticklabels(), visible=False)
     ax_top.set_ylabel("count", fontsize=8)
     ax_right.set_xlabel("count", fontsize=8)
-    ax_top.yaxis.grid(True, linestyle="--", alpha=0.4)
-    ax_right.xaxis.grid(True, linestyle="--", alpha=0.4)
+    ax_top.yaxis.grid(True, color=t.gridline, linewidth=0.6)
+    ax_right.xaxis.grid(True, color=t.gridline, linewidth=0.6)
     ax_top.set_axisbelow(True)
     ax_right.set_axisbelow(True)
 
     # ------------------------------------------------------------------ #
     # Gate lines                                                          #
     # ------------------------------------------------------------------ #
-    gate_kw = dict(color="#D94F3D", linestyle="--", linewidth=1.2, zorder=5)
+    gate_kw = dict(color=t.cat_core[7], linestyle="--", linewidth=1.2, zorder=5)
     if gate_x is not None:
         ax_main.axvline(gate_x, **gate_kw)
         ax_top.axvline(gate_x, **gate_kw)
@@ -2235,8 +2334,8 @@ def scatter_gate(
                 xr, yr, f"{n:,}\n({pct:.1f}%)",
                 transform=ax_main.transAxes,
                 ha=ha, va=va, fontsize=7,
-                color="#333333",
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7, ec="none"),
+                color=t.primary_ink,
+                bbox=dict(boxstyle="round,pad=0.2", fc=t.surface, alpha=0.7, ec="none"),
             )
 
     # ------------------------------------------------------------------ #
@@ -2247,9 +2346,11 @@ def scatter_gate(
     cb = fig.colorbar(sm, cax=ax_cb, orientation="vertical")
     cb.set_label(colorbar_label, fontsize=8)
     cb.ax.tick_params(labelsize=7)
+    _style_colorbar(cb)
 
+    _style_axes(ax_main)
     if title:
-        fig.suptitle(title, y=1.01, fontsize=10)
+        fig.suptitle(title, y=1.01, fontsize=10, fontfamily=TITLE_FONT, color=t.primary_ink)
 
     fig.tight_layout()
     plt.close(fig)
@@ -2260,12 +2361,10 @@ def scatter_gate(
 # Moran scatter plot
 # ---------------------------------------------------------------------------
 
-_MORAN_QUAD_PALETTE: dict[str, str] = {
-    "HH": "#D94F3D",
-    "LL": "#6A7FC1",
-    "HL": "#F4883B",
-    "LH": "#5BAD6F",
-}
+def _moran_quad_palette() -> dict[str, str]:
+    """LISA quadrant colors from the active theme's core palette."""
+    t = get_theme()
+    return {"HH": t.cat_core[7], "LL": t.cat_core[0], "HL": t.cat_core[1], "LH": t.cat_core[5]}
 
 
 @with_adata
@@ -2329,6 +2428,7 @@ def moran_plot(
     """
     import scipy.sparse as _sp
 
+    t = get_theme()
     if ax is None:
         fig, ax_plot = plt.subplots(figsize=figsize)
     else:
@@ -2338,17 +2438,7 @@ def moran_plot(
     # ------------------------------------------------------------------ #
     # Resolve values and spatial lag                                      #
     # ------------------------------------------------------------------ #
-    if key in adata.var_names:
-        idx = adata.var_names.get_loc(key)
-        mat = adata.layers[layer] if layer is not None else adata.X
-        col = mat[:, idx]
-        if _sp.issparse(col):
-            col = col.toarray().ravel()
-        y = np.asarray(col, dtype=np.float64)
-    elif key in adata.obs.columns:
-        y = adata.obs[key].to_numpy(dtype=np.float64)
-    else:
-        raise KeyError(f"Key '{key}' not found in var_names or obs columns.")
+    y, _ = _resolve_field(adata, key, axis="obs", layer=layer)
 
     std = y.std()
     z = (y - y.mean()) / std if std > 0 else np.zeros_like(y)
@@ -2368,8 +2458,8 @@ def moran_plot(
     # ------------------------------------------------------------------ #
     # Point colors (LISA quadrant)                                       #
     # ------------------------------------------------------------------ #
-    pal = {**_MORAN_QUAD_PALETTE, **(palette or {})}
-    no_quad_color = "#AAAAAA"
+    pal = {**_moran_quad_palette(), **(palette or {})}
+    no_quad_color = t.muted
 
     quad_arr = None
     if lisa_key is not None and lisa_key in adata.uns:
@@ -2397,25 +2487,25 @@ def moran_plot(
         slope = float(np.cov(z, lag_z)[0, 1] / var_z) if var_z > 0 else 0.0
 
     x_line = np.array([z.min(), z.max()])
-    ax_plot.plot(x_line, slope * x_line, color="#333333", linewidth=1.2, zorder=5)
+    ax_plot.plot(x_line, slope * x_line, color=t.primary_ink, linewidth=1.2, zorder=5)
 
     # ------------------------------------------------------------------ #
     # Reference lines and legend                                          #
     # ------------------------------------------------------------------ #
-    ax_plot.axhline(0, color="#CCCCCC", linewidth=0.8, linestyle="--", zorder=1)
-    ax_plot.axvline(0, color="#CCCCCC", linewidth=0.8, linestyle="--", zorder=1)
+    ax_plot.axhline(0, color=t.gridline, linewidth=0.8, linestyle="--", zorder=1)
+    ax_plot.axvline(0, color=t.gridline, linewidth=0.8, linestyle="--", zorder=1)
 
-    handles = [plt.Line2D([0], [0], color="#333333", linewidth=1.2, label=f"I = {slope:.3f}")]
+    handles = [plt.Line2D([0], [0], color=t.primary_ink, linewidth=1.2, label=f"I = {slope:.3f}")]
     if quad_arr is not None:
-        for quad, color in pal.items():
-            if quad in quad_arr:
-                handles.append(mpatches.Patch(facecolor=color, label=quad))
-    ax_plot.legend(handles=handles, fontsize=7, framealpha=0.7)
+        quads_present = [(quad, color) for quad, color in pal.items() if quad in quad_arr]
+        handles += _legend_handles([q for q, _ in quads_present], [c for _, c in quads_present])
+    _style_legend(ax_plot.legend(handles=handles, fontsize=7, framealpha=0.7))
 
     ax_plot.set_xlabel(f"z({key})", fontsize=9)
     ax_plot.set_ylabel(f"Spatial lag of z({key})", fontsize=9)
     ax_plot.set_title(title or f"Moran plot — {key}", fontsize=10)
 
+    _style_axes(ax_plot)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -2425,7 +2515,7 @@ def moran_plot(
 # Neighborhood analysis companion plots
 # ---------------------------------------------------------------------------
 
-_DIVNORM_CMAP = "RdBu_r"
+_DIVNORM_CMAP = _DEFAULT_DIVERGING_CMAP
 
 
 @with_adata
@@ -2509,8 +2599,9 @@ def nhood_enrichment_plot(
     ax.set_xlabel("Receiver")
     ax.set_ylabel("Sender")
     ax.set_title(title or f"Neighborhood enrichment ({metric})", fontsize=10)
-    fig.colorbar(im, ax=ax, shrink=0.7, label=metric)
+    _style_colorbar(fig.colorbar(im, ax=ax, shrink=0.7, label=metric))
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -2524,7 +2615,7 @@ def co_occurrence_plot(
     key: str = "co_occurrence",
     source_groups: list[str] | None = None,
     target_groups: list[str] | None = None,
-    cmap: str = "tab20",
+    cmap: str | None = None,
     figsize: tuple[float, float] = (6, 4),
     title: str | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -2574,19 +2665,20 @@ def co_occurrence_plot(
     else:
         fig = ax.figure
 
-    cmap_obj = plt.get_cmap(cmap)
+    cmap_obj = _categorical_cmap(cmap)
     n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 20
     for line_i, (a, b) in enumerate([(a, b) for a in src_idx for b in tgt_idx]):
         ax.plot(interval, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=cmap_obj(line_i % n_colors))
 
-    ax.axhline(1.0, color="grey", linestyle="--", linewidth=0.8, zorder=0)
+    ax.axhline(1.0, color=get_theme().muted, linestyle="--", linewidth=0.8, zorder=0)
     ax.set_xlabel("Distance (µm)")
     ax.set_ylabel("Co-occurrence ratio")
     ax.set_title(title or "Co-occurrence probability ratio", fontsize=10)
     n_lines = len(list(src_idx)) * len(list(tgt_idx))
     if n_lines <= 15:
-        ax.legend(fontsize=7, loc="upper right", framealpha=0.7)
+        _style_legend(ax.legend(fontsize=7, loc="upper right", framealpha=0.7))
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -2599,7 +2691,7 @@ def centrality_scores_plot(
     *,
     key: str = "centrality_scores",
     metrics: list[str] | None = None,
-    cmap: str = "tab10",
+    cmap: str | None = None,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
 ) -> FigurePanel:
@@ -2645,7 +2737,7 @@ def centrality_scores_plot(
     if n_metrics == 1:
         axes = [axes]
 
-    colors = plt.get_cmap(cmap)(np.linspace(0, 0.9, n_groups))
+    colors = _categorical_cmap(cmap)(np.linspace(0, 0.9, n_groups))
     for ax, metric in zip(axes, metrics):
         vals = df[metric].fillna(0).to_numpy()
         cats = df.index.tolist()
@@ -2653,9 +2745,10 @@ def centrality_scores_plot(
         ax.set_xlabel(metric.replace("_", " ").title(), fontsize=8)
         ax.invert_yaxis()
         ax.tick_params(labelsize=7)
+        _style_axes(ax)
 
     if title:
-        fig.suptitle(title, fontsize=10)
+        fig.suptitle(title, fontsize=10, fontfamily=TITLE_FONT, color=get_theme().primary_ink)
 
     fig.tight_layout()
     plt.close(fig)
@@ -2667,7 +2760,7 @@ def expression_by_distance_plot(
     adata: ad.AnnData,
     *genes: str,
     key: str = "expression_by_distance",
-    cmap: str = "tab10",
+    cmap: str | None = None,
     figsize: tuple[float, float] = (6, 4),
     title: str | None = None,
     ax: matplotlib.axes.Axes | None = None,
@@ -2720,11 +2813,12 @@ def expression_by_distance_plot(
     else:
         fig = ax.figure
 
-    cmap_obj = plt.get_cmap(cmap)
+    cmap_obj = _categorical_cmap(cmap)
+    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 10
     for i, gene in enumerate(plot_genes):
         mean = mean_df[gene].to_numpy(dtype=float)
         se = se_df[gene].to_numpy(dtype=float)
-        color = cmap_obj(i % 10)
+        color = cmap_obj(i % n_colors)
         ax.plot(distances, mean, label=gene, color=color)
         ax.fill_between(distances, mean - se, mean + se, alpha=0.2, color=color)
 
@@ -2732,8 +2826,9 @@ def expression_by_distance_plot(
     ax.set_ylabel("Mean expression")
     ax.set_title(title or "Expression by distance", fontsize=10)
     if len(plot_genes) <= 12:
-        ax.legend(fontsize=8, framealpha=0.7)
+        _style_legend(ax.legend(fontsize=8, framealpha=0.7))
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -2748,7 +2843,7 @@ def ligrec_plot(
     receiver: str | list[str] | None = None,
     p_threshold: float = 0.05,
     top_n: int = 50,
-    cmap: str = "Reds",
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
 ) -> FigurePanel:
@@ -2837,11 +2932,12 @@ def ligrec_plot(
             sizes.append(300 * score_vals[i, j] / max_score)
             colors.append(log_pval[i, j] / max_log_pval)
 
+    t = get_theme()
     sc_plot = ax.scatter(
         xs, ys,
         s=sizes, c=colors,
         cmap=cmap, vmin=0, vmax=1,
-        edgecolors="grey", linewidths=0.3, alpha=0.9,
+        edgecolors=t.muted, linewidths=0.3, alpha=0.9,
     )
 
     ax.set_xticks(range(n_cols))
@@ -2856,14 +2952,16 @@ def ligrec_plot(
     cbar = fig.colorbar(sc_plot, ax=ax, shrink=0.5, pad=0.01)
     cbar.set_label("-log₁₀(p)", fontsize=7)
     cbar.ax.tick_params(labelsize=6)
+    _style_colorbar(cbar)
 
     for frac, label in [(0.25, "25 %"), (0.75, "75 %")]:
-        ax.scatter([], [], s=300 * frac, c="grey", alpha=0.6, label=f"score {label}")
-    ax.legend(
+        ax.scatter([], [], s=300 * frac, c=t.muted, alpha=0.6, label=f"score {label}")
+    _style_legend(ax.legend(
         title="Score (rel.)", fontsize=6, title_fontsize=6,
         loc="upper left", bbox_to_anchor=(1.12, 1.0), framealpha=0.7,
-    )
+    ))
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -2874,7 +2972,7 @@ def som_umatrix(
     adata: ad.AnnData,
     *,
     key: str = "som",
-    cmap: str = "viridis",
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
     annotate: bool = True,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
@@ -2914,7 +3012,7 @@ def som_umatrix(
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(umatrix.T, cmap=cmap, origin="upper", aspect="equal")
-    fig.colorbar(im, ax=ax, shrink=0.8, label="U-matrix distance")
+    _style_colorbar(fig.colorbar(im, ax=ax, shrink=0.8, label="U-matrix distance"))
 
     if annotate:
         for xi in range(sx):
@@ -2931,6 +3029,7 @@ def som_umatrix(
     ax.set_yticks(range(sy))
     ax.set_title(title or "SOM U-matrix", fontsize=10)
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -2942,7 +3041,7 @@ def som_component_plane(
     gene: str,
     *,
     key: str = "som",
-    cmap: str = "viridis",
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
     annotate: bool = False,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
@@ -2996,7 +3095,7 @@ def som_component_plane(
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(plane.T, cmap=cmap, origin="upper", aspect="equal")
-    fig.colorbar(im, ax=ax, shrink=0.8, label="Weight")
+    _style_colorbar(fig.colorbar(im, ax=ax, shrink=0.8, label="Weight"))
 
     if annotate:
         for xi in range(sx):
@@ -3012,6 +3111,7 @@ def som_component_plane(
     ax.set_yticks(range(sy))
     ax.set_title(title or f"Component plane: {gene}", fontsize=10)
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -3022,7 +3122,7 @@ def som_hits(
     adata: ad.AnnData,
     *,
     key: str = "som",
-    cmap: str = "Blues",
+    cmap: str = _DEFAULT_CONTINUOUS_CMAP,
     annotate: bool = True,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
@@ -3062,7 +3162,7 @@ def som_hits(
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(hit_counts.T, cmap=cmap, origin="upper", aspect="equal")
-    fig.colorbar(im, ax=ax, shrink=0.8, label="Cell count")
+    _style_colorbar(fig.colorbar(im, ax=ax, shrink=0.8, label="Cell count"))
 
     if annotate:
         for xi in range(sx):
@@ -3080,6 +3180,7 @@ def som_hits(
     ax.set_yticks(range(sy))
     ax.set_title(title or "SOM hit-count map", fontsize=10)
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
@@ -3125,8 +3226,8 @@ def som_subcellular_plot(
     key
         ``uns`` key written by :func:`~astrolabe.tl.som_subcellular_domains`.
     palette
-        Dict mapping domain label → color. Auto-assigned from ``tab20`` if
-        ``None``.
+        Dict mapping domain label → color. Auto-assigned from the active
+        theme's categorical palette if ``None``.
     cell_boundaries_key
         ``obsm`` key holding cell boundary polygons (awkward array).
     spatial_key
@@ -3150,9 +3251,12 @@ def som_subcellular_plot(
     domain_names: list[str] = adata.uns[key]["domain_names"]
     n_domains = len(domain_names)
 
+    t = get_theme()
     if palette is None:
-        cmap_tab = plt.get_cmap("tab20")
-        palette = {d: cmap_tab(i % 20) for i, d in enumerate(domain_names)}
+        domain_colors = (
+            t.cat_core if n_domains <= 8 else _extended_cat_colors(n_domains, t.name)
+        )
+        palette = {d: domain_colors[i] for i, d in enumerate(domain_names)}
 
     obs_index = {cid: i for i, cid in enumerate(adata.obs_names)}
     boundaries_ak = adata.obsm[cell_boundaries_key]
@@ -3198,7 +3302,7 @@ def som_subcellular_plot(
     if poly_patches:
         ax.add_collection(mc.PatchCollection(
             poly_patches, match_original=True,
-            edgecolors="gray", linewidths=0.5, facecolors="none",
+            edgecolors=t.muted, linewidths=0.5, facecolors="none",
         ))
 
     tx_sub = transcript_domains[transcript_domains["cell_id"].astype(str).isin(sampled_set)]
@@ -3221,11 +3325,12 @@ def som_subcellular_plot(
     ax.set_title(title or f"Subcellular domains ({len(sampled)} cells sampled)", fontsize=10)
 
     if n_domains <= 20:
-        ax.legend(
+        _style_legend(ax.legend(
             title="Domain", fontsize=6, title_fontsize=7,
             loc="upper right", framealpha=0.7, markerscale=2.0,
-        )
+        ))
 
+    _style_axes(ax)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)

@@ -51,6 +51,7 @@ def calculate_qc_metrics(
     qc_vars: list[str] | tuple[str, ...] = (),
     percent_top: list[int] | tuple[int, ...] | None = (50, 100, 200, 500),
     log1p: bool = True,
+    exclude_controls: bool = True,
     inplace: bool = True,
 ):
     """Compute per-cell and per-gene QC metrics.
@@ -74,6 +75,15 @@ def calculate_qc_metrics(
         ``None`` to skip
     log1p
         Whether to add ``log1p``-transformed counts alongside raw counts
+    exclude_controls
+        If ``True`` (default), compute metrics as if control probes
+        (``var['is_control_probe'] == True`` — negative control probes,
+        unassigned/deprecated codewords, blanks, etc.) were not part of the
+        panel: per-cell metrics (``total_counts``, ``n_genes_by_counts``,
+        ``pct_counts_in_top_*``, ...) are computed from real genes only, and
+        per-gene metrics are only computed for real genes (control-probe rows
+        in ``var`` are left with ``NaN`` for the new columns). Has no effect
+        if ``var['is_control_probe']`` is absent (a warning is logged).
     inplace
         Modify *data* in place (default) or return ``(obs_df, var_df)``
 
@@ -81,32 +91,68 @@ def calculate_qc_metrics(
     -------
     None, or ``(obs_df, var_df)`` when ``inplace=False``.
     """
-    if percent_top is not None:
-        percent_top = [n for n in percent_top if n <= adata.n_vars] or None
+    qc_adata = adata
+    ctrl_mask = None
+    if exclude_controls:
+        if "is_control_probe" in adata.var.columns:
+            ctrl_mask = adata.var["is_control_probe"].to_numpy(dtype=bool)
+            if ctrl_mask.any():
+                qc_adata = adata[:, ~ctrl_mask].copy()
+            else:
+                ctrl_mask = None
+        else:
+            log.warning(
+                "exclude_controls=True but var['is_control_probe'] not found; "
+                "computing QC metrics over all features. If this data has control "
+                "probes, run ab.pp.flag_controls(data, ...) first to mark them "
+                "(pass var_col='is_control_probe' if the flag lives under a "
+                "different column name)."
+            )
+
+    n_vars = qc_adata.n_vars
+    qc_percent_top = percent_top
+    if qc_percent_top is not None:
+        qc_percent_top = [n for n in qc_percent_top if n <= n_vars] or None
 
     if gpu_enabled():
         rsc = _require_rapids()
-        with _gpu_X(adata):
+        with _gpu_X(qc_adata):
             result = rsc.pp.calculate_qc_metrics(
-                adata,
+                qc_adata,
                 qc_vars=qc_vars,
-                percent_top=percent_top,
+                percent_top=qc_percent_top,
                 log1p=log1p,
-                inplace=inplace,
+                inplace=inplace or ctrl_mask is not None,
             )
+    else:
+        result = sc.pp.calculate_qc_metrics(
+            qc_adata,
+            qc_vars=qc_vars,
+            percent_top=qc_percent_top,
+            log1p=log1p,
+            inplace=inplace or ctrl_mask is not None,
+        )
+
+    if ctrl_mask is None:
         if inplace:
             _add_nucleus_metrics(adata)
         return result
-    result = sc.pp.calculate_qc_metrics(
-        adata,
-        qc_vars=qc_vars,
-        percent_top=percent_top,
-        log1p=log1p,
-        inplace=inplace,
-    )
+
+    # qc_adata is a separate copy (subset to real genes); merge its computed
+    # obs/var columns back onto the full adata rather than returning/assigning
+    # metrics for a gene subset.
+    obs_df = qc_adata.obs.drop(columns=adata.obs.columns, errors="ignore")
+    var_df = qc_adata.var.drop(columns=adata.var.columns, errors="ignore")
+    var_df = var_df.reindex(adata.var_names)
+
     if inplace:
+        for col in obs_df.columns:
+            adata.obs[col] = obs_df[col]
+        for col in var_df.columns:
+            adata.var[col] = var_df[col]
         _add_nucleus_metrics(adata)
-    return result
+        return None
+    return obs_df, var_df
 
 
 # Xenium utilities
@@ -312,6 +358,16 @@ def flag_controls(
 
     Sets ``var[control_key]`` (bool) and ``obs[obs_key]`` (float, 0–100).
     Exactly one of *names*, *var_col*, or *pattern* must be provided.
+
+    Several functions already flag controls automatically and don't need
+    this called first: :func:`~astrolabe.io.read_xenium`,
+    :func:`~astrolabe.io.read_merscope`, and :func:`~astrolabe.io.read_cosmx`
+    all set ``var['is_control_probe']`` at load time, and
+    :func:`~astrolabe.pp.calculate_xenium_qc_metrics` derives ``var['is_control']``
+    from ``var['feature_type']`` and calls this function internally
+    (``var_col='is_control'``). Call ``flag_controls`` yourself when working
+    with a platform/format that doesn't set one of those columns, or when the
+    control set is defined by an explicit name list or naming pattern instead.
 
     Parameters
     ----------

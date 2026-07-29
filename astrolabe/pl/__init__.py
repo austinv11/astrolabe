@@ -35,6 +35,14 @@ dotplot
     Dot plot of gene expression across cluster groups; returns FigurePanel for composition.
 embedding_scatter
     Scatter plot of any 2-D embedding (UMAP, PCA, spatial_umap) colored by obs or gene.
+scatter
+    Generic scatter plot of two arbitrary fields (obs/var/gene expression), colored by a third.
+histogram
+    Generic histogram of an arbitrary field (obs/var/gene expression).
+heatmap
+    Generic binned/crosstab heatmap of two arbitrary fields.
+expression_heatmap
+    Heatmap of mean gene expression across cluster groups (wraps scanpy).
 volcano_plot
     Volcano plot (log₂FC vs −log₁₀p) from rank_genes_groups results.
 paga_plot
@@ -54,6 +62,8 @@ PlotGrid
     A 2-D grid of panels (created by ``|`` / ``/``).
 FigurePanel
     Wraps a ``matplotlib.figure.Figure`` for layout operators.
+Theme
+    A named light/dark chart theme (chrome colors + categorical palette).
 
 Helpers
 -------
@@ -65,6 +75,12 @@ vstack
     Vertical layout (equivalent to ``p1 / p2``).
 as_panel
     Explicitly wrap a Figure as a FigurePanel.
+set_theme
+    Activate the "light" or "dark" plot theme globally.
+theme
+    Context manager: activate a theme for the duration of a ``with`` block.
+get_theme
+    Return the currently active :class:`Theme`.
 """
 
 from astrolabe._shapes import merge_polygons
@@ -89,8 +105,10 @@ from astrolabe.pl._spatial import (
     vstack,
 )
 from astrolabe.pl._filters import CLAHEFilter, FFTFilter, GaussianFilter
+from astrolabe.pl._generic import heatmap, histogram, scatter
 from astrolabe.pl._gradient_plots import direction_histogram, flux_plot
 from astrolabe.pl._napari import view_napari
+from astrolabe.pl._theme import Theme, get_theme, set_theme, theme
 from astrolabe.pl._qc_plots import (
     cell_area_histogram,
     nucleus_area_histogram,
@@ -99,9 +117,11 @@ from astrolabe.pl._qc_plots import (
     mean_variance_plot,
     genes_per_cell_histogram,
     transcripts_per_cell_histogram,
+    genes_vs_area_scatter,
+    transcripts_vs_area_scatter,
     violin,
     dotplot,
-    heatmap,
+    expression_heatmap,
     embedding_scatter,
     volcano_plot,
     paga_plot,
@@ -147,10 +167,14 @@ __all__ = [
     "hstack",
     "vstack",
     "as_panel",
+    # Generic field-resolved plots
+    "scatter",
+    "histogram",
+    "heatmap",
     # QC / expression / embeddings
     "violin",
     "dotplot",
-    "heatmap",
+    "expression_heatmap",
     "embedding_scatter",
     "volcano_plot",
     "paga_plot",
@@ -162,6 +186,8 @@ __all__ = [
     "nucleus_area_histogram",
     "genes_per_cell_histogram",
     "transcripts_per_cell_histogram",
+    "genes_vs_area_scatter",
+    "transcripts_vs_area_scatter",
     "intensity_histogram",
     "intensity_histograms",
     "scatter_gate",
@@ -186,4 +212,13 @@ __all__ = [
     "FFTFilter",
     # Interactive viewer (requires napari: uv add napari)
     "view_napari",
+    # Plot theming
+    "Theme",
+    "set_theme",
+    "get_theme",
+    "theme",
 ]
+
+# Sleek by default: activate the light theme as soon as `astrolabe.pl` is
+# imported, so `ab.pl.points(...).show()` looks themed with no extra call.
+set_theme("light")

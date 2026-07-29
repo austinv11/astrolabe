@@ -201,8 +201,8 @@ def normalize_by_area(
 def highly_variable_genes(
     adata: ad.AnnData,
     *,
-    n_top_genes: int | None = 2000,
-    flavor: str = "seurat_v3",
+    n_top_genes: int | None = 1000,
+    flavor: str = "seurat",
     min_mean: float = 0.0125,
     max_mean: float = 3.0,
     min_disp: float = 0.5,
@@ -232,10 +232,15 @@ def highly_variable_genes(
         Number of highly variable genes to keep.  When set, ``min_mean``,
         ``max_mean``, and ``min_disp`` are ignored.  Defaults to ``2000``.
     flavor
-        Method for identifying variable genes.  ``'seurat_v3'`` (default)
-        fits a regularized negative-binomial model on raw counts and is
-        recommended for spatial transcriptomics data.  Other options:
-        ``'seurat'``, ``'cell_ranger'``.
+        Method for identifying variable genes.  ``'seurat'`` (default)
+        expects normalized, log-transformed data — matching the
+        ``normalize_total`` → ``log1p`` → ``highly_variable_genes`` order
+        used throughout astrolabe.  ``'seurat_v3'`` fits a regularized
+        model on **raw counts** instead and must be run before
+        normalization/log-transformation (pass ``layer=`` pointing at a
+        raw-counts layer, or call this before ``normalize_total``/``log1p``,
+        if you want that flavor).  Other option: ``'cell_ranger'`` (also
+        expects log-transformed data, like ``'seurat'``).
     min_mean
         Minimum mean expression.  Only used when ``n_top_genes`` is ``None``.
     max_mean
@@ -259,7 +264,7 @@ def highly_variable_genes(
     --------
     >>> ab.pp.normalize_total(mdata)
     >>> ab.pp.log1p(mdata)
-    >>> ab.pp.highly_variable_genes(mdata, n_top_genes=2000)
+    >>> ab.pp.highly_variable_genes(mdata, n_top_genes=1000)
     >>> ab.tl.pca(mdata)
     """
     if gpu_enabled():

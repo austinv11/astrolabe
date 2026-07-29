@@ -142,6 +142,109 @@ class ImageSpec:
             tif.close()
 
 
+def _resolve_field(
+    adata: ad.AnnData,
+    key: str,
+    *,
+    axis: str = "obs",
+    layer: str | None = None,
+) -> tuple[np.ndarray, bool]:
+    """Resolve a field name to a 1-D array of per-obs or per-var values.
+
+    Parameters
+    ----------
+    adata
+        Source AnnData.
+    key
+        Field name to resolve.
+    axis
+        ``"obs"`` (default): searches ``var_names`` first (gene expression,
+        read from ``adata.layers[layer]`` if given, else ``adata.X``), then
+        ``obs.columns``. ``"var"``: searches ``var.columns`` only.
+    layer
+        Layer to read gene expression from when ``axis="obs"``. Invalid
+        (raises ``ValueError``) when ``axis="var"``, since layers are
+        cell x gene, not gene-indexed.
+
+    Returns
+    -------
+    tuple[np.ndarray, bool]
+        ``(values, is_categorical)``.
+
+    Raises
+    ------
+    KeyError
+        If *key* is not found on the requested axis.
+    ValueError
+        If *axis* is invalid, or *layer* is given with ``axis="var"``.
+    """
+    import scipy.sparse as sp
+
+    if axis not in ("obs", "var"):
+        raise ValueError(f"axis must be 'obs' or 'var', got {axis!r}")
+
+    if axis == "var":
+        if layer is not None:
+            raise ValueError(
+                "layer= is not valid with axis='var' (layers are cell x gene, not gene-indexed)"
+            )
+        if key in adata.var.columns:
+            col = adata.var[key]
+            if hasattr(col, "cat") or col.dtype == object:
+                return col.astype(str).to_numpy(), True
+            return col.to_numpy(dtype=np.float64), False
+        raise KeyError(
+            f"'{key}' not found in var columns. Available var columns: {list(adata.var.columns)}"
+        )
+
+    # axis == "obs"
+    if key in adata.var_names:
+        idx = adata.var_names.get_loc(key)
+        mat = adata.layers[layer] if layer is not None else adata.X
+        x_col = mat[:, idx]
+        if sp.issparse(x_col):
+            x_col = np.asarray(x_col.todense()).ravel()
+        return np.asarray(x_col).astype(np.float64), False
+
+    if key in adata.obs.columns:
+        col = adata.obs[key]
+        if hasattr(col, "cat") or col.dtype == object:
+            return col.astype(str).to_numpy(), True
+        return col.to_numpy(dtype=np.float64), False
+
+    raise KeyError(
+        f"'{key}' not found in var_names or obs columns. Available obs columns: {list(adata.obs.columns)}"
+    )
+
+
+def _coerce_field(
+    adata: ad.AnnData,
+    value,
+    *,
+    axis: str = "obs",
+    layer: str | None = None,
+) -> tuple[np.ndarray | None, bool]:
+    """Dispatch a scatter/histogram/heatmap field argument.
+
+    ``None`` passes through unchanged; a ``str`` is resolved via
+    :func:`_resolve_field`; anything else (array-like) is used directly,
+    with categorical-ness inferred from dtype. Array-like values are
+    *not* length-validated against ``adata`` — callers may legitimately
+    pass derived arrays (e.g. stashed control-probe stats) whose length
+    differs from ``adata.n_obs``/``adata.n_vars``.
+    """
+    if value is None:
+        return None, False
+    if isinstance(value, str):
+        return _resolve_field(adata, value, axis=axis, layer=layer)
+
+    arr = np.asarray(value)
+    is_categorical = arr.dtype == object or arr.dtype.kind in ("U", "S") or hasattr(value, "cat")
+    if is_categorical:
+        return arr.astype(str), True
+    return arr.astype(np.float64), False
+
+
 def _transform_coords(coords: np.ndarray, M: np.ndarray) -> np.ndarray:
     """Apply a 3×3 homogeneous affine matrix to ``(N, 2)`` coordinates.
 
