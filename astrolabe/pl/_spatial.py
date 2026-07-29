@@ -189,6 +189,57 @@ class Layer:
 # ---------------------------------------------------------------------------
 
 
+def _svg_mimebundle_for(fig: matplotlib.figure.Figure) -> dict[str, str]:
+    """Render *fig* to an SVG Jupyter mimebundle.
+
+    Shared by :meth:`_Renderable.show` and :meth:`_Renderable._repr_mimebundle_`
+    so there is exactly one place that knows to pass ``bbox_extra_artists``
+    -- a legend dodged past a colorbar is deliberately excluded from
+    ``constrained_layout`` via ``set_in_layout(False)`` (see
+    ``_place_legend`` in ``_theme.py``), which also excludes it from a bare
+    ``bbox_inches="tight"`` crop unless explicitly re-included here; skipping
+    that would silently drop the legend from every saved or displayed figure
+    that has one.
+    """
+    buf = io.BytesIO()
+    fig.savefig(
+        buf, format="svg", bbox_inches="tight",
+        bbox_extra_artists=getattr(fig, "_ab_extra_artists", None),
+    )
+    buf.seek(0)
+    return {"image/svg+xml": buf.getvalue().decode("utf-8")}
+
+
+def _display_or_show(fig: matplotlib.figure.Figure) -> None:
+    """Display *fig* for a ``.show()`` call -- shared by every ``_Renderable``
+    subclass's ``show()`` override (the base one, and ``PlotGrid``'s, which
+    forwards a *dynamic_sizing* kwarg ``to_figure`` doesn't take otherwise).
+
+    In a notebook, publishes the same SVG mimebundle
+    :meth:`_Renderable._repr_mimebundle_` uses (see :func:`_svg_mimebundle_for`
+    for why this doesn't just delegate to ``plt.show()``). Outside one,
+    falls back to ``plt.show()``, re-registering *fig* with pyplot first if
+    it isn't (e.g. a :class:`FigurePanel` wrapping a figure some other
+    function already called ``plt.close()`` on).
+    """
+    try:
+        from IPython.display import publish_display_data
+    except ImportError:
+        publish_display_data = None
+
+    if publish_display_data is not None:
+        publish_display_data(data=_svg_mimebundle_for(fig))
+    else:
+        if fig.number not in plt.get_fignums():
+            manager = plt._get_backend_mod().new_figure_manager_given_figure(fig.number, fig)
+            gcf = plt._pylab_helpers.Gcf
+            if hasattr(gcf, "_set_new_active_manager"):
+                gcf._set_new_active_manager(manager)
+            else:
+                gcf.set_active(manager)
+        plt.show()
+
+
 class _Renderable(ABC):
     """Abstract base for anything that can be rendered or composed."""
 
@@ -202,13 +253,12 @@ class _Renderable(ABC):
     def show(self, *, figsize: tuple[float, float] | None = None) -> None:
         """Render and display.
 
-        In a Jupyter notebook, displaying the object directly (leaving it as
-        the last expression in a cell) is preferred and uses
-        :meth:`_repr_mimebundle_`.  Call ``.show()`` when working in a
-        script or when you need to display inside a loop.
+        Renders the figure exactly once regardless of context -- see
+        :func:`_display_or_show` for why this doesn't just delegate to
+        ``display(self)`` or ``plt.show()`` directly.
         """
         fig = self.to_figure(figsize=figsize)
-        plt.show()
+        _display_or_show(fig)
         plt.close(fig)
 
     def save(self, path: str, *, dpi: int = 150, **savefig_kwargs: Any) -> None:
@@ -236,14 +286,9 @@ class _Renderable(ABC):
     ) -> dict[str, str]:
         """Jupyter display hook — renders to SVG bytes."""
         fig = self.to_figure()
-        buf = io.BytesIO()
-        fig.savefig(
-            buf, format="svg", bbox_inches="tight",
-            bbox_extra_artists=getattr(fig, "_ab_extra_artists", None),
-        )
+        bundle = _svg_mimebundle_for(fig)
         plt.close(fig)
-        buf.seek(0)
-        return {"image/svg+xml": buf.getvalue().decode("utf-8")}
+        return bundle
 
     # ------------------------------------------------------------------
     # Layout operators
@@ -420,46 +465,6 @@ class FigurePanel(_Renderable):
         figsize: tuple[float, float] | None = None,
     ) -> matplotlib.figure.Figure:
         return self.figure
-
-    def show(self, *, figsize: tuple[float, float] | None = None) -> None:
-        """Display the wrapped figure.
-
-        The QC-plot functions that build a :class:`FigurePanel` call
-        ``plt.close(fig)`` on their own figure right after drawing it, so that
-        a bare (non-``.show()``) call doesn't get double-rendered by
-        matplotlib's inline-backend end-of-cell auto-show. That means the
-        figure is no longer registered with pyplot by the time ``.show()``
-        runs here, so the base :meth:`_Renderable.show` (which delegates to
-        ``plt.show()``, and only shows *registered* figures) would silently
-        display nothing.
-
-        In a notebook, render through IPython's display machinery directly
-        (the same path :meth:`_repr_mimebundle_` uses) rather than
-        ``plt.show()`` — it never touches pyplot's figure registry, so it
-        can't collide with the inline backend's end-of-cell auto-flush
-        (which re-scans that registry and would otherwise show the figure a
-        second time). Outside a notebook, fall back to re-registering the
-        figure with pyplot so an interactive GUI backend has something to
-        pop up.
-        """
-        fig = self.to_figure(figsize=figsize)
-        try:
-            from IPython.display import display
-        except ImportError:
-            display = None
-
-        if display is not None:
-            display(self)
-        else:
-            if fig.number not in plt.get_fignums():
-                manager = plt._get_backend_mod().new_figure_manager_given_figure(fig.number, fig)
-                gcf = plt._pylab_helpers.Gcf
-                if hasattr(gcf, "_set_new_active_manager"):
-                    gcf._set_new_active_manager(manager)
-                else:
-                    gcf.set_active(manager)
-            plt.show()
-        plt.close(fig)
 
     def __repr__(self) -> str:
         size = tuple(self.figure.get_size_inches())
@@ -756,7 +761,7 @@ class PlotGrid(_Renderable):
     ) -> None:
         """Render and display. See :meth:`to_figure` for *dynamic_sizing*."""
         fig = self.to_figure(figsize=figsize, dynamic_sizing=dynamic_sizing)
-        plt.show()
+        _display_or_show(fig)
         plt.close(fig)
 
     def __repr__(self) -> str:
