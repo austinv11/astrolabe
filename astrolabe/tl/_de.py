@@ -11,14 +11,14 @@ import anndata as ad
 import scanpy as sc
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 
 __all__ = ["rank_genes_groups", "score_genes", "annotate_clusters"]
 
 log = logging.getLogger(__name__)
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def rank_genes_groups(
     adata: ad.AnnData,
     groupby: str,
@@ -34,7 +34,8 @@ def rank_genes_groups(
 
     Wraps :func:`scanpy.tl.rank_genes_groups`.  Results are stored in
     ``adata.uns[key_added]`` in scanpy's standard format and can be
-    retrieved with :func:`scanpy.get.rank_genes_groups_df`.
+    retrieved with :func:`scanpy.get.rank_genes_groups_df`. Also mirrored to
+    ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Parameters
     ----------

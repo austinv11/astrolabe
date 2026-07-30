@@ -156,7 +156,7 @@ def calculate_qc_metrics(
 
 
 # Xenium utilities
-@with_adata
+@with_adata(mirror_uns="control_probe_summary")
 def calculate_xenium_qc_metrics(
         adata: ad.AnnData,
         transcripts=None,
@@ -172,6 +172,11 @@ def calculate_xenium_qc_metrics(
     :func:`~astrolabe.pp.filter_genes` (``exclude_controls=True``) or
     :func:`~astrolabe.pipeline.filter_xenium` (``remove_controls=True``) to
     remove them.
+
+    When any control probes are present, a per-control-type summary is also
+    written to ``uns['control_probe_summary']`` (skipped otherwise) and
+    mirrored to ``mdata.uns['control_probe_summary'][<modality>]`` when
+    called on a MuData.
 
     Per-cell metrics added to ``obs``
     ---------------------------------

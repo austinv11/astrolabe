@@ -195,6 +195,7 @@ dependencies = [
     { name = "mudata" },
     { name = "nbconvert" },
     { name = "pyarrow" },
+    { name = "python-igraph" },
     { name = "scanpy" },
     { name = "scikit-image" },
     { name = "scikit-misc" },
@@ -259,6 +260,7 @@ requires-dist = [
     { name = "nbconvert", specifier = ">=7.17.1" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "python-igraph", specifier = ">=1.0.0" },
     { name = "scanpy", specifier = ">=1.12.1" },
     { name = "scikit-image", specifier = ">=0.22" },
     { name = "scikit-misc", specifier = ">=0.5.1" },
@@ -3682,6 +3684,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
+name = "python-igraph"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "igraph" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/b6/3c1476ec6bf06348ecea1d76af6c6b3a024dddbcd2de120d3a0de1eab29b/python_igraph-1.0.0.tar.gz", hash = "sha256:6da7ac4e9f6a9cf03734798bed6fb082bb9274f2ae288f6099121f0332803018", size = 9726, upload-time = "2025-10-23T12:28:36.266Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/5f/567fa047076d32d321bdafa248905a7186d2acee4916b046b11417af10d9/python_igraph-1.0.0-py3-none-any.whl", hash = "sha256:b0bb8d91cce2a1e0550fe45f9ec925bcd04152dfb5be3fa822b9f5f36eb3f380", size = 9157, upload-time = "2025-10-23T12:28:33.515Z" },
 ]
 
 [[package]]

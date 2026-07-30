@@ -23,7 +23,7 @@ import pandas as pd
 import scipy.sparse as sp
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _get_conn_matrix
 
 __all__ = [
@@ -71,7 +71,7 @@ def _edge_arrays(adata: ad.AnnData, neighbors_key: str) -> tuple[np.ndarray, np.
 # ---------------------------------------------------------------------------
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def nhood_enrichment(
     adata: ad.AnnData,
     groupby: str,
@@ -109,6 +109,8 @@ def nhood_enrichment(
 
     Results stored in ``adata.uns[key_added]``
     ------------------------------------------
+    Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+
     ``zscore``
         (n_types × n_types) float array of enrichment z-scores.
     ``counts``
@@ -159,7 +161,7 @@ def nhood_enrichment(
     log.info("nhood_enrichment: %d cell types, %d permutations.", n_types, n_perms)
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def co_occurrence(
     adata: ad.AnnData,
     groupby: str,
@@ -200,6 +202,8 @@ def co_occurrence(
 
     Results stored in ``adata.uns[key_added]``
     ------------------------------------------
+    Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+
     ``occ``
         (n_types × n_types × n_intervals) float array of co-occurrence ratios.
     ``interval``
@@ -295,7 +299,7 @@ def co_occurrence(
     )
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def centrality_scores(
     adata: ad.AnnData,
     groupby: str,
@@ -333,6 +337,8 @@ def centrality_scores(
 
     Results stored in ``adata.uns[key_added]``
     ------------------------------------------
+    Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+
     A :class:`pandas.DataFrame` indexed by cell type with columns
     ``degree_centrality``, ``clustering``, and ``closeness_centrality``
     (NaN if skipped for large datasets).
@@ -392,7 +398,7 @@ def centrality_scores(
     log.info("centrality_scores: %d cell types.", len(categories))
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def expression_by_distance(
     adata: ad.AnnData,
     anchor_key: str,
@@ -438,6 +444,8 @@ def expression_by_distance(
 
     Results stored in ``adata.uns[key_added]``
     ------------------------------------------
+    Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+
     ``mean``
         :class:`pandas.DataFrame` (n_bins × n_genes); index = bin centers in µm.
     ``se``
@@ -534,7 +542,7 @@ def expression_by_distance(
     )
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def ligrec(
     adata: ad.AnnData,
     groupby: str,
@@ -589,6 +597,8 @@ def ligrec(
 
     Results stored in ``adata.uns[key_added]``
     ------------------------------------------
+    Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+
     ``means``
         :class:`pandas.DataFrame` — rows = (ligand, receptor) MultiIndex,
         columns = (sender, receiver) MultiIndex.  Values are mean LR
@@ -722,7 +732,7 @@ def ligrec(
     )
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def composition(
     adata: ad.AnnData,
     *,
@@ -761,7 +771,8 @@ def composition(
     -------
     pd.DataFrame
         ``(n_regions × n_cell_types)`` DataFrame indexed by region.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------

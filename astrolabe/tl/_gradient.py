@@ -44,6 +44,7 @@ as cell movement or RNA velocity.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import warnings
 from typing import Literal
@@ -54,7 +55,7 @@ import pandas as pd
 import scipy.sparse as sp
 from scipy.stats import false_discovery_control
 
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _extract_values, _get_conn_matrix
 
 __all__ = [
@@ -185,6 +186,16 @@ def _mean_resultant_length(angles: np.ndarray) -> float:
     Mardia & Jupp 2000 (Directional Statistics, Wiley), eq. 2.2.
     """
     return float(np.abs(np.mean(np.exp(1j * angles))))
+
+
+def _gradient_field_uns_key(ba: inspect.BoundArguments) -> str:
+    """Mirrors gradient_field's own ``out_key = key_added or f"gradient_field_{key}"``."""
+    return ba.arguments["key_added"] or f"gradient_field_{ba.arguments['key']}"
+
+
+def _decay_length_uns_key(ba: inspect.BoundArguments) -> str:
+    """Mirrors decay_length's own ``out_key = key_added or f"decay_length_{key}"``."""
+    return ba.arguments["key_added"] or f"decay_length_{ba.arguments['key']}"
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +349,7 @@ def expression_gradient(
     }
 
 
-@with_adata
+@with_adata(mirror_uns=_gradient_field_uns_key)
 def gradient_field(
     adata: ad.AnnData,
     key: str,
@@ -389,6 +400,9 @@ def gradient_field(
         Log-density threshold for the tissue mask.  Grid points below this
         value are set to ``NaN``.  Decrease (more negative) to expand the
         masked region; increase to shrink it.
+
+    Writes ``uns[key_added or f'gradient_field_{key}']``, mirrored to
+    ``mdata.uns[<that key>][<modality>]`` when called on a MuData.
     key_added
         Key for ``uns`` output.  Default: ``'gradient_field_{key}'``.
 
@@ -477,7 +491,7 @@ def gradient_field(
     )
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def gradient_significance(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -541,6 +555,8 @@ def gradient_significance(
         - ``coherence`` — observed R̄ (mean resultant length)
         - ``p_magnitude`` — empirical p-value (one-sided: larger is significant)
         - ``p_coherence`` — empirical p-value
+
+        Mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
         - ``p_magnitude_adj`` — Benjamini–Hochberg adjusted p-value
         - ``p_coherence_adj`` — Benjamini–Hochberg adjusted p-value
     """
@@ -620,7 +636,7 @@ def gradient_significance(
     adata.uns[key_added] = result
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def compartment_flux(
     adata: ad.AnnData,
     groupby: str,
@@ -670,6 +686,7 @@ def compartment_flux(
         Dict mapping ``key → DataFrame(groups × groups)``.  Entry
         ``df.loc[A, B]`` is the mean projected flux from group A toward
         group B (NaN if no cross-boundary A→B edges exist).
+        Mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
     """
     if isinstance(keys, str):
         keys = [keys]
@@ -744,7 +761,7 @@ def compartment_flux(
     )
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def spatial_diffusion(
     adata: ad.AnnData,
     *,
@@ -823,13 +840,14 @@ def spatial_diffusion(
     Writes
     ------
     ``uns[key_added]``
-        Dict with ``params`` and optionally ``eigenvalues``.
+        Dict with ``params`` and optionally ``eigenvalues``. Mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
     ``obsm['X_diffusion']``
         ``(n_cells, n_eigenmodes)`` float64 — spatial Fourier modes
-        (only when ``compute_eigenmodes=True``).
+        (only when ``compute_eigenmodes=True``; adata-resident only).
     ``var['diffusion_score']``
         float64 — Sepal-style persistence score per gene
-        (only when ``diffusion_score=True``).
+        (only when ``diffusion_score=True``; adata-resident only).
     """
     from scipy.sparse.linalg import eigsh
 
@@ -900,7 +918,7 @@ def spatial_diffusion(
     )
 
 
-@with_adata
+@with_adata(mirror_uns=_decay_length_uns_key)
 def decay_length(
     adata: ad.AnnData,
     key: str,
@@ -960,9 +978,10 @@ def decay_length(
 
     Writes
     ------
-    ``uns[key_added]``
+    ``uns[key_added or f'decay_length_{key}']``
         Dict with ``lambda_um``, ``f0``, ``r_squared``, ``bin_centers``,
-        ``bin_means``, ``params``.
+        ``bin_means``, ``params``. Mirrored to
+        ``mdata.uns[<that key>][<modality>]`` when called on a MuData.
     """
     from scipy.optimize import curve_fit
 

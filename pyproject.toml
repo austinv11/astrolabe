@@ -42,6 +42,7 @@ dependencies = [
     "tifffile>=2024.1.1",
     "nbconvert>=7.17.1",
     "ipykernel>=7.2.0",
+    "python-igraph>=1.0.0",
 ]
 
 [project.urls]

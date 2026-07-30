@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 
 __all__ = ["interaction_changed_genes"]
 
@@ -82,7 +82,7 @@ def _ttest_vectorized(
     return t_stats, pvals
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def interaction_changed_genes(
     adata: ad.AnnData,
     *,
@@ -98,7 +98,8 @@ def interaction_changed_genes(
     For every ordered pair (receiver A, neighbor B), cells of type A are
     split into "contacted" (≥1 spatial neighbor of type B) and
     "non-contacted" groups; a two-group DE test is run across all genes at
-    once.  Results are stored in ``adata.uns[key_added]`` and returned.
+    once.  Results are stored in ``adata.uns[key_added]`` and returned, and
+    mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Parameters
     ----------

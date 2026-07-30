@@ -5,6 +5,8 @@ Shared utilities used across astrolabe submodules.
 from __future__ import annotations
 
 import functools
+import inspect
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Protocol, TypeVar, runtime_checkable
@@ -15,9 +17,10 @@ import numpy as np
 
 from astrolabe._constants import UNS_DEFAULT_MODALITY_KEY
 
-__all__: list[str] = ["with_adata", "ImageSpec", "ImageFilter"]
+__all__: list[str] = ["with_adata", "from_kwarg", "ImageSpec", "ImageFilter"]
 
 _F = TypeVar("_F", bound=Callable)
+log = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -268,7 +271,62 @@ def _transform_coords(coords: np.ndarray, M: np.ndarray) -> np.ndarray:
     return (M @ h.T).T[:, :2].astype(out_dtype)
 
 
-def with_adata(fn: _F) -> _F:
+class _KeyFromParam:
+    """Marker built by :func:`from_kwarg` — see there."""
+
+    __slots__ = ("param_name",)
+
+    def __init__(self, param_name: str) -> None:
+        self.param_name = param_name
+
+
+def from_kwarg(param_name: str) -> _KeyFromParam:
+    """Build a ``mirror_uns=`` spec for :func:`with_adata` that reads the
+    mirrored ``uns`` key from parameter *param_name* of the wrapped function,
+    evaluated against the actual call (respecting a caller-supplied override,
+    falling back to the function's own default otherwise).
+
+    Use this for the common ``key_added: str = "..."`` pattern::
+
+        @with_adata(mirror_uns=from_kwarg("key_added"))
+        def moran(adata, keys, *, key_added: str = "moran", ...): ...
+
+    For functions whose default key is *computed* from other arguments
+    (e.g. ``key_added or f"decay_length_{key}"``), pass a plain callable
+    ``(bound_arguments: inspect.BoundArguments) -> str`` instead.
+    """
+    return _KeyFromParam(param_name)
+
+
+def _mirror_to_mudata_uns(
+    mdata: md.MuData, modality: str, key: str, value: object, fn: Callable
+) -> None:
+    """Additively mirror ``adata.uns[key]`` up to ``mdata.uns[key][modality]``.
+
+    Never touches ``obs``/``var``/``obsm`` — those remain adata-only by
+    construction, since this is only ever called with the single mirrored
+    ``uns`` key. Stores the same object (no copy).
+    """
+    top = mdata.uns.get(key)
+    if not isinstance(top, dict):
+        top = {}
+        mdata.uns[key] = top
+    if modality in top:
+        log.warning(
+            "with_adata: overwriting mdata.uns[%r][%r] — %s was already run on "
+            "modality %r before. The MuData-level mirror now reflects only the "
+            "latest run (the per-modality adata.uns[%r] has typically also "
+            "already been overwritten by the re-run).",
+            key, modality, fn.__qualname__, modality, key,
+        )
+    top[modality] = value
+
+
+def with_adata(
+    fn: _F | None = None,
+    *,
+    mirror_uns: str | _KeyFromParam | Callable[[inspect.BoundArguments], str] | None = None,
+) -> _F | Callable[[_F], _F]:
     """Decorator: prepend ``data`` / ``modality`` args that resolve to AnnData before calling *fn*.
 
     The wrapped function must accept an :class:`~anndata.AnnData` as its first
@@ -280,6 +338,21 @@ def with_adata(fn: _F) -> _F:
     Resolution follows :func:`_resolve_adata`: MuData is unwrapped via the
     ``modality`` kwarg or ``uns['default_modality']``.
 
+    Parameters
+    ----------
+    mirror_uns
+        Optional. When given, and *data* is a :class:`~mudata.MuData`, the
+        ``uns`` entry *fn* wrote is additionally mirrored to
+        ``mdata.uns[<key>][<modality>]`` after *fn* returns — purely
+        additive; the original ``adata.uns[<key>]`` write is untouched, and
+        no other attribute (``obs``/``var``/``obsm``) is ever touched by this
+        mechanism. No-op when *data* is a bare AnnData, or when *fn* did not
+        end up writing to that ``uns`` key this call (e.g. conditional
+        writes). Accepts a literal ``str`` (fixed key), :func:`from_kwarg`
+        (key read from a named parameter), or a callable
+        ``(bound_arguments) -> str`` for keys computed from multiple
+        call-time arguments.
+
     Examples
     --------
     >>> @with_adata
@@ -288,15 +361,77 @@ def with_adata(fn: _F) -> _F:
     >>> my_fn(mdata)                    # MuData resolved automatically
     >>> my_fn(mdata, modality="xenium") # explicit modality
     >>> my_fn(adata)                    # AnnData passed through unchanged
+
+    >>> @with_adata(mirror_uns=from_kwarg("key_added"))
+    ... def my_stat(adata: ad.AnnData, *, key_added: str = "my_stat"):
+    ...     adata.uns[key_added] = {...}
+    >>> my_stat(mdata)  # also mirrored to mdata.uns["my_stat"]["xenium"]
     """
-    @functools.wraps(fn)
-    def wrapper(data: ad.AnnData | md.MuData, *args, modality: str | None = None, **kwargs):
-        adata = _resolve_adata(data, modality)
-        return fn(adata, *args, **kwargs)
-    # Remove __wrapped__ so inspect.signature() sees the wrapper's own signature
-    # (with `data` / `modality`) rather than following through to the inner fn.
-    del wrapper.__wrapped__  # type: ignore[attr-defined]
-    return wrapper  # type: ignore[return-value]
+    def _decorate(fn: _F) -> _F:
+        sig = inspect.signature(fn) if mirror_uns is not None else None
+
+        def _resolve_mirror_key(adata: ad.AnnData, args: tuple, kwargs: dict) -> str | None:
+            if isinstance(mirror_uns, str):
+                return mirror_uns
+            ba = sig.bind(adata, *args, **kwargs)  # type: ignore[union-attr]
+            ba.apply_defaults()
+            if isinstance(mirror_uns, _KeyFromParam):
+                if mirror_uns.param_name not in ba.arguments:
+                    raise TypeError(
+                        f"with_adata(mirror_uns=from_kwarg({mirror_uns.param_name!r})) "
+                        f"on {fn.__qualname__}: no such parameter."
+                    )
+                return ba.arguments[mirror_uns.param_name]
+            return mirror_uns(ba)
+
+        @functools.wraps(fn)
+        def wrapper(data: ad.AnnData | md.MuData, *args, modality: str | None = None, **kwargs):
+            adata, resolved_modality = _resolve_adata_and_modality(data, modality)
+            result = fn(adata, *args, **kwargs)
+
+            if mirror_uns is not None and resolved_modality is not None:
+                uns_key = _resolve_mirror_key(adata, args, kwargs)
+                if uns_key is not None and uns_key in adata.uns:
+                    _mirror_to_mudata_uns(data, resolved_modality, uns_key, adata.uns[uns_key], fn)  # type: ignore[arg-type]
+
+            return result
+
+        # Remove __wrapped__ so inspect.signature() sees the wrapper's own signature
+        # (with `data` / `modality`) rather than following through to the inner fn.
+        del wrapper.__wrapped__  # type: ignore[attr-defined]
+        return wrapper  # type: ignore[return-value]
+
+    if fn is not None:
+        return _decorate(fn)
+    return _decorate
+
+
+def _resolve_adata_and_modality(
+    data: ad.AnnData | md.MuData,
+    modality: str | None = None,
+) -> tuple[ad.AnnData, str | None]:
+    """Like :func:`_resolve_adata`, but also returns the resolved modality key.
+
+    Returns ``None`` for the modality when *data* is already an AnnData —
+    there is no outer MuData to mirror results against.
+    """
+    if isinstance(data, ad.AnnData):
+        return data, None
+    if not isinstance(data, md.MuData):
+        raise TypeError(f"Expected AnnData or MuData, got {type(data).__name__!r}")
+
+    key = modality or data.uns.get(UNS_DEFAULT_MODALITY_KEY)
+    if key is None:
+        raise ValueError(
+            "Cannot infer modality from MuData: uns['default_modality'] is not set "
+            "and no modality= argument was given. Pass modality='xenium' (or the "
+            "appropriate key), or ensure the MuData was created by ab.io.read_xenium()."
+        )
+    if key not in data.mod:
+        raise KeyError(
+            f"Modality '{key}' not found in MuData. Available: {list(data.mod.keys())}"
+        )
+    return data[key], key
 
 
 def _resolve_adata(
@@ -323,20 +458,5 @@ def _resolve_adata(
     ValueError
         If ``data`` is a MuData and no modality can be inferred.
     """
-    if isinstance(data, ad.AnnData):
-        return data
-    if not isinstance(data, md.MuData):
-        raise TypeError(f"Expected AnnData or MuData, got {type(data).__name__!r}")
-
-    key = modality or data.uns.get(UNS_DEFAULT_MODALITY_KEY)
-    if key is None:
-        raise ValueError(
-            "Cannot infer modality from MuData: uns['default_modality'] is not set "
-            "and no modality= argument was given. Pass modality='xenium' (or the "
-            "appropriate key), or ensure the MuData was created by ab.io.read_xenium()."
-        )
-    if key not in data.mod:
-        raise KeyError(
-            f"Modality '{key}' not found in MuData. Available: {list(data.mod.keys())}"
-        )
-    return data[key]
+    adata, _ = _resolve_adata_and_modality(data, modality)
+    return adata

@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 
 __all__ = ["spatial_gene_modules"]
 
@@ -86,7 +86,7 @@ def _cluster_genes(
     return labels.astype(np.int32)
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def spatial_gene_modules(
     adata: ad.AnnData,
     *,
@@ -108,10 +108,11 @@ def spatial_gene_modules(
     Results are stored in:
 
     - ``adata.uns[key_added]`` — dict with ``'gene_modules'`` DataFrame and
-      ``'params'``.
+      ``'params'``. Mirrored to ``mdata.uns[key_added][<modality>]`` when
+      called on a MuData.
     - ``adata.obsm[key_added + '_scores']`` — ``(n_cells, n_modules)`` float32
       array of per-module mean expression scores (only when
-      ``score_cells=True``).
+      ``score_cells=True``; adata-resident only, not mirrored).
 
     Parameters
     ----------

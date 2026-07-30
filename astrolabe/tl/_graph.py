@@ -1,25 +1,38 @@
 """
-Spatial neighborhood graph construction.
+Neighborhood graph construction: spatial (µm-space) and transcriptomic
+(expression-space).
 
-We build a KNN or radius-based graph on ``obsm['spatial']`` (micron
-coordinates) and store it as a sparse adjacency matrix in ``obsp``,
-following the scanpy/squidpy convention so that downstream tools
-(leiden, UMAP, etc.) work without modification.
+``spatial_neighbors`` builds a KNN or radius-based graph on
+``obsm['spatial']`` (micron coordinates) and stores it as a sparse
+adjacency matrix in ``obsp``, following the scanpy/squidpy convention.
+Unlike ``sc.pp.neighbors``, this does not write ``uns['neighbors']`` --
+astrolabe's own graph-consuming functions (``tl.cluster``, ``tl.umap``,
+etc.) default their ``neighbors_key`` to ``'spatial_neighbors'``
+explicitly instead, so a transcriptomic graph written by
+``sc.pp.neighbors`` / ``tl.transcriptional_neighbors`` is never silently
+clobbered. Pass ``neighbors_key='neighbors'`` to those functions (or use
+raw ``sc.tl.leiden``/``sc.tl.umap`` with an explicit ``neighbors_key``) to
+use the spatial graph directly.
+
+``transcriptional_neighbors`` is a thin ``@with_adata`` wrapper around
+``sc.pp.neighbors`` -- the expression-space (PCA) counterpart -- so MuData
+can be passed directly instead of unwrapping the modality by hand.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import anndata as ad
 import numpy as np
+import scanpy as sc
 import scipy.sparse as sp
 from sklearn.neighbors import NearestNeighbors
 
 from astrolabe._utils import with_adata
 
-__all__ = ["spatial_neighbors"]
+__all__ = ["spatial_neighbors", "transcriptional_neighbors", "blend_neighbors"]
 
 log = logging.getLogger(__name__)
 
@@ -197,20 +210,16 @@ def spatial_neighbors(
             "delaunay_max_dist": delaunay_max_dist,
             "spatial_key": spatial_key,
             "metric": "euclidean",
+            # scanpy's own sc.tl.umap reads uns[neighbors_key]['params']['method']
+            # unconditionally (KeyError, not a soft check, if absent) whenever
+            # neighbors_key points here -- e.g. tl.umap/tl.cluster's default
+            # neighbors_key='spatial_neighbors'. "umap" avoids both the crash
+            # and a spurious "connectivities were not computed using umap"
+            # warning; it is a label of convenience (this graph is built via
+            # KNN/Delaunay + symmetrization, not literally UMAP's fuzzy
+            # simplicial set), not a claim of exact algorithmic equivalence.
+            "method": "umap",
         },
-    }
-
-    # Mirror into uns['neighbors'] so sc.tl.leiden / sc.tl.umap work directly.
-    # This intentionally overwrites any prior transcriptomic neighbors graph.
-    if "neighbors" in adata.uns:
-        log.info(
-            "spatial_neighbors: overwriting uns['neighbors'] (previously set by sc.pp.neighbors or a prior call). "
-            "Re-run sc.pp.neighbors if you need transcriptomic neighbors downstream."
-        )
-    adata.uns["neighbors"] = {
-        "connectivities_key": key_added + "_connectivities",
-        "distances_key": key_added + "_distances",
-        "params": {"n_neighbors": n_neighbors, "method": "spatial", "metric": "euclidean"},
     }
 
     log.info(
@@ -219,4 +228,208 @@ def spatial_neighbors(
         conn_matrix.nnz,
         conn_matrix.nnz / n_cells,
         coord_type,
+    )
+
+
+@with_adata
+def transcriptional_neighbors(
+    adata: ad.AnnData,
+    *,
+    n_neighbors: int = 15,
+    n_pcs: int | None = None,
+    use_rep: str | None = None,
+    method: Literal["umap", "gauss"] = "umap",
+    metric: str = "euclidean",
+    random_state: int = 0,
+    key_added: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """Build an expression-space (transcriptomic) neighborhood graph.
+
+    Thin wrapper around :func:`scanpy.pp.neighbors` that accepts MuData
+    directly (via ``@with_adata``), so ``ab.tl.transcriptional_neighbors(mdata)``
+    replaces ``sc.pp.neighbors(mdata['xenium'])`` without unwrapping the
+    modality by hand. This is the expression-space counterpart to
+    :func:`spatial_neighbors`: it operates on ``obsm['X_pca']`` (or
+    whatever *use_rep* points to), not µm coordinates.
+
+    Results are stored in ``adata.obsp[...]`` and
+    ``adata.uns[key_added or 'neighbors']``, matching scanpy's own
+    convention -- the same key :func:`~astrolabe.tl.paga` and
+    :func:`~astrolabe.tl.dpt` read by default, and the one raw
+    ``sc.tl.leiden``/``sc.tl.umap`` calls fall back to when no
+    ``neighbors_key`` is given.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`. Should have
+        ``obsm['X_pca']`` populated first (see :func:`~astrolabe.tl.pca`).
+    modality
+        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
+    n_neighbors
+        Number of neighbors per cell.
+    n_pcs
+        Number of PCs to use from *use_rep*. ``None`` uses all available.
+    use_rep
+        Key in ``obsm`` to use as input. ``None`` uses ``obsm['X_pca']`` if
+        present, otherwise scanpy computes PCA on ``X`` first.
+    method
+        ``'umap'`` (fuzzy simplicial set, default) or ``'gauss'`` (Gaussian
+        kernel) connectivity model.
+    metric
+        Distance metric.
+    random_state
+        Random seed.
+    key_added
+        Key prefix for ``obsp``/``uns``. ``None`` (default) uses
+        ``'neighbors'``, matching scanpy's convention.
+    **kwargs
+        Additional arguments forwarded to :func:`scanpy.pp.neighbors`.
+
+    Examples
+    --------
+    >>> ab.tl.pca(mdata)
+    >>> ab.tl.transcriptional_neighbors(mdata)
+    >>> ab.tl.cluster(mdata, neighbors_key='neighbors')
+    """
+    sc.pp.neighbors(
+        adata,
+        n_neighbors=n_neighbors,
+        n_pcs=n_pcs,
+        use_rep=use_rep,
+        method=method,
+        metric=metric,
+        random_state=random_state,
+        key_added=key_added,
+        **kwargs,
+    )
+    log.info(
+        "transcriptional_neighbors: %d cells -> uns['%s']",
+        adata.n_obs,
+        key_added or "neighbors",
+    )
+
+
+@with_adata
+def blend_neighbors(
+    adata: ad.AnnData,
+    *,
+    alpha: float = 0.5,
+    expr_neighbors_key: str = "neighbors",
+    spatial_neighbors_key: str = "spatial_neighbors",
+    key_added: str = "joint_neighbors",
+) -> None:
+    """Blend an expression graph and a spatial graph into one joint graph.
+
+    Combines the transcriptomic neighborhood graph (from ``sc.pp.neighbors``
+    / :func:`transcriptional_neighbors`) with the spatial neighborhood graph
+    (from :func:`spatial_neighbors`) into a single connectivity graph that
+    captures both cell-type identity and tissue organization. The result is
+    persisted in ``obsp``/``uns`` exactly like any other neighbors graph, so
+    it is a drop-in ``neighbors_key`` for both :func:`~astrolabe.tl.umap`
+    (a cospatial embedding) and :func:`~astrolabe.tl.cluster` (cospatial
+    cluster labels — cells of the same type that are also spatially
+    co-localised cluster together more readily than cells that share
+    identity but are scattered across the tissue).
+
+    Both source graphs must exist in ``obsp`` before calling this function.
+    Run :func:`spatial_neighbors` and ``sc.pp.neighbors`` (after
+    :func:`~astrolabe.tl.pca`) first.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with both
+        neighborhood graphs in ``obsp``.
+    modality
+        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
+    alpha
+        Spatial weight in [0, 1].  ``alpha=0`` reduces to the (row-normalized)
+        expression graph; ``alpha=1`` reduces to the (row-normalized) spatial
+        graph; ``alpha=0.5`` (default) gives equal weight to both.
+    expr_neighbors_key
+        Key in ``uns`` for the transcriptomic neighborhood graph written
+        by ``sc.pp.neighbors`` / :func:`transcriptional_neighbors`. Default
+        ``'neighbors'``.
+    spatial_neighbors_key
+        Key in ``uns`` for the spatial neighborhood graph written by
+        :func:`spatial_neighbors`. Default ``'spatial_neighbors'``.
+    key_added
+        Key prefix used to store the blended graph in ``obsp`` and ``uns``.
+
+    Examples
+    --------
+    >>> sc.pp.neighbors(mdata["xenium"])                # expression graph
+    >>> ab.tl.spatial_neighbors(mdata)                  # spatial graph
+    >>> ab.tl.blend_neighbors(mdata, alpha=0.3)         # 30% spatial, 70% expression
+    >>> ab.tl.cluster(mdata, neighbors_key="joint_neighbors")  # cospatial clusters
+    >>> ab.tl.umap(mdata, neighbors_key="joint_neighbors",
+    ...            key_added="X_spatial_umap")          # cospatial embedding
+    """
+    # ── Resolve connectivity matrices ─────────────────────────────────────────
+    def _get_conn(key: str) -> sp.spmatrix:
+        meta = adata.uns.get(key)
+        if meta is None:
+            raise KeyError(
+                f"uns['{key}'] not found. "
+                + (
+                    "Run ab.tl.transcriptional_neighbors() first"
+                    if key == expr_neighbors_key
+                    else "Run ab.tl.spatial_neighbors() first"
+                )
+            )
+        conn_key = meta.get("connectivities_key", f"{key}_connectivities")
+        if conn_key not in adata.obsp:
+            raise KeyError(
+                f"obsp['{conn_key}'] not found (expected from uns['{key}'])"
+            )
+        return adata.obsp[conn_key].astype(np.float32)
+
+    conn_expr = _get_conn(expr_neighbors_key)
+    conn_spatial = _get_conn(spatial_neighbors_key)
+
+    if conn_expr.shape != conn_spatial.shape:
+        raise ValueError(
+            f"Expression ({conn_expr.shape}) and spatial ({conn_spatial.shape}) "
+            "connectivity matrices have different shapes"
+        )
+
+    # ── Row-normalize so both graphs are on the same scale ───────────────────
+    def _row_norm(mat: sp.spmatrix) -> sp.spmatrix:
+        row_sums = np.asarray(mat.sum(axis=1), dtype=np.float32).ravel()
+        row_sums[row_sums == 0] = 1.0
+        return sp.diags(1.0 / row_sums, format="csr") @ mat.tocsr()
+
+    conn_joint = alpha * _row_norm(conn_spatial) + (1.0 - alpha) * _row_norm(conn_expr)
+
+    # ── Persist the blended graph like any other named neighbors graph ───────
+    conn_joint_key = f"{key_added}_connectivities"
+    if key_added in adata.uns:
+        log.warning(
+            "blend_neighbors: uns['%s'] already exists and will be overwritten. "
+            "Pass a different key_added= to avoid this.",
+            key_added,
+        )
+    adata.obsp[conn_joint_key] = conn_joint.astype(np.float32)
+    adata.uns[key_added] = {
+        "connectivities_key": conn_joint_key,
+        "distances_key": adata.uns[spatial_neighbors_key].get(
+            "distances_key", f"{spatial_neighbors_key}_distances"
+        ),
+        "params": {
+            # see spatial_neighbors()'s params["method"] comment above: this
+            # is a label of convenience so sc.tl.umap/sc.tl.leiden accept the
+            # graph, not a claim of exact algorithmic equivalence.
+            "method": "umap",
+            "alpha": alpha,
+            "expr_neighbors_key": expr_neighbors_key,
+            "spatial_neighbors_key": spatial_neighbors_key,
+        },
+    }
+
+    log.info(
+        "blend_neighbors: blended graph (alpha=%.2f spatial / %.2f expression), "
+        "%d non-zeros -> uns['%s']",
+        alpha, 1.0 - alpha, conn_joint.nnz, key_added,
     )

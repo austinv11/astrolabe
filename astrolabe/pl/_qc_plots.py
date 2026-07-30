@@ -351,7 +351,7 @@ def embedding_scatter(
     ax: "matplotlib.axes.Axes | None" = None,
     **kwargs: Any,
 ) -> FigurePanel:
-    """Scatter plot of a 2-D embedding (UMAP, PCA, spatial_umap, etc.).
+    """Scatter plot of a 2-D embedding (UMAP, PCA, a cospatial embedding, etc.).
 
     Wraps :func:`scanpy.pl.embedding` and returns a composable
     :class:`~astrolabe.pl.FigurePanel`.  When multiple ``color`` values are
@@ -363,8 +363,9 @@ def embedding_scatter(
         :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
     obsm_key
         Key in ``obsm`` to use as the 2-D coordinates (e.g. ``'X_umap'``,
-        ``'X_pca'``, ``'X_spatial_umap'``).  The ``'X_'`` prefix is stripped
-        when passing to scanpy's ``basis`` argument.
+        ``'X_pca'``, or a cospatial embedding from
+        ``tl.blend_neighbors`` + ``tl.umap``).  The ``'X_'`` prefix is
+        stripped when passing to scanpy's ``basis`` argument.
     color
         One or more ``obs`` column names or gene names to color cells by.
         ``None`` draws all cells in a single grey color.

@@ -16,7 +16,7 @@ import pandas as pd
 import scipy.sparse as sp
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 
 __all__ = [
     "moran",
@@ -174,7 +174,7 @@ def _adj_pvalues(p: np.ndarray, method: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def moran(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -214,7 +214,8 @@ def moran(
     pd.DataFrame
         One row per key with columns ``I``, ``EI``, ``z_norm``, ``p_norm``,
         and (when ``n_perms > 0``) ``z_sim``, ``p_sim``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------
@@ -251,7 +252,7 @@ def moran(
     return result
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def moran_local(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -303,7 +304,8 @@ def moran_local(
         MultiIndex ``(key, obs_name)`` rows with columns ``Ii``, ``z_sim``,
         ``p_sim``, ``p_adj``, ``quadrant``.
         Access per-key results with ``result.loc['<key>']``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------
@@ -350,7 +352,7 @@ def moran_local(
     return result
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def moran_bv(
     adata: ad.AnnData,
     x: str | list[str],
@@ -393,7 +395,8 @@ def moran_bv(
     -------
     pd.DataFrame
         MultiIndex ``(x, y)`` rows with columns ``I``, ``EI``, ``z_sim``,
-        ``p_sim``.  Also stored in ``adata.uns[key_added]``.
+        ``p_sim``.  Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------
@@ -433,7 +436,7 @@ def moran_bv(
     return result
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def moran_local_bv(
     adata: ad.AnnData,
     x: str | list[str],
@@ -478,7 +481,8 @@ def moran_local_bv(
     pd.DataFrame
         MultiIndex ``(pair, obs_name)`` rows where ``pair = 'x:y'``, with
         columns ``Ii``, ``z_sim``, ``p_sim``, ``p_adj``, ``quadrant``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
     """
     import esda
 
@@ -521,7 +525,7 @@ def moran_local_bv(
     return result
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def getis_ord(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -569,7 +573,8 @@ def getis_ord(
     pd.DataFrame
         MultiIndex ``(key, obs_name)`` rows with columns ``Gs``, ``z_sim``,
         ``p_sim``, ``p_adj``, ``type``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------
@@ -788,7 +793,7 @@ def _ripley_l_kdtree(
     return l_obs, l_sims
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def ripley_l(
     adata: ad.AnnData,
     groupby: str | None = None,
@@ -841,7 +846,8 @@ def ripley_l(
     dict[str, pd.DataFrame]
         One entry per group.  Each DataFrame has distances (µm) as index and
         columns ``L_obs``, ``L_exp``, ``L_hi``, ``L_lo``, ``p_value``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------
@@ -955,7 +961,7 @@ def _svg_geary(
     return df
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def spatially_variable_genes(
     adata: ad.AnnData,
     *,
@@ -1020,6 +1026,9 @@ def spatially_variable_genes(
         ``score`` is Moran's I for ``'moran'`` and Geary's C for ``'geary'``.
         Also stored in ``adata.uns[key_added]`` and written to ``adata.var``
         as ``sv_score``, ``sv_pval``, ``sv_pval_adj``, ``sv_spatially_variable``.
+        The ``uns[key_added]`` DataFrame is mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData
+        (the ``var`` columns are not mirrored — they stay adata-resident).
 
     Examples
     --------
@@ -1101,7 +1110,7 @@ def spatially_variable_genes(
     return df
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def geary_c(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -1142,7 +1151,8 @@ def geary_c(
     pd.DataFrame
         One row per key with columns ``C``, ``EC``, ``z_norm``, ``p_norm``,
         and (when ``n_perms > 0``) ``z_sim``, ``p_sim``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------
@@ -1179,7 +1189,7 @@ def geary_c(
     return result
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def colocation_quotient(
     adata: ad.AnnData,
     *,
@@ -1256,7 +1266,8 @@ def colocation_quotient(
     pd.DataFrame
         One row per pair with columns ``gene_a``, ``gene_b``, ``clq``,
         ``n_a``, ``n_b``, ``n_ab``, ``n_locs``, ``mode``, ``pixel_size_um``.
-        Also stored in ``adata.uns[key_added]``.
+        Also stored in ``adata.uns[key_added]``, and mirrored to
+        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     Examples
     --------

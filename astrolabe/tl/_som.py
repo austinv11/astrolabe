@@ -9,7 +9,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 
 __all__ = ["som", "som_gene_modules", "som_subcellular_domains"]
 
@@ -40,7 +40,7 @@ def _batch_bmu(som_obj, data: np.ndarray, chunk: int = 100_000) -> np.ndarray:
     return bmu_flat
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def som(
     adata: ad.AnnData,
     *,
@@ -61,6 +61,11 @@ def som(
     the grid topology is fixed and reproducible.
 
     Requires ``minisom`` (``uv add 'astrolabe[som]'``).
+
+    Training summary is stored in ``uns[key_added]`` and mirrored to
+    ``mdata.uns[key_added][<modality>]`` when called on a MuData; the
+    ``obsm``/``obs`` outputs (embedding, BMU cluster assignment) stay
+    adata-resident only.
 
     Parameters
     ----------
@@ -178,7 +183,7 @@ def som(
     return som_obj
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def som_gene_modules(
     adata: ad.AnnData,
     *,
@@ -200,6 +205,11 @@ def som_gene_modules(
     this requires no spatial graph.
 
     Requires ``minisom`` (``uv add 'astrolabe[som]'``).
+
+    Training summary is stored in ``uns[key_added]`` and mirrored to
+    ``mdata.uns[key_added][<modality>]`` when called on a MuData; the
+    ``var``/``obsm`` outputs (per-gene module assignment, per-module scores)
+    stay adata-resident only.
 
     Parameters
     ----------
@@ -321,7 +331,7 @@ def som_gene_modules(
     return gene_df
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def som_subcellular_domains(
     adata: ad.AnnData,
     transcripts,
@@ -348,6 +358,11 @@ def som_subcellular_domains(
     polar asymmetry — without any prior annotation.
 
     Requires ``minisom`` (``uv add 'astrolabe[som]'``).
+
+    Training summary is stored in ``uns[key_added]`` and mirrored to
+    ``mdata.uns[key_added][<modality>]`` when called on a MuData; the
+    ``obsm``/``obs`` outputs (per-domain fractions, dominant domain) stay
+    adata-resident only.
 
     Parameters
     ----------

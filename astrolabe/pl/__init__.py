@@ -34,7 +34,7 @@ violin
 dotplot
     Dot plot of gene expression across cluster groups; returns FigurePanel for composition.
 embedding_scatter
-    Scatter plot of any 2-D embedding (UMAP, PCA, spatial_umap) colored by obs or gene.
+    Scatter plot of any 2-D embedding (UMAP, PCA, a cospatial embedding) colored by obs or gene.
 scatter
     Generic scatter plot of two arbitrary fields (obs/var/gene expression), colored by a third.
 histogram

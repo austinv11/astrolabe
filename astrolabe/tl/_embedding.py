@@ -13,7 +13,7 @@ import scanpy as sc
 from astrolabe._gpu import _gpu_X, _require_rapids, _to_cpu_arr, gpu_enabled
 from astrolabe._utils import with_adata
 
-__all__ = ["pca", "umap", "spatial_umap"]
+__all__ = ["pca", "umap"]
 
 log = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ def pca(
 def umap(
     adata: ad.AnnData,
     *,
-    neighbors_key: str = "spatial_neighbors",
+    neighbors_key: str = "neighbors",
     min_dist: float = 0.5,
     spread: float = 1.0,
     n_components: int = 2,
@@ -159,7 +159,7 @@ def umap(
     """Compute UMAP embedding of the neighborhood graph.
 
     Stores the embedding in ``obsm[key_added]``.  Requires that
-    :func:`astrolabe.tl.spatial_neighbors` or ``sc.pp.neighbors`` has
+    :func:`astrolabe.tl.spatial_neighbors` or ``astrolabe.tl.transcriptional_neighbors`` has
     been run first.
 
     Parameters
@@ -208,159 +208,3 @@ def umap(
         key_added=key_added,
         **kwargs,
     )
-
-
-@with_adata
-def spatial_umap(
-    adata: ad.AnnData,
-    *,
-    alpha: float = 0.5,
-    expr_neighbors_key: str = "neighbors",
-    spatial_neighbors_key: str = "spatial_neighbors",
-    min_dist: float = 0.5,
-    spread: float = 1.0,
-    n_components: int = 2,
-    random_state: int = 0,
-    joint_key: str = "joint_neighbors",
-    key_added: str = "X_spatial_umap",
-    **kwargs,
-) -> None:
-    """UMAP embedding using a weighted mix of expression and spatial neighborhoods.
-
-    Blends the transcriptomic neighborhood graph (from ``sc.pp.neighbors``)
-    with the spatial neighborhood graph (from :func:`~astrolabe.tl.spatial_neighbors`)
-    before running UMAP.  The result captures both cell-type identity and
-    tissue organization — cells of the same type that are also spatially
-    co-localised cluster more tightly than cells that share identity but
-    are scattered across the tissue.
-
-    Both neighbor graphs must exist in ``obsp`` before calling this function.
-    Run :func:`~astrolabe.tl.spatial_neighbors` and ``sc.pp.neighbors``
-    (after :func:`~astrolabe.tl.pca`) first.
-
-    Parameters
-    ----------
-    data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with both
-        neighborhood graphs in ``obsp``.
-    modality
-        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
-    alpha
-        Spatial weight in [0, 1].  ``alpha=0`` is a pure expression UMAP;
-        ``alpha=1`` is a pure spatial layout; ``alpha=0.5`` (default) gives
-        equal weight to both graphs.
-    expr_neighbors_key
-        Key in ``uns`` for the transcriptomic neighborhood graph written
-        by ``sc.pp.neighbors``.  Default ``'neighbors'``.
-    spatial_neighbors_key
-        Key in ``uns`` for the spatial neighborhood graph written by
-        :func:`~astrolabe.tl.spatial_neighbors`.  Default
-        ``'spatial_neighbors'``.
-    min_dist
-        UMAP minimum distance.
-    spread
-        UMAP spread.
-    n_components
-        Number of UMAP dimensions.
-    random_state
-        Random seed.
-    joint_key
-        Key prefix used to store the blended graph in ``obsp`` and ``uns``.
-        Cleaned up from ``uns`` after the UMAP run.
-    key_added
-        Key in ``obsm`` where the embedding is stored.
-
-    Examples
-    --------
-    >>> sc.pp.neighbors(mdata["xenium"])          # expression graph
-    >>> ab.tl.spatial_neighbors(mdata)            # spatial graph
-    >>> ab.tl.spatial_umap(mdata, alpha=0.3)      # 30% spatial, 70% expression
-    >>> ab.pl.points(mdata, color="leiden", embedding="X_spatial_umap").show()
-    """
-    import scipy.sparse as sp
-
-    # ── Resolve connectivity matrices ─────────────────────────────────────────
-    def _get_conn(key: str) -> sp.spmatrix:
-        meta = adata.uns.get(key)
-        if meta is None:
-            raise KeyError(
-                f"uns['{key}'] not found. "
-                + (
-                    "Run sc.pp.neighbors() first"
-                    if key == expr_neighbors_key
-                    else "Run ab.tl.spatial_neighbors() first"
-                )
-            )
-        conn_key = meta.get("connectivities_key", f"{key}_connectivities")
-        if conn_key not in adata.obsp:
-            raise KeyError(
-                f"obsp['{conn_key}'] not found (expected from uns['{key}'])"
-            )
-        return adata.obsp[conn_key].astype(np.float32)
-
-    conn_expr = _get_conn(expr_neighbors_key)
-    conn_spatial = _get_conn(spatial_neighbors_key)
-
-    if conn_expr.shape != conn_spatial.shape:
-        raise ValueError(
-            f"Expression ({conn_expr.shape}) and spatial ({conn_spatial.shape}) "
-            "connectivity matrices have different shapes"
-        )
-
-    # ── Row-normalize so both graphs are on the same scale ───────────────────
-    def _row_norm(mat: sp.spmatrix) -> sp.spmatrix:
-        row_sums = np.asarray(mat.sum(axis=1), dtype=np.float32).ravel()
-        row_sums[row_sums == 0] = 1.0
-        return sp.diags(1.0 / row_sums, format="csr") @ mat.tocsr()
-
-    conn_joint = alpha * _row_norm(conn_spatial) + (1.0 - alpha) * _row_norm(conn_expr)
-
-    # ── Store blended graph temporarily for sc.tl.umap ───────────────────────
-    conn_joint_key = f"{joint_key}_connectivities"
-    if joint_key in adata.uns:
-        log.warning(
-            "spatial_umap: uns['%s'] already exists and will be overwritten. "
-            "Pass a different joint_key= to avoid this.",
-            joint_key,
-        )
-    adata.obsp[conn_joint_key] = conn_joint.astype(np.float32)
-    adata.uns[joint_key] = {
-        "connectivities_key": conn_joint_key,
-        "distances_key": adata.uns[spatial_neighbors_key].get(
-            "distances_key", f"{spatial_neighbors_key}_distances"
-        ),
-        "params": {
-            "method": "umap",
-            "alpha": alpha,
-            "expr_neighbors_key": expr_neighbors_key,
-            "spatial_neighbors_key": spatial_neighbors_key,
-        },
-    }
-
-    log.info(
-        "spatial_umap: blended graph (alpha=%.2f spatial / %.2f expression), "
-        "%d non-zeros",
-        alpha, 1.0 - alpha, conn_joint.nnz,
-    )
-
-    # ── Run UMAP ──────────────────────────────────────────────────────────────
-    try:
-        sc.tl.umap(
-            adata,
-            neighbors_key=joint_key,
-            min_dist=min_dist,
-            spread=spread,
-            n_components=n_components,
-            random_state=random_state,
-            **kwargs,
-        )
-    finally:
-        # Clean up the temporary joint graph from uns even if UMAP raises.
-        # Keep obsp[conn_joint_key] for potential reuse across repeated calls.
-        adata.uns.pop(joint_key, None)
-
-    # Rename obsm['X_umap'] → obsm[key_added] if different
-    if key_added != "X_umap" and "X_umap" in adata.obsm:
-        adata.obsm[key_added] = adata.obsm.pop("X_umap")
-
-    log.info("spatial_umap: embedding written to obsm['%s']", key_added)

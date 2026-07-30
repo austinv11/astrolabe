@@ -5,14 +5,18 @@ Functions
 ---------
 spatial_neighbors
     Build a spatial neighborhood graph from cell centroid coordinates.
+transcriptional_neighbors
+    Build an expression-space neighborhood graph (thin wrapper around sc.pp.neighbors).
+blend_neighbors
+    Blend an expression graph and a spatial graph into one joint graph, usable
+    as a neighbors_key for both umap() (cospatial embedding) and cluster()
+    (cospatial cluster labels).
 pca
     PCA on the expression matrix or an arbitrary obsm embedding (e.g. BANKSY).
 cluster
     Leiden or Louvain community detection (thin wrapper around sc.tl.leiden/louvain).
 umap
     UMAP embedding (thin wrapper around sc.tl.umap).
-spatial_umap
-    UMAP using a weighted blend of expression and spatial neighborhood graphs.
 paga
     Partition-based graph abstraction (PAGA) trajectory inference.
 dpt
@@ -77,9 +81,9 @@ decay_length
     Phenomenological radial decay-length fit f(r) = f₀·exp(−r/λ) from a source point.
 """
 
-from astrolabe.tl._graph import spatial_neighbors
+from astrolabe.tl._graph import spatial_neighbors, transcriptional_neighbors, blend_neighbors
 from astrolabe.tl._cluster import cluster
-from astrolabe.tl._embedding import pca, umap, spatial_umap
+from astrolabe.tl._embedding import pca, umap
 from astrolabe.tl._trajectory import paga, dpt
 from astrolabe.tl._de import rank_genes_groups, score_genes, annotate_clusters
 from astrolabe.tl._spatial_stats import (
@@ -119,10 +123,11 @@ from astrolabe.tl._gradient import (
 
 __all__ = [
     "spatial_neighbors",
+    "transcriptional_neighbors",
+    "blend_neighbors",
     "cluster",
     "pca",
     "umap",
-    "spatial_umap",
     "paga",
     "dpt",
     "rank_genes_groups",

@@ -63,18 +63,19 @@ def cluster(
         Additional keyword arguments forwarded to the underlying scanpy
         function.
 
-    .. note::
-        :func:`astrolabe.tl.spatial_neighbors` writes the spatial graph to
-        ``uns['neighbors']``, which Leiden/Louvain reads by default.  If you
-        need the transcriptomic neighbors graph after calling
-        ``spatial_neighbors``, re-run ``sc.pp.neighbors`` to restore it.
-
     Examples
     --------
     >>> ab.tl.spatial_neighbors(mdata["xenium"])
     >>> ab.tl.cluster(mdata["xenium"], resolution=0.5)
     >>> mdata["xenium"].obs["leiden"]
     """
+    # FIXME: TEMP: Use future default args for speed with leiden, should eventually be removed
+    if method == 'leiden':
+        # flavor='igraph'` and `n_iterations=2
+        if 'flavor' not in kwargs:
+            kwargs['flavor'] = 'igraph'
+        if 'n_iterations' not in kwargs:
+            kwargs['n_iterations'] = 2
     key_added = key_added or method
 
     if gpu_enabled() and method in ("leiden", "louvain"):

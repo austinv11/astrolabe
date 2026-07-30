@@ -205,6 +205,12 @@ def _svg_mimebundle_for(fig: matplotlib.figure.Figure) -> dict[str, str]:
     fig.savefig(
         buf, format="svg", bbox_inches="tight",
         bbox_extra_artists=getattr(fig, "_ab_extra_artists", None),
+        # Explicit, not the 'savefig.facecolor' rcParam default: that rcParam
+        # tracks the *global* theme surface, which would silently overwrite
+        # a black fig.patch set by _apply_dark_theme (image dark_bg=True)
+        # back to the light theme's surface color, stranding the dark
+        # theme's white title/tick text on a light background.
+        facecolor=fig.get_facecolor(),
     )
     buf.seek(0)
     return {"image/svg+xml": buf.getvalue().decode("utf-8")}
@@ -276,6 +282,10 @@ class _Renderable(ABC):
         """
         fig = self.to_figure()
         savefig_kwargs.setdefault("bbox_extra_artists", getattr(fig, "_ab_extra_artists", None))
+        # See _svg_mimebundle_for: honor the figure's actual facecolor (which
+        # _apply_dark_theme may have forced to black) rather than letting the
+        # 'savefig.facecolor' rcParam silently revert it to the global theme.
+        savefig_kwargs.setdefault("facecolor", fig.get_facecolor())
         fig.savefig(path, dpi=dpi, bbox_inches="tight", **savefig_kwargs)
         plt.close(fig)
 
@@ -762,6 +772,7 @@ class PlotGrid(_Renderable):
         """Render and display. See :meth:`to_figure` for *dynamic_sizing*."""
         fig = self.to_figure(figsize=figsize, dynamic_sizing=dynamic_sizing)
         _display_or_show(fig)
+        fig.clear()
         plt.close(fig)
 
     def __repr__(self) -> str:
@@ -1710,7 +1721,10 @@ def _render_figure_panel(
     rc_dpi = plt.rcParams.get("savefig.dpi", 300)
     dpi = max(300, rc_dpi) if isinstance(rc_dpi, (int, float)) else 300
     buf = io.BytesIO()
-    src.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    # facecolor explicit for the same reason as _svg_mimebundle_for: honor
+    # src's own facecolor (possibly forced black by _apply_dark_theme)
+    # instead of the global-theme-tracking 'savefig.facecolor' rcParam.
+    src.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", facecolor=src.get_facecolor())
     buf.seek(0)
     img = mpimg.imread(buf)
     surface_rgba = mcolors.to_rgba(get_theme().surface)

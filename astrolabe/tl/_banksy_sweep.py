@@ -14,14 +14,14 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
-from astrolabe._utils import with_adata
+from astrolabe._utils import from_kwarg, with_adata
 
 __all__ = ["banksy_sweep"]
 
 log = logging.getLogger(__name__)
 
 
-@with_adata
+@with_adata(mirror_uns=from_kwarg("key_added"))
 def banksy_sweep(
     adata: ad.AnnData,
     *,
@@ -47,8 +47,10 @@ def banksy_sweep(
     4. ``sc.tl.leiden`` at the given resolution.
 
     Cluster labels are written to ``obs`` as
-    ``{key_added}_L{lambda}_R{resolution}`` for each run.  A summary
-    DataFrame is stored in ``uns[key_added]`` and returned.
+    ``{key_added}_L{lambda}_R{resolution}`` for each run (adata-resident
+    only).  A summary DataFrame is stored in ``uns[key_added]`` and
+    returned; mirrored to ``mdata.uns[key_added][<modality>]`` when called
+    on a MuData.
 
     Low λ (≈0.0–0.2) recovers transcriptomic cell types; high λ (≈0.5–0.8)
     recovers spatially-coherent tissue domains.
