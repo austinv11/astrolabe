@@ -20,12 +20,21 @@ create_compartment_layers
 evaluate_segmentation
     Evaluate predicted boundary polygons against a ground-truth label image;
     returns precision, recall, F1, and Dice at a configurable IoU threshold.
+assign_bins
+    Assign Visium HD 2µm bins to a pre-existing cell segmentation and build a
+    per-cell count matrix (native bin2cell reimplementation, with a
+    PCA-transcriptional-similarity tie-break for contested bins).
+segment_bin2cell
+    Convenience recipe: segment_stardist/segment_cellpose + assign_bins in
+    one call, with a toggle for whether H&E or a bin-expression raster
+    drives the segmentation.
 """
 
 from astrolabe.seg._voronoi import voronoi_resegment
 from astrolabe.seg._segment import segment_cellpose, segment_stardist
 from astrolabe.seg._assign import assign_transcripts, create_compartment_layers
 from astrolabe.seg._eval import evaluate_segmentation
+from astrolabe.seg._bin2cell import assign_bins, segment_bin2cell
 
 __all__ = [
     "voronoi_resegment",
@@ -34,4 +43,6 @@ __all__ = [
     "assign_transcripts",
     "create_compartment_layers",
     "evaluate_segmentation",
+    "assign_bins",
+    "segment_bin2cell",
 ]

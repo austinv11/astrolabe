@@ -79,6 +79,8 @@ spatial_diffusion
     Graph-Laplacian (Coifman–Lafon) diffusion smoothing and optional spectral decomposition.
 decay_length
     Phenomenological radial decay-length fit f(r) = f₀·exp(−r/λ) from a source point.
+rebin_visium_hd
+    Aggregate native 2µm Visium HD bins into coarser (or custom) square bins.
 """
 
 from astrolabe.tl._graph import spatial_neighbors, transcriptional_neighbors, blend_neighbors
@@ -120,6 +122,7 @@ from astrolabe.tl._gradient import (
     spatial_diffusion,
     decay_length,
 )
+from astrolabe.tl._visium_hd import rebin_visium_hd
 
 __all__ = [
     "spatial_neighbors",
@@ -164,4 +167,5 @@ __all__ = [
     "compartment_flux",
     "spatial_diffusion",
     "decay_length",
+    "rebin_visium_hd",
 ]

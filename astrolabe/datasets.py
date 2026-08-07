@@ -12,6 +12,8 @@ Canonical usage
 >>> mdata = ab.datasets.xenium_tiny()   # 10x Genomics Human Kidney tiny (~20 MB, smoke tests)
 >>> mdata = ab.datasets.merscope()      # Vizgen assembloid, Zenodo 13835782 (126 MB)
 >>> mdata = ab.datasets.cosmx()         # NanoString Lung12 public S3 (155 MB)
+>>> mdata = ab.datasets.visium_hd()      # 10x Genomics Visium HD Mouse Small Intestine
+>>> mdata = ab.datasets.visium_hd_tiny() # 10x Genomics Visium HD tiny (297 MB, smoke tests)
 >>> adata = ab.datasets.ome_tiff()      # OME Bio-Formats sample (226 KB)
 >>> adata = ab.datasets.he()            # OpenSlide Huron H&E brightfield (36 MB)
 
@@ -24,11 +26,15 @@ subsequent calls.  Override with the ``cache_dir`` parameter.
 from __future__ import annotations
 
 import logging
+import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
 
-__all__ = ["xenium", "xenium_tiny", "merscope", "cosmx", "ome_tiff", "he"]
+__all__ = [
+    "xenium", "xenium_tiny", "merscope", "cosmx",
+    "visium_hd", "visium_hd_tiny", "ome_tiff", "he",
+]
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +58,9 @@ _XENIUM_FILES: dict[str, str] = {
     "_nucleus_boundaries.parquet": "nucleus_boundaries.parquet",
     "_transcripts.parquet": "transcripts.parquet",
     "_morphology.ome.tif": "morphology.ome.tif",
+    "_he_image.ome.tif": "he_image.ome.tif",
+    "_he_imagealignment.csv": "he_imagealignment.csv",
+    "_annotation.geojson": "annotation.geojson",
 }
 
 # Tiny smoke-test dataset (~20 MB zip, ~350 cells).
@@ -75,6 +84,23 @@ _COSMX_EXPR_URL = (
 )
 _COSMX_META_URL = (
     "https://nanostring-public-share.s3.amazonaws.com/SMI/Lung12/Lung12_metadata_file.csv"
+)
+
+# Visium HD Mouse Small Intestine (FFPE), Space Ranger 3.0.0 — no native
+# segmentation (predates Space Ranger v4.0's on-board segmentation feature),
+# good for demonstrating the seg.segment_bin2cell()/seg.assign_bins() path.
+_VISIUM_HD_BASE = (
+    "https://cf.10xgenomics.com/samples/spatial-exp/3.0.0/"
+    "Visium_HD_Mouse_Small_Intestine/Visium_HD_Mouse_Small_Intestine"
+)
+
+# Visium HD tiny smoke-test dataset (297 MB), Space Ranger v4.0.1 — includes
+# native on-board segmentation (segmented_outputs/), good for demonstrating
+# the native-segmentation path. 10x's own docs describe this dataset as
+# "designed... for automated smoke testing".
+_VISIUM_HD_TINY_URL = (
+    "https://cf.10xgenomics.com/samples/spatial-exp/4.0.1/"
+    "Visium_HD_Tiny_3prime_Dataset/Visium_HD_Tiny_3prime_Dataset_outs.zip"
 )
 
 _OME_TIFF_URL = (
@@ -133,6 +159,29 @@ def _extract_zip(zip_path: Path, dest_dir: Path) -> None:
         zf.extractall(dest_dir)
 
 
+def _extract_tar(tar_path: Path, dest_dir: Path) -> None:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tar_path) as tf:
+        tf.extractall(dest_dir, filter="data")
+
+
+def _find_visium_hd_outs(extract_dir: Path) -> Path:
+    """Return the extracted directory that directly contains ``binned_outputs/``."""
+    if (extract_dir / "binned_outputs").is_dir():
+        return extract_dir
+    for child in sorted(extract_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / "binned_outputs").is_dir():
+            return child
+        for grandchild in sorted(child.iterdir()):
+            if grandchild.is_dir() and (grandchild / "binned_outputs").is_dir():
+                return grandchild
+    raise FileNotFoundError(
+        f"Could not find binned_outputs/ in extracted Visium HD archive at {extract_dir}"
+    )
+
+
 def _find_xenium_outs(extract_dir: Path) -> Path:
     """Return the extracted Xenium output directory (contains experiment.xenium)."""
     # Handles both flat extraction and single-subdirectory extraction
@@ -154,13 +203,19 @@ def _find_xenium_outs(extract_dir: Path) -> Path:
 def xenium(cache_dir=None):
     """Download and return the 10x Genomics Xenium Human Lung Cancer FFPE dataset.
 
-    Source: 10x Genomics CDN (CC BY 4.0), ~5 GB total (7 files: 6 expression
-    files ~254 MB + morphology OME-TIFF ~4.8 GB).
+    Source: 10x Genomics CDN (CC BY 4.0), ~5 GB total (9 files: 6 expression
+    files ~254 MB + morphology OME-TIFF ~4.8 GB + paired H&E image/alignment
+    + pathologist annotation GeoJSON).
     FFPE Human Lung Adenocarcinoma, 162k cells, 377-gene panel.
-    Returns a :class:`mudata.MuData` with ``'xenium'`` modality containing
-    cell boundaries, spatial coordinates in microns, transcript detections, and
-    the morphology image attached as an :class:`~astrolabe._utils.ImageSpec`
-    under ``uns['spatial'][library_id]['images']['morphology']``.
+    Returns a :class:`mudata.MuData` with a ``'xenium'`` modality (default
+    modality) containing cell boundaries, spatial coordinates in microns,
+    transcript detections, and the morphology image attached as an
+    :class:`~astrolabe._utils.ImageSpec` under
+    ``uns['spatial'][library_id]['images']['morphology']``; a separate
+    ``'he'`` modality with the paired H&E image affine-registered into the
+    same micron frame via 10x's alignment matrix; and pathologist ROI
+    annotations in ``uns['annotations']``, registered into the same micron
+    frame via :func:`~astrolabe.io.align_xenium_annotations`.
 
     Parameters
     ----------
@@ -178,7 +233,12 @@ def xenium(cache_dir=None):
             f"Xenium Human Lung Cancer FFPE ({local_name})",
         )
     from astrolabe import io
-    return io.read_xenium(str(outs_dir), morphology_image=True)
+    mdata = io.read_xenium(
+        str(outs_dir), morphology_image=True, he_image=True, he_alignment=True
+    )
+    annotations = io.read_annotations(outs_dir / "annotation.geojson")
+    mdata.uns["annotations"] = io.align_xenium_annotations(annotations, mdata)
+    return mdata
 
 
 def xenium_tiny(cache_dir=None):
@@ -247,6 +307,75 @@ def cosmx(cache_dir=None):
               "CosMx Lung12 metadata (NanoString S3, 9 MB)")
     from astrolabe import io
     return io.read_cosmx(str(d), load_boundaries=False)
+
+
+def visium_hd(cache_dir=None):
+    """Download and return the 10x Genomics Visium HD Mouse Small Intestine dataset.
+
+    Source: 10x Genomics CDN (CC BY 4.0), Space Ranger 3.0.0 — 2µm binned
+    outputs plus the full-resolution H&E microscopy image. This dataset
+    predates Space Ranger v4.0's on-board segmentation feature, so
+    ``uns['default_modality']`` stays ``'visium_hd_bins'`` after loading; use
+    :func:`~astrolabe.seg.segment_bin2cell` (or
+    :func:`~astrolabe.seg.segment_stardist` + :func:`~astrolabe.seg.assign_bins`)
+    to derive a cell-level ``'visium_hd_cells'`` modality.
+
+    Returns a :class:`mudata.MuData` with a ``'visium_hd_bins'`` modality
+    (lazy — see :func:`~astrolabe.pp.load_bin_counts`) and a ``'he'`` modality.
+
+    Parameters
+    ----------
+    cache_dir
+        Directory to cache downloaded files.  Defaults to
+        ``<cwd>/.astrolabe_cache/datasets/visium_hd/``.
+    """
+    d = _cache_root(cache_dir) / "visium_hd"
+    outs_dir = d / "outs"
+    if not (outs_dir / "binned_outputs").is_dir():
+        tar_path = d / "Visium_HD_Mouse_Small_Intestine_binned_outputs.tar.gz"
+        _download(
+            _VISIUM_HD_BASE + "_binned_outputs.tar.gz", tar_path,
+            "Visium HD Mouse Small Intestine (binned_outputs)",
+        )
+        log.info("Extracting Visium HD archive ...")
+        _extract_tar(tar_path, d / "_extracted")
+        src = _find_visium_hd_outs(d / "_extracted")
+        src.rename(outs_dir)
+    _download(
+        _VISIUM_HD_BASE + "_tissue_image.btf",
+        outs_dir / "Visium_HD_Mouse_Small_Intestine_tissue_image.btf",
+        "Visium HD Mouse Small Intestine (H&E tissue image)",
+    )
+    from astrolabe import io
+    return io.read_visium_hd(str(outs_dir))
+
+
+def visium_hd_tiny(cache_dir=None):
+    """Download and return the 10x Genomics Visium HD tiny smoke-test dataset.
+
+    Source: 10x Genomics CDN (CC BY 4.0), ~297 MB ZIP, Space Ranger v4.0.1.
+    10x's own docs describe this dataset as downsampled specifically "to
+    reduce file size and compute time" for automated testing. Includes
+    native on-board segmentation (``segmented_outputs/``), so the returned
+    MuData's ``uns['default_modality']`` is already ``'visium_hd_cells'``.
+
+    Parameters
+    ----------
+    cache_dir
+        Directory to cache downloaded files.  Defaults to
+        ``<cwd>/.astrolabe_cache/datasets/visium_hd_tiny/``.
+    """
+    d = _cache_root(cache_dir) / "visium_hd_tiny"
+    zip_path = d / "visium_hd_tiny.zip"
+    _download(_VISIUM_HD_TINY_URL, zip_path, "Visium HD tiny (10x Genomics, 297 MB)")
+    outs_dir = d / "outs"
+    if not (outs_dir / "binned_outputs").is_dir():
+        log.info("Extracting Visium HD archive ...")
+        _extract_zip(zip_path, d / "_extracted")
+        src = _find_visium_hd_outs(d / "_extracted")
+        src.rename(outs_dir)
+    from astrolabe import io
+    return io.read_visium_hd(str(outs_dir))
 
 
 def ome_tiff(cache_dir=None):

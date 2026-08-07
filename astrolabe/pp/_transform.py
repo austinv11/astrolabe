@@ -10,6 +10,10 @@ rotate
     Rotate cell coordinates (and image transform chain) CCW by a given angle.
 flip
     Mirror cell coordinates (and image transform chain) along x, y, or both axes.
+apply_affine
+    Apply one caller-supplied 3x3 affine transform across every modality in a
+    MuData at once, keeping multi-image datasets (xenium + he + if + morphology)
+    in a single coordinate frame.
 estimate_stain_matrix
     Re-estimate the H&E stain deconvolution matrix for an already-loaded image.
 """
@@ -20,14 +24,22 @@ import logging
 from typing import TYPE_CHECKING, Literal
 
 import anndata as ad
+import mudata as md
 import numpy as np
+import pyarrow as pa
 
-from astrolabe._utils import ImageFilter, ImageSpec, _transform_coords, with_adata
+from astrolabe._utils import (
+    ImageFilter,
+    ImageSpec,
+    _resolve_adata_and_modality,
+    _transform_coords,
+    with_adata,
+)
 
 if TYPE_CHECKING:
     pass
 
-__all__ = ["crop", "rotate", "flip", "add_image_filter", "estimate_stain_matrix"]
+__all__ = ["crop", "rotate", "flip", "apply_affine", "add_image_filter", "estimate_stain_matrix"]
 
 log = logging.getLogger(__name__)
 
@@ -89,12 +101,30 @@ def _transform_boundary_obsm(
     return raw
 
 
+def _crop_transcripts_uns(
+    uns: dict, region: np.ndarray, x_col: str, y_col: str
+) -> None:
+    """Filter ``uns['transcripts']`` (a pyarrow.Table) to *region*, in place.
+
+    No-op if ``'transcripts'`` is absent, so callers can gate cheaply and
+    unconditionally on ``"transcripts" in adata.uns`` beforehand.
+    """
+    tx = uns.get("transcripts")
+    if tx is None:
+        return
+    coords = np.column_stack(
+        [np.asarray(tx[x_col]), np.asarray(tx[y_col])]
+    ).astype(np.float64)
+    mask = _points_in_polygon(coords, region)
+    uns["transcripts"] = tx.filter(pa.array(mask))
+
+
 def _append_image_transform(adata: ad.AnnData, M: np.ndarray) -> None:
     """Append µm-space affine *M* to all ImageSpec transform_chains in *adata.uns*."""
     libs = adata.uns.get("spatial", {})
     if len(libs) > 1:
         log.warning(
-            "rotate/flip: multiple libraries in uns['spatial'] (%s); "
+            "apply_affine: multiple libraries in uns['spatial'] (%s); "
             "the same affine will be applied to ALL library images. "
             "If libraries have different coordinate frames, pass a single-library "
             "AnnData (mdata['<modality>']) and handle each library separately.",
@@ -165,12 +195,15 @@ def _apply_coord_transform(
 # ---------------------------------------------------------------------------
 
 
-@with_adata
 def crop(
-    adata: ad.AnnData,
+    data: ad.AnnData | md.MuData,
     region: np.ndarray,
     *,
+    modality: str | None = None,
     spatial_key: str = "spatial",
+    crop_transcripts: bool = True,
+    transcripts_x_col: str = "x_location",
+    transcripts_y_col: str = "y_location",
     inplace: bool = False,
 ) -> ad.AnnData | None:
     """Filter cells to those whose centroids fall inside *region*.
@@ -178,6 +211,31 @@ def crop(
     Cell coordinates are updated eagerly.  Images are **not** modified —
     :func:`~astrolabe.pl._spatial._render_panel` zooms the plot view by
     reading the bounding box stored in ``adata.uns['spatial_bounds']``.
+
+    When ``uns['transcripts']`` (a :class:`pyarrow.Table`, e.g. from
+    :func:`~astrolabe.io.read_xenium_transcripts`) is present, it is cropped
+    to the same *region* by default, using the same point-in-polygon test as
+    the cell centroids — so cells and transcripts can never disagree about
+    which spatial window a cropped object represents.
+
+    Unlike most ``pp``/``tl`` functions, this does **not** use ``@with_adata``:
+    when *data* is a :class:`~mudata.MuData` **and** ``inplace=True``, every
+    *other* modality sharing the same coordinate frame (e.g. a separate
+    ``'he'``/``'if'`` image modality with no cells of its own to subset) also
+    has its ``uns['spatial_bounds']`` viewport hint updated to match, in
+    place on *data* — so a single ``ab.pp.crop(mdata, region, inplace=True)``
+    keeps every modality's plot viewport in sync automatically, with no
+    manual ``mdata['he'].uns['spatial_bounds'] = ...`` line needed.
+
+    This sibling sync only happens for ``inplace=True``: with
+    ``inplace=False`` *data* is never mutated at all (matching every other
+    ``inplace=False`` function in this library), so cropping one modality out
+    of a shared MuData without disturbing the rest of it (e.g. keeping the
+    full-resolution ``mdata`` around for later cells) does not silently
+    change what an unrelated ``ab.pl.image(mdata, modality=...)`` call
+    renders elsewhere. To get a fully-synced crop *without* touching the
+    original object, crop an explicit copy in place instead — see the second
+    example below.
 
     Parameters
     ----------
@@ -187,8 +245,18 @@ def crop(
         ``(n_verts, 2)`` polygon in µm.  Use :func:`~astrolabe.pl.rectangle`,
         :func:`~astrolabe.pl.circle`, or :func:`~astrolabe.pl.arrow` to
         generate common shapes.
+    modality
+        Which modality to crop cells/transcripts from, when *data* is a
+        MuData. Falls back to ``uns['default_modality']`` if not given.
     spatial_key
         Key in ``obsm`` for cell centroids.
+    crop_transcripts
+        If ``True`` (default) and ``uns['transcripts']`` is present, filter it
+        to the same *region* too. Set ``False`` to leave it untouched (e.g.
+        when repeatedly cropping interactively and re-filtering a large table
+        each time isn't wanted).
+    transcripts_x_col, transcripts_y_col
+        Column names for transcript x/y coordinates in ``uns['transcripts']``.
     inplace
         If ``False`` (default), return the filtered :class:`~anndata.AnnData`.
         If ``True``, modify in place and return ``None``.
@@ -196,7 +264,23 @@ def crop(
     Returns
     -------
     None or AnnData
+
+    Examples
+    --------
+    >>> rect = ab.pl.rectangle(center, 600.0, 600.0)
+    >>> morph_crop = ab.pp.crop(mdata, rect, inplace=False)  # mdata itself untouched
+    >>> ab.pl.image(mdata, modality='he')  # still renders the FULL H&E image
+
+    To keep ``'he'`` cropped in sync too, without touching the original
+    ``mdata`` used elsewhere in a notebook, crop an explicit copy in place:
+
+    >>> mdata_crop = mdata.copy()
+    >>> ab.pp.crop(mdata_crop, rect, inplace=True)  # mutates the copy only
+    >>> # mdata_crop['he'].uns['spatial_bounds'] is now set to match too:
+    >>> (ab.pl.image(mdata_crop, modality='he') + ab.pl.boundaries(mdata_crop)).show()
     """
+    adata, resolved_modality = _resolve_adata_and_modality(data, modality)
+
     if spatial_key not in adata.obsm:
         raise KeyError(
             f"obsm['{spatial_key}'] not found. "
@@ -217,13 +301,23 @@ def crop(
         "ymin": float(region[:, 1].min()),
         "ymax": float(region[:, 1].max()),
     }
+
+    if inplace and isinstance(data, md.MuData):
+        for key, sibling in data.mod.items():
+            if key != resolved_modality and "spatial" in sibling.uns:
+                sibling.uns["spatial_bounds"] = bounds
+
     if inplace:
         adata.uns["spatial_bounds"] = bounds
+        if crop_transcripts and "transcripts" in adata.uns:
+            _crop_transcripts_uns(adata.uns, region, transcripts_x_col, transcripts_y_col)
         adata._inplace_subset_obs(mask)
         return None
     else:
         subset = adata[mask].copy()
         subset.uns["spatial_bounds"] = bounds
+        if crop_transcripts and "transcripts" in subset.uns:
+            _crop_transcripts_uns(subset.uns, region, transcripts_x_col, transcripts_y_col)
         return subset
 
 
@@ -339,6 +433,66 @@ def flip(
         _apply_coord_transform(out, M, spatial_key, boundaries_keys)
         _append_image_transform(out, M)
         return out
+
+
+def apply_affine(
+    mdata: md.MuData,
+    matrix: np.ndarray,
+    *,
+    spatial_key: str = "spatial",
+    boundaries_keys: tuple[str, ...] = ("cell_boundaries", "nucleus_boundaries"),
+    inplace: bool = False,
+) -> md.MuData | None:
+    """Apply one 3×3 affine transform across every modality in *mdata*.
+
+    Unlike :func:`rotate` / :func:`flip` (which resolve and transform a
+    single :class:`~anndata.AnnData` via ``@with_adata``), this walks every
+    entry in ``mdata.mod`` and transforms whichever of
+    ``obsm[spatial_key]`` / boundary arrays it has, and appends *matrix* to
+    every :class:`~astrolabe._utils.ImageSpec` transform chain found in that
+    modality's ``uns['spatial']``. Use this to keep a multi-image MuData
+    (e.g. Xenium point-cloud data plus paired H&E/IF/morphology images) in a
+    single coordinate frame after a manual correction, rather than desyncing
+    modalities by transforming only one of them via :func:`rotate` / :func:`flip`.
+
+    Parameters
+    ----------
+    mdata
+        :class:`~mudata.MuData` to transform. Every modality is visited;
+        modalities without ``obsm[spatial_key]`` simply have their image
+        transform chains updated (if any), and modalities without any
+        ``uns['spatial']`` images are left untouched.
+    matrix
+        ``(3, 3)`` homogeneous 2D affine matrix, in µm space.
+    spatial_key
+        Key in ``obsm`` for cell centroids, checked on each modality.
+    boundaries_keys
+        Additional ``obsm`` keys (boundary polygon arrays) to transform
+        alongside *spatial_key* wherever present.
+    inplace
+        If ``False`` (default), return a transformed copy of *mdata*.
+        If ``True``, modify in place and return ``None``.
+
+    Returns
+    -------
+    None or MuData
+
+    Examples
+    --------
+    >>> M = numpy.loadtxt("correction.csv", delimiter=",")
+    >>> ab.pp.apply_affine(mdata, M, inplace=True)  # xenium + he + morphology all move together
+    """
+    matrix = np.asarray(matrix, dtype=np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError(f"matrix must be a (3, 3) homogeneous 2D matrix, got shape {matrix.shape}")
+
+    target = mdata if inplace else mdata.copy()
+    for adata in target.mod.values():
+        if spatial_key in adata.obsm:
+            _apply_coord_transform(adata, matrix, spatial_key, list(boundaries_keys))
+        _append_image_transform(adata, matrix)
+
+    return None if inplace else target
 
 
 @with_adata

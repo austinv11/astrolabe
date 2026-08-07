@@ -47,7 +47,7 @@ import pandas as pd
 import scipy.sparse as sp
 
 from astrolabe._shapes import arrow, circle, rectangle
-from astrolabe._utils import ImageSpec, _resolve_adata, _resolve_field, _transform_coords, with_adata
+from astrolabe._utils import ImageSpec, _od_deconvolve, _resolve_adata, _resolve_field, _transform_coords, with_adata
 from astrolabe.pl._theme import (
     _extended_cat_colors,
     _legend_handles,
@@ -159,8 +159,12 @@ class Layer:
 
     # --- annotation-specific ---
     shapes: list | None = None          # list of (n_verts, 2) ndarray in µm
-    annotation_color: str = "white"     # stroke color
+    annotation_color: str = "white"     # stroke color (literal-color mode)
     annotation_fill: str | None = None  # fill color; None = transparent
+    annotation_values: np.ndarray | None = None
+    """Per-shape resolved color values (categorical or numeric), aligned 1:1
+    with ``shapes``, when :func:`annotation` was given a GeoDataFrame and a
+    ``color=`` matching one of its columns. ``None`` for literal-color mode."""
 
     # --- image-specific: scale bar ---
     scale_bar: bool | dict = False  # False | True | dict of kwargs
@@ -522,7 +526,7 @@ def _layer_extent(lay: Layer) -> tuple[float, float, float, float] | None:
             )
         if lay.kind == "image" and lay.adata is not None:
             spec: ImageSpec = lay.adata.uns["spatial"][lay.library_id]["images"][lay.image_key]
-            h_full, w_full = spec.full_shape[-2], spec.full_shape[-1]
+            h_full, w_full = _spec_yx_full_shape(spec)
             xmin, xmax, ymin, ymax = _compute_extent(spec, h_full, w_full)
             return xmin, xmax, ymin, ymax
         if lay.kind == "annotation" and lay.shapes:
@@ -1095,7 +1099,7 @@ def image(
     image_cmap: str = "gray",
     vmin: float | None = None,
     vmax: float | None = None,
-    dark_bg: bool = True,
+    dark_bg: bool | None = None,
     scale_bar: bool | dict = False,
     title: str | None = None,
     frameon: bool = True,
@@ -1167,6 +1171,13 @@ def image(
             f"Available keys: {list(images.keys())}"
         )
 
+    # dark_bg=None (default) picks a light background for brightfield (H&E)
+    # images and the existing dark background for everything else (IF panels,
+    # DAPI/morphology, etc.); an explicit True/False always wins.
+    if dark_bg is None:
+        spec = images.get(image_key)
+        dark_bg = not bool(getattr(spec, "is_brightfield", False))
+
     lay = Layer(
         kind="image",
         adata=adata,
@@ -1182,7 +1193,12 @@ def image(
         scale_bar=scale_bar,
     )
     if title is None:
-        title = f"{library_id}/{image_key}" if channel is None else f"{library_id}/{image_key}/ch{channel}"
+        if channel is None:
+            title = f"{library_id}/{image_key}"
+        elif isinstance(channel, str):
+            title = f"{library_id}/{image_key}/{channel}"
+        else:
+            title = f"{library_id}/{image_key}/ch{channel}"
     return SpatialPanel(
         layers=[lay],
         title=title,
@@ -1484,14 +1500,39 @@ def _table_to_adata(data: Any, x_col: str, y_col: str) -> ad.AnnData:
     return adata
 
 
+def _flatten_gdf_shapes(gdf: Any) -> tuple[list[np.ndarray], np.ndarray]:
+    """Flatten a GeoDataFrame's (Multi)Polygon geometries to vertex arrays.
+
+    Returns ``(shapes, row_index)`` where ``row_index[i]`` is the source
+    GeoDataFrame row for ``shapes[i]`` — a ``MultiPolygon`` row expands to
+    several shapes that all map back to the same row (and so get the same
+    resolved color/label), matching how a single categorical value applies
+    to the whole (possibly disjoint) region.
+    """
+    shapes: list[np.ndarray] = []
+    row_index: list[int] = []
+    for i, geom in enumerate(gdf.geometry):
+        polys = geom.geoms if geom.geom_type == "MultiPolygon" else [geom]
+        for poly in polys:
+            shapes.append(np.asarray(poly.exterior.coords))
+            row_index.append(i)
+    return shapes, np.array(row_index, dtype=np.int64)
+
+
 def annotation(
-    shapes: list[np.ndarray] | np.ndarray,
+    shapes: "list[np.ndarray] | np.ndarray | gpd.GeoDataFrame",
     *,
-    color: str = "yellow",
+    color: str | None = "yellow",
     fill_color: str | None = None,
     linewidth: float = 1.5,
     alpha: float = 1.0,
     fill_alpha: float = 0.2,
+    palette: dict | list | None = None,
+    cmap: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    vcenter: float | None = None,
+    na_color: str | None = None,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -1504,22 +1545,46 @@ def annotation(
         roi = ab.pl.rectangle(center=(500, 300), width=200, height=100)
         (ab.pl.image(mdata) + ab.pl.annotation([roi], color="yellow")).show()
 
+        # Color regions by a GeoDataFrame column, with an automatic legend:
+        gdf = ab.io.read_annotations("annotation.geojson")
+        (ab.pl.points(mdata, color="total_counts")
+         + ab.pl.annotation(gdf, color="name")).show()
+
     Parameters
     ----------
     shapes
-        A single ``(n_verts, 2)`` array or a list of such arrays in µm.
-        Use :func:`rectangle`, :func:`circle`, or :func:`arrow` to generate
-        common shapes.
+        A single ``(n_verts, 2)`` array, a list of such arrays (µm), or a
+        :class:`geopandas.GeoDataFrame` (e.g. from
+        :func:`~astrolabe.io.read_annotations`) — its ``(Multi)Polygon``
+        geometries are flattened automatically, one color/legend entry per
+        row even when a row is a ``MultiPolygon``.
     color
-        Edge color of the annotation polygons.
+        Either a literal matplotlib color for all shapes (default
+        ``"yellow"``), or — when *shapes* is a GeoDataFrame and *color*
+        matches one of its non-geometry columns — a field to color by,
+        categorical or continuous, resolved the same way ``pl.points``'s
+        ``color=`` is. Falls back to a literal color if *shapes* is a
+        GeoDataFrame but *color* doesn't match a column.
     fill_color
-        Fill color.  ``None`` = no fill (outline only).
+        Fill color in literal-color mode. ``None`` = no fill (outline only).
+        Ignored when *color* resolves to a data column (fill follows the
+        resolved per-region color instead).
     linewidth
         Edge line width in points.
     alpha
         Overall opacity (applies to both edge and fill).
     fill_alpha
-        Fill opacity, used when *fill_color* is set.
+        Fill opacity — used when *fill_color* is set (literal-color mode),
+        or always in data-driven coloring mode.
+    palette
+        Categorical color palette (dict or list), used only when *color*
+        resolves to a categorical column.
+    cmap
+        Colormap for a continuous column.
+    vmin, vmax, vcenter
+        Continuous color scaling, as in ``pl.points``/``pl.boundaries``.
+    na_color
+        Color for regions with ``NaN``/missing values in the color column.
     title
         Optional panel title (rarely needed for annotation-only panels).
     frameon
@@ -1531,17 +1596,44 @@ def annotation(
     -------
     SpatialPanel
     """
-    if isinstance(shapes, np.ndarray):
-        shapes = [shapes]
+    annotation_values: np.ndarray | None = None
+    color_field: str | None = None
+    literal_color = color
+
+    is_gdf = hasattr(shapes, "geometry") and hasattr(shapes, "columns")
+    if is_gdf:
+        shapes_list, row_index = _flatten_gdf_shapes(shapes)
+        if color is not None:
+            try:
+                values, _ = _resolve_gdf_field(shapes, color)
+            except KeyError:
+                values = None
+            if values is not None:
+                annotation_values = values[row_index]
+                color_field = color
+                literal_color = None
+    else:
+        if isinstance(shapes, np.ndarray):
+            shapes = [shapes]
+        shapes_list = list(shapes)
+
     lay = Layer(
         kind="annotation",
         adata=None,
-        shapes=list(shapes),
-        annotation_color=color,
+        shapes=shapes_list,
+        annotation_color=literal_color if literal_color is not None else "white",
         annotation_fill=fill_color,
+        annotation_values=annotation_values,
+        color=color_field,
         linewidth=linewidth,
         alpha=alpha,
         fill_alpha=fill_alpha,
+        palette=palette,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        vcenter=vcenter,
+        na_color=na_color,
     )
     return SpatialPanel(layers=[lay], title=title, frameon=frameon, figsize=figsize)
 
@@ -1605,7 +1697,7 @@ def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
         elif lay.kind == "raster":
             _draw_raster_layer(ax, lay, shared_legend)
         elif lay.kind == "annotation":
-            _draw_annotation_layer(ax, lay)
+            _draw_annotation_layer(ax, lay, shared_legend)
         elif lay.kind == "quiver":
             _draw_quiver_layer(ax, lay)
         elif lay.kind == "streamplot":
@@ -1900,6 +1992,16 @@ def _load_tiff_level(
         slices[x_ax] = slice(None, None, step)
         raw = raw[tuple(slices)]   # view (no copy for C-contiguous stride)
 
+    # Normalize to channel-first *after* crop/stride (which index by the
+    # original y_ax/x_ax positions above). Without this, callers that assume
+    # "(C, Y, X)" per this function's own contract — _apply_registration_rotation,
+    # _apply_filter_chain, _apply_image_transform — silently misinterpret a
+    # channels-last file (e.g. H&E's 'YXC') as having hundreds of "channels"
+    # (one per image row). Only done when a real channel axis exists.
+    if "C" in remaining and ch_ax != 0:
+        raw = np.moveaxis(raw, ch_ax, 0)
+        ch_ax = 0
+
     return raw, ch_ax
 
 
@@ -1963,43 +2065,71 @@ def _select_level_and_crop(
 
     # Pixel coordinates of the crop at the chosen level.
     yscale, xscale = spec.level_scales[level_idx]
-    h_full, w_full = spec.full_shape[-2], spec.full_shape[-1]
+    h_full, w_full = _spec_yx_full_shape(spec)
     h_level = int(round(h_full / yscale))
     w_level = int(round(w_full / xscale))
 
-    col_min = max(0, int((bounds["xmin"] - xmin_img) / img_w_um * w_level))
-    col_max = min(w_level, int((bounds["xmax"] - xmin_img) / img_w_um * w_level) + 1)
-    row_min = max(0, int((bounds["ymin"] - ymin_img) / img_h_um * h_level))
-    row_max = min(h_level, int((bounds["ymax"] - ymin_img) / img_h_um * h_level) + 1)
+    if spec.registration_affine is not None:
+        # General case (handles rotation): map the µm bounds' four corners into
+        # full-resolution pixel space via the inverse affine, then take the
+        # axis-aligned bounding box — the same "bounding box of a rotated
+        # region" approach used to physically rotate the loaded crop afterward.
+        Minv = np.linalg.inv(spec.registration_affine)
+        corners_um = np.array(
+            [
+                [bounds["xmin"], bounds["ymin"]], [bounds["xmax"], bounds["ymin"]],
+                [bounds["xmin"], bounds["ymax"]], [bounds["xmax"], bounds["ymax"]],
+            ],
+            dtype=np.float64,
+        )
+        corners_px_full = _transform_coords(corners_um, Minv)
+        col_min = max(0, int(corners_px_full[:, 0].min() / xscale))
+        col_max = min(w_level, int(corners_px_full[:, 0].max() / xscale) + 1)
+        row_min = max(0, int(corners_px_full[:, 1].min() / yscale))
+        row_max = min(h_level, int(corners_px_full[:, 1].max() / yscale) + 1)
+    else:
+        col_min = max(0, int((bounds["xmin"] - xmin_img) / img_w_um * w_level))
+        col_max = min(w_level, int((bounds["xmax"] - xmin_img) / img_w_um * w_level) + 1)
+        row_min = max(0, int((bounds["ymin"] - ymin_img) / img_h_um * h_level))
+        row_max = min(h_level, int((bounds["ymax"] - ymin_img) / img_h_um * h_level) + 1)
 
     return level_idx, (row_min, row_max, col_min, col_max)
+
+
+def _spec_yx_full_shape(spec: ImageSpec) -> tuple[int, int]:
+    """Return ``(h_full, w_full)`` by locating Y/X in ``spec.dimension_order``.
+
+    Do not assume the last two axes of ``full_shape`` are ``(Y, X)`` — true
+    for ``CYX``-style fluorescence/morphology images, but false for
+    ``YXC``/``YXS``-style RGB images (e.g. H&E, where channels are stored
+    last per :func:`astrolabe.io._he._extract_he_spec`).
+    """
+    axes = spec.dimension_order.upper()
+    y_idx = axes.index("Y") if "Y" in axes else len(spec.full_shape) - 2
+    x_idx = axes.index("X") if "X" in axes else len(spec.full_shape) - 1
+    return spec.full_shape[y_idx], spec.full_shape[x_idx]
 
 
 def _compute_extent(spec: ImageSpec, h_full: int, w_full: int) -> list[float]:
     """Map image corners to the reference µm frame.
 
-    If ``spec.registration_affine`` is set and axis-aligned (no rotation),
-    the affine's scale and translation are used to place the image correctly
-    in physical space.  Otherwise falls back to ``pixel_size_um`` scaling
-    from the origin.  Any transforms in ``spec.transform_chain`` are then
-    applied on top.
+    If ``spec.registration_affine`` is set, its full affine — including any
+    rotation — is applied to the four image corners and the resulting
+    axis-aligned bounding box is used as the extent (a pure scale+translation
+    affine reduces to the same result as the old axis-aligned-only special
+    case, so no separate branch is needed).  Otherwise falls back to
+    ``pixel_size_um`` scaling from the origin.  Any transforms in
+    ``spec.transform_chain`` are then applied on top.
     """
     if spec.registration_affine is not None:
         A = spec.registration_affine
-        off_diag = abs(A[0, 1]) + abs(A[1, 0])
-        if off_diag <= 1e-6:
-            sx, sy = float(A[0, 0]), float(A[1, 1])
-            tx, ty = float(A[0, 2]), float(A[1, 2])
-            xmin, xmax = tx, tx + w_full * sx
-            ymin, ymax = ty, ty + h_full * sy
-        else:
-            log.warning(
-                "registration_affine contains rotation (off-diagonal elements %.3g); "
-                "falling back to pixel_size_um extent.",
-                off_diag,
-            )
-            xmin, xmax = 0.0, w_full * spec.pixel_size_um
-            ymin, ymax = 0.0, h_full * spec.pixel_size_um
+        corners_px = np.array(
+            [[0.0, 0.0], [w_full, 0.0], [0.0, h_full], [w_full, h_full]],
+            dtype=np.float64,
+        )
+        corners_um = _transform_coords(corners_px, A)
+        xmin, xmax = float(corners_um[:, 0].min()), float(corners_um[:, 0].max())
+        ymin, ymax = float(corners_um[:, 1].min()), float(corners_um[:, 1].max())
     else:
         xmin, xmax = 0.0, w_full * spec.pixel_size_um
         ymin, ymax = 0.0, h_full * spec.pixel_size_um
@@ -2164,8 +2294,108 @@ def _apply_image_transform(
     return img, extent
 
 
-def _draw_annotation_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
-    """Render polygon annotation overlays onto *ax*."""
+def _apply_registration_rotation(
+    raw: np.ndarray,
+    spec: ImageSpec,
+    level_idx: int,
+    crop_pixels: tuple[int, int, int, int] | None,
+) -> tuple[np.ndarray, list[float] | None]:
+    """Physically rotate/flip *raw* per a rotated ``spec.registration_affine``.
+
+    Unlike a pure scale+translation registration (already handled correctly
+    by ``extent=`` alone), a rotated registration means the loaded pixel
+    array's own row/col axes are not aligned with the µm x/y axes — it must
+    be resampled, same as ``pp.rotate``/``pp.flip``'s ``transform_chain``
+    handling in :func:`_apply_image_transform`.  Returns ``(raw, None)``
+    unchanged when the registration has no meaningful rotation.
+
+    *crop_pixels* (if given) is the same ``(row_min, row_max, col_min, col_max)``
+    region passed to :func:`_load_tiff_level` — used to recompute the true µm
+    extent of exactly what was loaded, since a rotated crop's pixel-space
+    bounding box loaded here is larger than the originally requested µm
+    viewport (the classic "bounding box of a rotated region" inflation).
+    """
+    A = spec.registration_affine
+    if A is None:
+        return raw, None
+
+    L = A[:2, :2]
+    off_diag = abs(L[0, 1]) + abs(L[1, 0])
+    if off_diag <= 1e-6:
+        return raw, None
+
+    import scipy.ndimage
+
+    yscale, xscale = spec.level_scales[level_idx]
+    # row_min/row_max/col_min/col_max must be in *level*-space pixel units in
+    # both branches, since they're converted to full-resolution units via the
+    # `* yscale` / `* xscale` multiplication below. _spec_yx_full_shape already
+    # returns full-resolution units, so the no-crop branch must first convert
+    # down to level-space (previously it multiplied full-res h_full/w_full by
+    # yscale/xscale directly, double-applying the level scale and producing a
+    # wildly inflated extent whenever the whole image was rendered without a
+    # prior pp.crop()).
+    if crop_pixels is not None:
+        row_min, row_max, col_min, col_max = crop_pixels
+    else:
+        h_full, w_full = _spec_yx_full_shape(spec)
+        row_min, row_max = 0, int(round(h_full / yscale))
+        col_min, col_max = 0, int(round(w_full / xscale))
+
+    corners_px_full = np.array(
+        [
+            [col_min * xscale, row_min * yscale], [col_max * xscale, row_min * yscale],
+            [col_min * xscale, row_max * yscale], [col_max * xscale, row_max * yscale],
+        ],
+        dtype=np.float64,
+    )
+    corners_um = _transform_coords(corners_px_full, A)
+    extent = [
+        float(corners_um[:, 0].min()), float(corners_um[:, 0].max()),
+        float(corners_um[:, 1].min()), float(corners_um[:, 1].max()),
+    ]
+
+    det = float(np.linalg.det(L))
+    angle_deg = float(np.degrees(np.arctan2(L[1, 0], L[0, 0])))
+
+    # raw is always (C, Y, X) per _load_tiff_level.
+    if det < 0:
+        raw = np.flip(raw, axis=2)
+
+    if abs(angle_deg) > 0.1:
+        # scipy.ndimage.rotate's positive-angle direction rotates axis 1 (col)
+        # towards axis 0 (row) in the array's own row-down indexing sense.
+        # This code displays the rotated array via imshow(..., origin='lower'),
+        # which is row-UP (row 0 at the bottom) -- the opposite sense. That
+        # sense mismatch flips the effective rotation direction, so the angle
+        # must be negated here to match the affine's real-world rotation
+        # (verified empirically: without the negation, a pixel that should
+        # land at one corner of the viewport instead lands at the diagonally
+        # opposite corner -- a full 180° point-reflection, since rotating by
+        # -angle instead of +angle differs by exactly 180° for angles near
+        # +-90°, as is the case for this dataset's ~90° H&E registration).
+        rotated_channels = [
+            scipy.ndimage.rotate(raw[ci], -angle_deg, reshape=True, order=1, prefilter=False)
+            for ci in range(raw.shape[0])
+        ]
+        raw = np.stack(rotated_channels, axis=0)
+
+    return raw, extent
+
+
+def _draw_annotation_layer(
+    ax: matplotlib.axes.Axes,
+    lay: Layer,
+    legend_entries: list | None = None,
+) -> None:
+    """Render polygon annotation overlays onto *ax*.
+
+    Two modes: a single literal color for every shape (default, and the
+    fallback when *lay.annotation_values* is unset), or per-shape
+    categorical/continuous coloring (mirrors ``_draw_boundary_layer``'s
+    per-polygon coloring) when :func:`annotation` resolved *color* against a
+    GeoDataFrame column.
+    """
     from matplotlib.collections import PatchCollection
     from matplotlib.patches import Polygon as MplPolygon
 
@@ -2173,21 +2403,64 @@ def _draw_annotation_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
     if not shapes:
         return
 
+    values = lay.annotation_values
+    if values is None:
+        patches = [MplPolygon(s, closed=True) for s in shapes]
+        fc = (
+            mcolors.to_rgba(lay.annotation_fill, lay.fill_alpha)
+            if lay.annotation_fill is not None
+            else "none"
+        )
+        col = PatchCollection(
+            patches,
+            facecolor=fc,
+            edgecolor=lay.annotation_color,
+            linewidth=lay.linewidth,
+            alpha=lay.alpha,
+            zorder=4,
+        )
+        ax.add_collection(col)
+        ax.autoscale_view()
+        return
+
     patches = [MplPolygon(s, closed=True) for s in shapes]
-    fc = (
-        mcolors.to_rgba(lay.annotation_fill, lay.fill_alpha)
-        if lay.annotation_fill is not None
-        else "none"
-    )
-    col = PatchCollection(
-        patches,
-        facecolor=fc,
-        edgecolor=lay.annotation_color,
-        linewidth=lay.linewidth,
-        alpha=lay.alpha,
-        zorder=4,
-    )
-    ax.add_collection(col)
+    is_categorical = not np.issubdtype(values.dtype, np.number)
+
+    if is_categorical:
+        resolved_na = lay.resolved_na_color
+        unique_cats = sorted(set(values))
+        cat_colors = _build_cat_colors(unique_cats, lay.palette, resolved_na)
+        base_c = [mcolors.to_rgb(cat_colors.get(str(v), resolved_na)) for v in values]
+        edge_c = [(*rgb, lay.alpha) for rgb in base_c]
+        face_c = [(*rgb, lay.fill_alpha) for rgb in base_c]
+        col = PatchCollection(
+            patches, facecolor=face_c, edgecolor=edge_c, linewidth=lay.linewidth, zorder=4,
+        )
+        ax.add_collection(col)
+        if legend_entries is not None:
+            handles = _legend_handles(unique_cats, [cat_colors.get(str(c), resolved_na) for c in unique_cats])
+            legend_entries.extend(zip(handles, (str(c) for c in unique_cats)))
+    else:
+        vals = values.astype(np.float64)
+        vmin = lay.vmin if lay.vmin is not None else float(np.nanmin(vals))
+        vmax = lay.vmax if lay.vmax is not None else float(np.nanmax(vals))
+        norm = (
+            mcolors.TwoSlopeNorm(lay.vcenter, vmin=vmin, vmax=vmax)
+            if lay.vcenter is not None
+            else mcolors.Normalize(vmin=vmin, vmax=vmax)
+        )
+        cmap_fn = plt.get_cmap(lay.cmap or _DEFAULT_CONTINUOUS_CMAP)
+        mapped = [mcolors.to_rgba(cmap_fn(norm(v))) for v in vals]
+        edge_c = [(*c[:3], lay.alpha) for c in mapped]
+        face_c = [(*c[:3], lay.fill_alpha) for c in mapped]
+        col = PatchCollection(
+            patches, facecolor=face_c, edgecolor=edge_c, linewidth=lay.linewidth, zorder=4,
+        )
+        ax.add_collection(col)
+        sm = plt.cm.ScalarMappable(cmap=cmap_fn, norm=norm)
+        sm.set_array([])
+        _register_colorbar(ax, plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04, label=lay.color))
+
     ax.autoscale_view()
 
 
@@ -2203,7 +2476,7 @@ def _draw_image_layer(
     spec: ImageSpec = lib_uns["images"][lay.image_key]
 
     # Full-resolution shape for physical extent (from metadata, not from loaded array).
-    h_full, w_full = spec.full_shape[-2], spec.full_shape[-1]
+    h_full, w_full = _spec_yx_full_shape(spec)
     extent = _compute_extent(spec, h_full, w_full)
 
     # Crop-aware level selection: if spatial_bounds are set (after ab.pp.crop), pick the
@@ -2223,6 +2496,13 @@ def _draw_image_layer(
     )
 
     raw, ch_ax = _load_tiff_level(spec.path, spec.dimension_order, level_idx, crop=crop_pixels)
+
+    # Physically rotate/flip pixels for a rotated registration_affine (e.g. an
+    # H&E scan registered at an angle relative to the Xenium frame). No-op when
+    # the registration is axis-aligned or absent.
+    raw, rotated_extent = _apply_registration_rotation(raw, spec, level_idx, crop_pixels)
+    if rotated_extent is not None:
+        extent = rotated_extent
 
     # Apply per-channel image filters (filter_chain set by ab.pp.add_image_filter).
     if spec.filter_chain:
@@ -2250,11 +2530,20 @@ def _draw_image_layer(
         )
         return np.clip(arr2d.astype(np.float32) / dtype_max, 0.0, 1.0) ** lay.gamma
 
+    is_brightfield_rgb = spec.is_brightfield and n_ch == 3
+
     if lay.channel is None:
         imgs = [_prep(ch) for ch in ch_slices]
         if n_ch == 1:
             img_display: np.ndarray = imgs[0]
             cmap: str | None = lay.image_cmap
+        elif is_brightfield_rgb:
+            # Brightfield RGB: channels ARE literal red/green/blue (or, when
+            # separate_stains=True, the raw RGB planes underlying the
+            # deconvolved stain labels) -- composite directly, no per-channel
+            # pseudo-coloring or legend (that treatment is for IF panels).
+            img_display = np.stack(imgs, axis=-1)
+            cmap = None
         else:
             h_d, w_d = imgs[0].shape
             rgb = np.zeros((h_d, w_d, 3), dtype=np.float32)
@@ -2266,7 +2555,18 @@ def _draw_image_layer(
         ch_idx = _resolve_channel_index(lay.channel, lay.adata)
         if ch_idx >= n_ch:
             raise IndexError(f"channel={ch_idx} is out of range; image has {n_ch} channel(s)")
-        img_display = _prep(ch_slices[ch_idx])
+        # A *named* channel (not a raw int index) was requested on an H&E
+        # image loaded with separate_stains=True -- its channel_names/var_names
+        # ARE stain names (hematoxylin/eosin/residual) in that state, so apply
+        # real per-pixel OD deconvolution and show that stain's concentration
+        # map, rather than the raw (mislabeled) RGB plane at this index. An
+        # explicit int index always means "raw channel N", bypassing this.
+        if is_brightfield_rgb and spec.stain_matrix is not None and isinstance(lay.channel, str):
+            rgb_chw = np.stack(ch_slices, axis=0).astype(np.float64)
+            stains = _od_deconvolve(rgb_chw, spec.stain_matrix)  # (H, W, 3)
+            img_display = _normalize_image_channel(stains[..., ch_idx], lay.vmin, lay.vmax, lay.gamma)
+        else:
+            img_display = _prep(ch_slices[ch_idx])
         cmap = lay.image_cmap
 
     ax.imshow(
@@ -2280,9 +2580,10 @@ def _draw_image_layer(
 
     _draw_scale_bar(ax, extent, lay.scale_bar)
 
-    # Channel legend for multi-channel composite (not shown for single-channel or
-    # when a specific channel is selected, since the colormap title is sufficient).
-    if lay.channel is None and n_ch > 1:
+    # Channel legend for multi-channel composite (not shown for single-channel,
+    # when a specific channel is selected, or for a brightfield RGB composite,
+    # which is one photographic image rather than distinct pseudo-colored channels).
+    if lay.channel is None and n_ch > 1 and not is_brightfield_rgb:
         if len(lay.adata.var_names) == n_ch:
             ch_names = list(lay.adata.var_names)
         elif spec.channel_names is not None and len(spec.channel_names) == n_ch:
@@ -2696,6 +2997,30 @@ def _resolve_color_values(
     return _resolve_field(adata, col_name, axis="obs")
 
 
+def _resolve_gdf_field(gdf: Any, col_name: str) -> tuple[np.ndarray, bool]:
+    """Return ``(values_array, is_categorical)`` for a GeoDataFrame column.
+
+    Mirrors :func:`astrolabe._utils._resolve_field`'s categorical-inference
+    rule (``object``/``.cat`` dtype → categorical, else numeric), but scoped
+    to plain ``gdf.columns`` lookup instead of AnnData's var_names/obs search
+    — a GeoDataFrame has no gene-expression axis to check first.
+
+    Raises
+    ------
+    KeyError
+        If *col_name* is not a column of *gdf* (or is the geometry column).
+    """
+    if col_name not in gdf.columns or col_name == gdf.geometry.name:
+        raise KeyError(
+            f"'{col_name}' not found in GeoDataFrame columns. "
+            f"Available columns: {[c for c in gdf.columns if c != gdf.geometry.name]}"
+        )
+    col = gdf[col_name]
+    if hasattr(col, "cat") or col.dtype == object:
+        return col.astype(str).to_numpy(), True
+    return col.to_numpy(dtype=np.float64), False
+
+
 def _plot_categorical(
     ax: matplotlib.axes.Axes,
     coords: np.ndarray,
@@ -2713,19 +3038,26 @@ def _plot_categorical(
     cat_colors = _build_cat_colors(unique_cats, palette, resolved_na)
     n_cells = len(coords)
 
-    for cat in unique_cats:
-        mask = categories == cat
-        color = cat_colors.get(str(cat), resolved_na)
-        ax.scatter(
-            coords[mask, 0],
-            coords[mask, 1],
-            c=[color] * int(mask.sum()),
-            s=size,
-            alpha=alpha,
-            label=str(cat),
-            rasterized=n_cells > 100_000,
-            **scatter_kwargs,
-        )
+    # Draw all categories in one interleaved (shuffled) scatter call rather
+    # than one ax.scatter() per category. Separate per-category calls stack
+    # in `unique_cats` (alphabetical) draw order, so at every point of visual
+    # overlap the alphabetically-last category always wins regardless of its
+    # actual abundance -- on a dense whole-tissue scatter this can make a
+    # numerically substantial category (e.g. ~28% of cells) look almost
+    # entirely absent just because it sorts earlier than a category drawn
+    # over it. A fixed seed keeps the plot reproducible across re-renders.
+    color_lookup = {str(cat): cat_colors.get(str(cat), resolved_na) for cat in unique_cats}
+    point_colors = [color_lookup[str(cat)] for cat in categories]
+    order = np.random.default_rng(0).permutation(n_cells)
+    ax.scatter(
+        coords[order, 0],
+        coords[order, 1],
+        c=[point_colors[i] for i in order],
+        s=size,
+        alpha=alpha,
+        rasterized=n_cells > 100_000,
+        **scatter_kwargs,
+    )
 
     if legend_entries is not None:
         handles = _legend_handles(unique_cats, [cat_colors.get(str(c), resolved_na) for c in unique_cats])

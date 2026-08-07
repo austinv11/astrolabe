@@ -5,6 +5,7 @@ Summary — rich human-readable overview of a MuData object.
 from __future__ import annotations
 
 import html
+import os
 from typing import TYPE_CHECKING
 
 import anndata as ad
@@ -97,7 +98,9 @@ def _classify_obs_col(col: str) -> str:
         or (col.startswith(("n_", "pct_")) and col.endswith(("_probes", "_codewords")))
     ):
         return "QC"
-    if col.startswith(("leiden", "louvain", "banksy_sweep_")):
+    # Substring (not prefix) match: tl.cluster's key_added is often prefixed,
+    # e.g. 'spatial_leiden', 'cospatial_leiden' (see tl.blend_neighbors workflow).
+    if "leiden" in cl or "louvain" in cl or col.startswith("banksy_sweep_"):
         return "Clustering"
     if col.endswith(("_annotation", "_celltype")):
         return "Annotation"
@@ -127,12 +130,48 @@ def _classify_result_key(key: str) -> str:
     return "Other"
 
 
+def _neighbor_graph_keys(adata: ad.AnnData) -> list[str]:
+    """Every neighbor-graph key present in ``uns`` — scanpy's own ``sc.pp.neighbors``
+    (``uns['neighbors']``) as well as any astrolabe graph (``tl.spatial_neighbors``,
+    ``tl.transcriptional_neighbors``, ``tl.blend_neighbors``) under its own
+    ``key_added``. All of these write a ``uns[key]`` dict with ``connectivities_key``
+    / ``distances_key`` entries (the shared scanpy-graph convention), so that shape
+    is what's detected rather than a fixed set of key names.
+    """
+    return sorted(
+        k for k, v in adata.uns.items()
+        if isinstance(v, dict) and "connectivities_key" in v and "distances_key" in v
+    )
+
+
+def _has_neighbors_graph(adata: ad.AnnData, graph_keys: list[str]) -> bool:
+    if graph_keys:
+        return True
+    # Fallback for a graph whose uns[key] entry is missing/malformed but whose
+    # obsp connectivities were still written.
+    return any(k.endswith("_connectivities") for k in adata.obsp)
+
+
 def _fmt_int(n: int) -> str:
     return f"{n:,}"
 
 
 def _h(text: str) -> str:
     return html.escape(str(text))
+
+
+def _relpath(path: str | None) -> str | None:
+    """Best-effort display path relative to the current working directory.
+
+    Falls back to the original (absolute) path when no relative path exists
+    (e.g. a different drive on Windows), since that's still resolvable.
+    """
+    if not path:
+        return path
+    try:
+        return os.path.relpath(path)
+    except ValueError:
+        return path
 
 
 # ── Data collection ───────────────────────────────────────────────────────────
@@ -187,7 +226,7 @@ def _collect(data: ad.AnnData | md.MuData) -> dict:
                         "n_channels": n_ch,
                     }
             spatial_info[lib_id] = {
-                "source_path": lib_meta.get("source_path"),
+                "source_path": _relpath(lib_meta.get("source_path")),
                 "coordinate_unit": lib_meta.get("coordinate_unit", "µm"),
                 "images": images,
             }
@@ -248,12 +287,13 @@ def _collect(data: ad.AnnData | md.MuData) -> dict:
 
     # ── segmentation / graph state ────────────────────────────────────────────
     info["segmentation_keys"] = [k for k in ("cell_boundaries", "nucleus_boundaries") if k in adata.obsm]
-    info["has_spatial_graph"] = (
-        "spatial_neighbors" in uns or "spatial_neighbors_connectivities" in adata.obsp
-    )
+    graph_keys = _neighbor_graph_keys(adata)
+    info["neighbor_graph_keys"] = graph_keys
+    info["has_neighbors_graph"] = _has_neighbors_graph(adata, graph_keys)
 
     # ── uns results (auto-discovered: everything not in system blocklist) ─────
-    present_results = sorted(k for k in uns if k not in _UNS_SYSTEM_KEYS)
+    excluded_uns_keys = _UNS_SYSTEM_KEYS | set(graph_keys)
+    present_results = sorted(k for k in uns if k not in excluded_uns_keys)
     info["uns_results"] = present_results
 
     results_by_category: dict[str, list[str]] = {}
@@ -269,7 +309,7 @@ def _collect(data: ad.AnnData | md.MuData) -> dict:
         ("log1p",      "log1p_total_counts" in adata.obs.columns),
         ("HVGs",       "highly_variable" in adata.var.columns),
         ("PCA",        "X_pca" in adata.obsm),
-        ("Neighbors",  "neighbors" in uns),
+        ("Neighbors",  info["has_neighbors_graph"]),
         ("UMAP",       "X_umap" in adata.obsm),
         ("Clustered",  bool(obs_groups.get("Clustering"))),
         ("SVGs",       "sv_spatially_variable" in adata.var.columns),
@@ -338,8 +378,8 @@ def _build_repr(info: dict) -> str:
                 lines.append(f"  {grp}: {', '.join(cols)}")
 
     seg_keys = info.get("segmentation_keys", [])
-    graph = info.get("has_spatial_graph", False)
-    seg_parts = list(seg_keys) + (["spatial_graph"] if graph else [])
+    graph_keys = info.get("neighbor_graph_keys", [])
+    seg_parts = list(seg_keys) + list(graph_keys)
     if seg_parts:
         lines.append("Graph/seg: " + ", ".join(seg_parts))
 
@@ -519,13 +559,13 @@ def _build_html(info: dict) -> str:
 
     # ── segmentation / graph state ────────────────────────────────────────────
     seg_keys = info.get("segmentation_keys", [])
-    graph = info.get("has_spatial_graph", False)
-    if seg_keys or graph:
+    graph_keys = info.get("neighbor_graph_keys", [])
+    if seg_keys or graph_keys:
         parts.append('<div class="ab-section"><div class="ab-section-title">Graph &amp; segmentation</div><div>')
         for k in seg_keys:
             parts.append(f'<span class="ab-pill ab-pill-green">{_h(k)}</span>')
-        if graph:
-            parts.append('<span class="ab-pill ab-pill-green">spatial_graph</span>')
+        for k in graph_keys:
+            parts.append(f'<span class="ab-pill ab-pill-green">{_h(k)}</span>')
         parts.append("</div></div>")
 
     # ── stored results (categorised) ─────────────────────────────────────────

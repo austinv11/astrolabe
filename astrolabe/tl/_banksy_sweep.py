@@ -8,11 +8,12 @@ labels in obs and a summary DataFrame in uns.
 from __future__ import annotations
 
 import logging
+import threading
 
 import anndata as ad
-import numpy as np
 import pandas as pd
 import scanpy as sc
+from joblib import Parallel, delayed
 
 from astrolabe._utils import from_kwarg, with_adata
 
@@ -35,6 +36,7 @@ def banksy_sweep(
     spatial_key: str = "spatial",
     layer: str | None = None,
     random_state: int = 0,
+    n_jobs: int = 1,
     key_added: str = "banksy_sweep",
 ) -> pd.DataFrame:
     """Run the BANKSY pipeline across a grid of λ values and Leiden resolutions.
@@ -54,6 +56,13 @@ def banksy_sweep(
 
     Low λ (≈0.0–0.2) recovers transcriptomic cell types; high λ (≈0.5–0.8)
     recovers spatially-coherent tissue domains.
+
+    Each λ iteration writes its intermediate BANKSY matrix / PCA / neighbors
+    graph to keys namespaced by that λ (never the default ``obsm['X_pca']``
+    or default neighbors keys), so it never touches — and does not need to
+    save/restore — the caller's own PCA or neighbor graph. This also means
+    λ iterations don't race on shared state and are safe to run concurrently
+    via ``n_jobs``.
 
     Parameters
     ----------
@@ -83,6 +92,12 @@ def banksy_sweep(
         Expression layer for the BANKSY matrix.  ``None`` uses ``adata.X``.
     random_state
         Random seed for PCA and Leiden.
+    n_jobs
+        Parallel workers for the outer λ loop (joblib, thread-backed — no
+        extra memory copies since arrays are shared, not pickled). ``1``
+        (default) runs sequentially. ``-1`` uses all available cores. The
+        inner resolutions loop always runs sequentially within each λ
+        worker.
     key_added
         Prefix for obs columns and the uns summary key.
 
@@ -104,16 +119,22 @@ def banksy_sweep(
     >>> ab.pl.points(mdata, color="banksy_sweep_L0.8_R0.5")
     """
     from astrolabe.pp._banksy import banksy_matrix
+    from astrolabe.tl._embedding import pca as _pca
 
     n_pcs_eff = min(n_pcs, adata.n_obs - 1, adata.n_vars - 1)
-    records = []
 
-    # Save original X_pca so the sweep doesn't clobber the user's expression PCA.
-    _saved_pca = adata.obsm.get("X_pca")
+    # adata.obs is a single shared pandas DataFrame — concurrent column
+    # inserts from different threads can race on its internal block
+    # manager. adata.obsm/obsp/uns are per-key dict-likes where distinct-key
+    # writes are safe, so only the sc.tl.leiden call (the sole obs writer)
+    # needs to be serialized across λ workers.
+    obs_lock = threading.Lock()
 
-    for lam in lambda_params:
+    def _run_lambda(lam: float) -> list[dict]:
         lam_tag = f"{lam:.2f}".rstrip("0").rstrip(".")
         tmp_key = f"_banksy_tmp_{lam_tag}"
+        pca_key = f"{tmp_key}_pca"
+        neighbors_key_lam = f"{tmp_key}_neighbors"
 
         banksy_matrix(
             adata,
@@ -126,28 +147,35 @@ def banksy_sweep(
             key_added=tmp_key,
         )
 
-        from astrolabe.tl._embedding import pca as _pca
-
         n_pcs_run = min(n_pcs_eff, adata.obsm[tmp_key].shape[1] - 1)
-        _pca(adata, n_comps=n_pcs_run, use_rep=tmp_key, random_state=random_state)
-        sc.pp.neighbors(adata, n_neighbors=n_neighbors, use_rep="X_pca", random_state=random_state)
+        _pca(adata, n_comps=n_pcs_run, use_rep=tmp_key, random_state=random_state, key_added=pca_key)
+        sc.pp.neighbors(
+            adata,
+            n_neighbors=n_neighbors,
+            use_rep=pca_key,
+            random_state=random_state,
+            key_added=neighbors_key_lam,
+        )
 
+        lam_records = []
         for res in resolutions:
             res_tag = f"{res:.2f}".rstrip("0").rstrip(".")
             obs_key = f"{key_added}_L{lam_tag}_R{res_tag}"
 
-            sc.tl.leiden(
-                adata,
-                resolution=res,
-                key_added=obs_key,
-                random_state=random_state,
-                flavor="igraph",
-                directed=False,
-                n_iterations=2,
-            )
-            n_clusters = adata.obs[obs_key].nunique()
+            with obs_lock:
+                sc.tl.leiden(
+                    adata,
+                    resolution=res,
+                    key_added=obs_key,
+                    random_state=random_state,
+                    flavor="igraph",
+                    directed=False,
+                    n_iterations=2,
+                    neighbors_key=neighbors_key_lam,
+                )
+                n_clusters = adata.obs[obs_key].nunique()
 
-            records.append(
+            lam_records.append(
                 {
                     "lambda": lam,
                     "resolution": res,
@@ -160,16 +188,19 @@ def banksy_sweep(
                 lam, res, n_clusters, obs_key,
             )
 
-        # clean up temporary obsm key
+        # clean up temporary per-λ keys
         del adata.obsm[tmp_key]
+        del adata.obsm[pca_key]
+        adata.obsp.pop(f"{neighbors_key_lam}_distances", None)
+        adata.obsp.pop(f"{neighbors_key_lam}_connectivities", None)
+        adata.uns.pop(neighbors_key_lam, None)
 
-    # Restore original X_pca (sweep wrote BANKSY PCAs; the user's expression PCA is
-    # preserved so downstream clustering / UMAP is not silently changed).
-    if _saved_pca is not None:
-        adata.obsm["X_pca"] = _saved_pca
-        log.info("banksy_sweep: restored original obsm['X_pca']")
-    elif "X_pca" in adata.obsm:
-        del adata.obsm["X_pca"]
+        return lam_records
+
+    results = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_run_lambda)(lam) for lam in lambda_params
+    )
+    records = [row for lam_records in results for row in lam_records]
 
     df = pd.DataFrame(records)
     adata.uns[key_added] = df

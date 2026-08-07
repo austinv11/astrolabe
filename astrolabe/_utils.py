@@ -14,10 +14,11 @@ from typing import Callable, Protocol, TypeVar, runtime_checkable
 import anndata as ad
 import mudata as md
 import numpy as np
+import scipy.sparse as sp
 
 from astrolabe._constants import UNS_DEFAULT_MODALITY_KEY
 
-__all__: list[str] = ["with_adata", "from_kwarg", "ImageSpec", "ImageFilter"]
+__all__: list[str] = ["with_adata", "from_kwarg", "ImageSpec", "ImageFilter", "BinMatrixSpec"]
 
 _F = TypeVar("_F", bound=Callable)
 log = logging.getLogger(__name__)
@@ -90,8 +91,16 @@ class ImageSpec:
     Maps optical-density-space RGB → stain concentrations ``[H, E, residual]``
     via ``concentrations_hw3 = od_hw3 @ stain_matrix``.
     Set by :func:`~astrolabe.io.read_he`; ``None`` for all other image types.
-    Consumed by :func:`~astrolabe.pp.extract_if_intensities` which applies
-    pixel-level deconvolution before per-cell averaging; **not** applied at render time."""
+    Consumed by :func:`~astrolabe.pp.extract_if_intensities` (pixel-level
+    deconvolution before per-cell averaging) and, when a stain name is passed
+    as ``channel=`` to :func:`~astrolabe.pl.image`, at render time too."""
+
+    is_brightfield: bool = False
+    """``True`` for brightfield RGB images (set by :func:`~astrolabe.io.read_he`);
+    ``False`` for fluorescence/IF images.  Drives :func:`~astrolabe.pl.image`'s
+    rendering defaults: a brightfield image with ``channel=None`` composites
+    its 3 channels as literal RGB (no per-channel pseudo-coloring, no legend)
+    on a light background, instead of the multi-channel IF treatment."""
 
     @property
     def n_levels(self) -> int:
@@ -145,6 +154,47 @@ class ImageSpec:
             tif.close()
 
 
+@dataclass
+class BinMatrixSpec:
+    """Metadata descriptor for a lazy, disk-resident sparse bin × gene count matrix.
+
+    Modeled directly on :class:`ImageSpec`: stores only the file path and
+    eagerly-extracted structural metadata (shape, bin size). The actual count
+    data is never held in memory by this descriptor — see
+    :func:`~astrolabe.pp.load_bin_counts` for on-demand partial or full reads
+    from :attr:`path`, and the module docstring of
+    :mod:`astrolabe.io._visium_hd` for the overall lazy-bin-matrix design.
+
+    Attributes
+    ----------
+    path
+        Absolute path to the 10x feature-barcode HDF5 matrix
+        (``filtered_feature_bc_matrix.h5`` or ``raw_feature_bc_matrix.h5``)
+        that this descriptor refers to.
+    bin_size_um
+        Physical size of one square bin in microns (``2.0`` for the native
+        VisiumHD resolution; see :func:`~astrolabe.tl.rebin_visium_hd` for
+        computed coarser resolutions).
+    n_obs
+        Number of bins (rows of the logical bin × gene matrix).
+    n_vars
+        Number of genes/features (columns of the logical bin × gene matrix).
+    """
+
+    path: str
+    bin_size_um: float
+    n_obs: int
+    n_vars: int
+    transform_chain: list = field(default_factory=list)
+    """Sequence of 3×3 float64 µm-space affine matrices appended by
+    :func:`~astrolabe.pp.rotate` / :func:`~astrolabe.pp.flip` — mirrors
+    :attr:`ImageSpec.transform_chain`. Bin centroids (``obsm['spatial']``) are
+    transformed eagerly like any other coordinate array; this chain exists so
+    a *lazily loaded* bin submatrix's coordinates (fetched later via
+    :func:`~astrolabe.pp.load_bin_counts`) can still be reconciled with any
+    transform applied after the bin modality was read."""
+
+
 def _resolve_field(
     adata: ad.AnnData,
     key: str,
@@ -181,8 +231,6 @@ def _resolve_field(
     ValueError
         If *axis* is invalid, or *layer* is given with ``axis="var"``.
     """
-    import scipy.sparse as sp
-
     if axis not in ("obs", "var"):
         raise ValueError(f"axis must be 'obs' or 'var', got {axis!r}")
 
@@ -269,6 +317,88 @@ def _transform_coords(coords: np.ndarray, M: np.ndarray) -> np.ndarray:
     # when the input was integer pixel coordinates.
     out_dtype = coords.dtype if np.issubdtype(coords.dtype, np.floating) else np.float32
     return (M @ h.T).T[:, :2].astype(out_dtype)
+
+
+def _aggregate_sparse_by_group(X, group_ids: np.ndarray, n_groups: int):
+    """Sum sparse matrix rows by group via an indicator-matrix matmul.
+
+    Shared by :func:`~astrolabe.tl.rebin_visium_hd` (grouping 2µm VisiumHD
+    bins into coarser bins) and :func:`~astrolabe.seg.assign_bins` (grouping
+    bins into segmented cells) — both need the identical "sum these rows,
+    grouped by an integer label" operation on a potentially large sparse
+    matrix, which a dense groupby would defeat the purpose of staying sparse.
+
+    Parameters
+    ----------
+    X
+        ``(n_rows, n_cols)`` sparse matrix (any scipy.sparse format).
+    group_ids
+        ``(n_rows,)`` integer array with values in ``[0, n_groups)``.
+    n_groups
+        Number of output groups/rows.
+
+    Returns
+    -------
+    scipy.sparse.csr_matrix
+        ``(n_groups, n_cols)`` — row *i* is the sum of all input rows with
+        ``group_ids == i``.
+    """
+    n_rows = X.shape[0]
+    group_ids = np.asarray(group_ids, dtype=np.int64)
+    indicator = sp.coo_matrix(
+        (np.ones(n_rows, dtype=np.float64), (group_ids, np.arange(n_rows))),
+        shape=(n_groups, n_rows),
+    ).tocsr()
+    return (indicator @ X).tocsr()
+
+
+def _od_deconvolve(rgb: np.ndarray, stain_matrix: np.ndarray) -> np.ndarray:
+    """Apply H&E optical-density stain deconvolution: ``(3, ...)`` RGB → ``(..., 3)`` concentrations.
+
+    Shared by :func:`astrolabe.pp._if._deconvolve_cell_pixels` (per-cell mean,
+    ``rgb`` shaped ``(3, n_pixels)``) and :mod:`astrolabe.pl._spatial`'s
+    render-time single-stain view (``rgb`` shaped ``(3, H, W)``) — both just
+    reduce/index the trailing stain axis of this function's output
+    differently, so the OD-space math lives in exactly one place.
+
+    Parameters
+    ----------
+    rgb
+        ``(3, ...)`` float array of RGB values, channel-first. Values may be
+        in 0–255 (uint8 origin) or 0–1 range.
+    stain_matrix
+        ``(3, 3)`` deconvolution matrix: ``conc = od @ M`` where *od* is
+        optical-density-space RGB. Convention matches
+        :attr:`~astrolabe._utils.ImageSpec.stain_matrix`.
+
+    Returns
+    -------
+    np.ndarray
+        ``(..., 3)`` float64 stain concentrations ``[H, E, residual]``,
+        clipped to non-negative (negative optical density has no physical
+        meaning as a stain concentration).
+    """
+    eps = 1e-6
+    rgb = rgb.astype(np.float64)
+    if rgb.max() > 1.0:
+        rgb = rgb / 255.0
+    rgb = np.clip(rgb, eps, 1.0)
+
+    od = -np.log10(np.moveaxis(rgb, 0, -1))  # (..., 3)
+    stains = od @ stain_matrix  # (..., 3)
+    return np.clip(stains, 0.0, None)
+
+
+def _spawn_rngs(seed: int | None, n: int) -> list[np.random.Generator]:
+    """Independent, reproducible RNG substreams for parallel permutation loops.
+
+    A single shared ``Generator`` mutated sequentially (``rng.shuffle(...)``
+    called once per iteration) is not safe to hand to concurrent workers.
+    Spawning ``n`` independent child streams from one ``SeedSequence`` keeps
+    the whole loop reproducible for a given *seed* regardless of worker count
+    or execution order.
+    """
+    return [np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(n)]
 
 
 class _KeyFromParam:

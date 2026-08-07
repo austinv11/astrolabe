@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 from skimage.draw import polygon as sk_polygon
 
-from astrolabe._utils import ImageSpec, _transform_coords
+from astrolabe._utils import ImageSpec, _od_deconvolve, _transform_coords
 
 __all__ = ["extract_if_intensities"]
 
@@ -434,15 +434,5 @@ def _deconvolve_cell_pixels(
     np.ndarray
         ``(3,)`` float32 mean stain concentrations [H, E, residual].
     """
-    eps = 1e-6
-    # Normalize to [0, 1] — handles both uint8-derived (0-255) and float (0-1) inputs
-    rgb = rgb_pixels.astype(np.float64)
-    if rgb.max() > 1.0:
-        rgb = rgb / 255.0
-    rgb = np.clip(rgb, eps, 1.0)
-
-    # OD-space: (3, n_pixels) → transpose to (n_pixels, 3)
-    od = (-np.log10(rgb)).T  # (n_pixels, 3)
-    stains = od @ stain_matrix  # (n_pixels, 3)
-    stains = np.clip(stains, 0.0, None)
+    stains = _od_deconvolve(rgb_pixels, stain_matrix)  # (n_pixels, 3)
     return stains.mean(axis=0).astype(np.float32)  # (3,)

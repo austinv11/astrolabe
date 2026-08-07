@@ -30,12 +30,16 @@ highly_variable_genes
     Select highly variable genes for dimensionality reduction.
 extract_if_intensities
     Extract per-cell mean IF or H&E stain intensities from cell boundary polygons.
+load_bin_counts
+    Materialize (all or part of) a lazily-referenced Visium HD bin x gene matrix.
 crop
     Crop the spatial extent of an AnnData to a bounding box.
 rotate
     Rotate spatial coordinates and image registration affines.
 flip
     Flip spatial coordinates and image registration affines.
+apply_affine
+    Apply one affine transform across every modality in a MuData at once.
 add_image_filter
     Append a pixel filter to an ImageSpec's filter_chain for lazy render-time application.
 estimate_stain_matrix
@@ -58,7 +62,8 @@ from astrolabe.pp._qc import (
 )
 from astrolabe.pp._normalize import normalize_total, log1p, normalize_by_area, highly_variable_genes
 from astrolabe.pp._if import extract_if_intensities
-from astrolabe.pp._transform import crop, rotate, flip, add_image_filter, estimate_stain_matrix
+from astrolabe.pp._visium_hd import load_bin_counts
+from astrolabe.pp._transform import crop, rotate, flip, apply_affine, add_image_filter, estimate_stain_matrix
 from astrolabe.pp._banksy import banksy_matrix
 from astrolabe.pp._harmony import harmony
 
@@ -75,9 +80,11 @@ __all__ = [
     "normalize_by_area",
     "highly_variable_genes",
     "extract_if_intensities",
+    "load_bin_counts",
     "crop",
     "rotate",
     "flip",
+    "apply_affine",
     "add_image_filter",
     "estimate_stain_matrix",
     "calculate_transcript_assignment_qc",

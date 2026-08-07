@@ -735,13 +735,19 @@ def ripley_plot(
             stats = entry.get("stats")
             l_vals = stats["L"].to_numpy(dtype=float) if hasattr(stats, "columns") else np.asarray(stats, dtype=float)
 
-        l_d = l_vals - bins[:len(l_vals)]
+        # entry's L_obs/L_hi/L_lo columns (`_ripley_l_kdtree`'s `_l()`) are
+        # already the detrended L(d) - d quantity plotted here (L_exp is a
+        # constant 0 for exactly this reason) -- do not subtract `bins`
+        # again, that produces L(d) - 2d and fabricates a runaway decline
+        # even under pure CSR (verified: a synthetic CSR-labeled dataset
+        # showed real L(d)-d ~ -56 at d=800 but plotted as ~ -856).
+        l_d = l_vals
         color = cmap_obj(i % n_colors)
         ax.plot(bins[:len(l_d)], l_d, label=ct, color=color)
         # Draw simulation envelope if available
         if hasattr(entry, "columns") and "L_hi" in entry.columns and "L_lo" in entry.columns:
-            l_hi = entry["L_hi"].to_numpy(dtype=float) - bins[:len(l_vals)]
-            l_lo = entry["L_lo"].to_numpy(dtype=float) - bins[:len(l_vals)]
+            l_hi = entry["L_hi"].to_numpy(dtype=float)
+            l_lo = entry["L_lo"].to_numpy(dtype=float)
             ax.fill_between(bins[:len(l_d)], l_lo, l_hi, alpha=0.15, color=color)
 
     ax.axhline(0, color=get_theme().muted, linestyle="--", linewidth=0.8)
@@ -2911,12 +2917,26 @@ def ligrec_plot(
     means_plot = means_sub.loc[top_idx]
     pval_plot = pval_sub.loc[top_idx]
 
+    # Rows are already restricted to significant LR pairs above; mirror that
+    # for columns too. With many cell types, ct_pairs is n_types² and most
+    # (sender, receiver) combinations carry no signal for the LR pairs being
+    # shown — rendering all of them anyway makes the figure balloon in width
+    # (e.g. 100 columns for 10 cell types) even when only a handful are ever
+    # colored in. Keep only columns significant for at least one shown row.
+    col_sig = (pval_plot < p_threshold).any(axis=0)
+    ct_pairs = [p for p, keep in zip(ct_pairs, col_sig) if keep]
+    means_plot = means_plot.loc[:, col_sig]
+    pval_plot = pval_plot.loc[:, col_sig]
+
     n_rows, n_cols = means_plot.shape
     col_labels = [f"{s}|{r}" for s, r in ct_pairs]
     row_labels = [f"{lig}:{rec}" for lig, rec in means_plot.index]
 
     if figsize is None:
-        figsize = (max(4.0, n_cols * 0.8 + 2.0), max(3.0, n_rows * 0.35 + 1.5))
+        # Cap width even when many columns survive the significance filter
+        # above (e.g. many cell types) rather than growing the figure
+        # unboundedly — per-column spacing shrinks instead past this point.
+        figsize = (min(24.0, max(4.0, n_cols * 0.8 + 2.0)), max(3.0, n_rows * 0.35 + 1.5))
 
     fig, ax = plt.subplots(figsize=figsize)
 

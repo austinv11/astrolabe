@@ -9,7 +9,12 @@ Canonical call
 The returned MuData object has a single ``'xenium'`` modality unless
 ``morphology_image=True`` is passed, in which case an
 :class:`~astrolabe._utils.ImageSpec` for ``morphology.ome.tif`` is attached
-under ``uns['spatial'][library_id]['images']['morphology']``.
+under ``uns['spatial'][library_id]['images']['morphology']``. Passing
+``he_image=True`` additionally attaches a paired H&E image as a separate
+``'he'`` modality (affine-registered into the Xenium micron frame when an
+alignment matrix is found or supplied via ``he_alignment``); see
+:func:`read_xenium`'s docstring for the full set of override options. Neither
+of these change ``uns['default_modality']``, which stays ``'xenium'``.
 
 Schema
 ------
@@ -42,6 +47,7 @@ from pathlib import Path
 
 import anndata as ad
 import awkward as ak
+import geopandas as gpd
 import mudata as md
 import numpy as np
 import pandas as pd
@@ -55,7 +61,12 @@ import copy
 from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
 from astrolabe.io._ome_tiff import _extract_image_spec
 
-__all__ = ["read_xenium", "read_xenium_transcripts", "extract_morphology_intensities"]
+__all__ = [
+    "read_xenium",
+    "read_xenium_transcripts",
+    "extract_morphology_intensities",
+    "align_xenium_annotations",
+]
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +108,11 @@ _CELLS_CANDIDATES = ["cells.parquet", "cells.csv.gz"]
 _BOUNDARIES_CANDIDATES = ["cell_boundaries.parquet", "cell_boundaries.csv.gz"]
 _NUCLEUS_BOUNDARIES_CANDIDATES = ["nucleus_boundaries.parquet", "nucleus_boundaries.csv.gz"]
 
+# Common (but not universal — Xenium export conventions vary) filenames for the
+# paired H&E image and its alignment matrix. Both are overridable per-call.
+_DEFAULT_HE_IMAGE_FILENAME = "he_image.ome.tif"
+_DEFAULT_HE_ALIGNMENT_FILENAME = "he_imagealignment.csv"
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -110,6 +126,8 @@ def read_xenium(
     load_boundaries: bool = True,
     load_transcripts: bool = True,
     morphology_image: bool = False,
+    he_image: bool | str | Path = False,
+    he_alignment: bool | str | Path | None = True,
     var_names: str = "gene_name",
     dtype: str = "float32",
 ) -> md.MuData:
@@ -135,14 +153,41 @@ def read_xenium(
         If ``True`` (default), stream ``transcripts.parquet`` via
         :func:`read_xenium_transcripts` (with its default filters: ``min_qv=20``,
         controls excluded) and store the result as a :class:`pyarrow.Table` in
-        ``mdata.uns['transcripts']``.  Set ``False`` to skip; the file can be
-        large (100 M–500 M rows) and loading may take tens of seconds.
+        ``mdata['xenium'].uns['transcripts']``.  Set ``False`` to skip; the
+        file can be large (100 M–500 M rows) and loading may take tens of seconds.
     morphology_image
         If ``True``, attach an :class:`~astrolabe._utils.ImageSpec` for
         ``morphology.ome.tif`` under
         ``uns['spatial'][library_id]['images']['morphology']``.  Metadata is
         extracted eagerly (file opened and closed immediately); no pixel data
         is read into memory.
+    he_image
+        Controls attaching a paired H&E image as a new ``'he'`` modality
+        (via :func:`~astrolabe.io.read_he`). Export conventions for the
+        auxiliary H&E file are not standardized across Xenium runs, so this
+        does not assume a single fixed filename:
+
+        - ``False`` (default): skip H&E entirely.
+        - ``True``: look for ``he_image.ome.tif`` in *path*; if not found,
+          log a warning and skip (same graceful behavior as *morphology_image*
+          when no morphology file is present).
+        - ``str`` / ``Path``: an explicit override — a bare filename
+          (resolved relative to *path*) or an absolute path. Required to
+          exist; raises ``FileNotFoundError`` if not, since this is an
+          explicit request.
+    he_alignment
+        Controls the affine matrix used to register the H&E image into the
+        Xenium micron frame (stored as ``ImageSpec.registration_affine``).
+        Only consulted when *he_image* resolves to a real file.
+
+        - ``True`` (default): look for ``he_imagealignment.csv`` in *path*
+          (a plain ``(3, 3)`` comma-delimited matrix); if not found, log a
+          warning and attach the H&E image **unregistered**
+          (``registration_affine=None``) rather than skipping it.
+        - ``False`` / ``None``: skip alignment lookup entirely and always
+          attach unregistered.
+        - ``str`` / ``Path``: an explicit override, resolved the same way as
+          *he_image*. Required to exist; raises ``FileNotFoundError`` if not.
     var_names
         Which column of the feature matrix to use as ``var_names``.  One of
         ``'gene_name'`` (default, human-readable) or ``'gene_id'``
@@ -155,9 +200,11 @@ def read_xenium(
     -------
     mudata.MuData
         MuData with a single ``'xenium'`` modality (plus an optional
-        ``'morphology'`` modality if ``morphology_image=True``).
-        When ``load_transcripts=True``, ``mdata.uns['transcripts']`` holds
-        the filtered transcript detections as a :class:`pyarrow.Table`.
+        ``'morphology'`` image attached to it if ``morphology_image=True``,
+        and/or a separate ``'he'`` modality if ``he_image`` resolves to a
+        file — ``uns['default_modality']`` remains ``'xenium'`` in both cases).
+        When ``load_transcripts=True``, ``mdata['xenium'].uns['transcripts']``
+        holds the filtered transcript detections as a :class:`pyarrow.Table`.
 
     Notes
     -----
@@ -233,7 +280,11 @@ def read_xenium(
     # 7. Wrap in MuData                                                   #
     # ------------------------------------------------------------------ #
     mdata = md.MuData({"xenium": adata})
-    mdata.uns["spatial"] = adata.uns["spatial"]
+    # Shallow-copy so later top-level mutations of mdata.uns['spatial'] (e.g.
+    # attach_modality() adding an 'he' library entry) don't alias into and
+    # leak onto adata.uns['spatial'] (mdata['xenium']'s own uns) — they are
+    # the same dict object if assigned directly.
+    mdata.uns["spatial"] = dict(adata.uns["spatial"])
     mdata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
     mdata.uns[UNS_DEFAULT_MODALITY_KEY] = "xenium"
 
@@ -243,6 +294,12 @@ def read_xenium(
         adata.n_vars,
         adata.var["is_control_probe"].sum(),
     )
+
+    # ------------------------------------------------------------------ #
+    # 7b. Paired H&E image (optional, affine-aligned)                     #
+    # ------------------------------------------------------------------ #
+    if he_image:
+        _attach_he_image(mdata, path, he_image, he_alignment, pixel_size_um=pixel_size_um)
 
     # ------------------------------------------------------------------ #
     # 8. Transcripts (optional)                                           #
@@ -267,7 +324,7 @@ def read_xenium_transcripts(
     genes: list[str] | None = None,
     min_qv: float | None = 20.0,
     z_range: tuple[float, float] | None = None,
-    include_controls: bool = True,
+    include_controls: bool = False,
     columns: list[str] | None = None,
     chunksize: int = 500_000,
 ) -> "md.MuData | None":
@@ -384,6 +441,101 @@ def read_xenium_transcripts(
     mdata_copy = copy.deepcopy(mdata)
     mdata_copy["xenium"].uns["transcripts"] = table
     return mdata_copy
+
+
+def align_xenium_annotations(
+    gdf: "gpd.GeoDataFrame",
+    mdata: md.MuData,
+    *,
+    he_key: str = "he",
+    image_key: str = "full",
+    library_id: str | None = None,
+) -> "gpd.GeoDataFrame":
+    """Register a Xenium Explorer GeoJSON annotation export into the Xenium micron frame.
+
+    Xenium Explorer's ROI/annotation GeoJSON export (the ``annotation.geojson``
+    bundled with the public Human Lung Cancer FFPE sample, and any file
+    exported the same way) stores coordinates as raw pixel indices into the
+    paired *auxiliary H&E image* — not the morphology/DAPI image. This reuses
+    the H&E modality's own ``registration_affine`` (the matrix parsed from
+    ``he_imagealignment.csv`` by :func:`read_xenium`/:func:`read_he`) to map
+    annotation vertices, which share the H&E image's raw pixel coordinate
+    system, into the shared Xenium micron frame.
+
+    Empirically verified against the public Human Lung Cancer FFPE sample: with
+    this transform, points sampled inside all 11 real annotation regions land
+    on real tissue signal in the morphology image (>99% average, checked
+    against a max-intensity projection across the morphology image's z-stack
+    since any single z-plane is sparse/out-of-focus in places) and every
+    region's footprint sits within the H&E image's own registered footprint.
+    A previous formula that treated annotation coordinates as morphology-image
+    pixels (rather than H&E-image pixels) was substantially wrong.
+
+    Requires ``read_xenium(..., he_image=True, he_alignment=True)`` (or an
+    equivalent manual :func:`read_he` call with a real ``affine=``) so a valid
+    ``registration_affine`` is available — annotation coordinates are only
+    interpretable relative to the H&E image's own pixel grid, so alignment is
+    impossible without it.
+
+    Parameters
+    ----------
+    gdf
+        GeoDataFrame as returned by :func:`read_annotations`, with raw
+        (unregistered) H&E pixel coordinates.
+    mdata
+        :class:`~mudata.MuData` with an aligned H&E modality attached (e.g.
+        via ``read_xenium(..., he_image=True)``).
+    he_key
+        Key of the H&E modality in *mdata*.
+    image_key
+        Key of the H&E image inside ``uns['spatial'][library_id]['images']``.
+    library_id
+        Library to read the H&E image from. ``None`` uses whichever library
+        is first in ``uns['spatial']``.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        Copy of *gdf* with geometry replaced by registered micron coordinates.
+
+    Examples
+    --------
+    >>> gdf = ab.io.read_annotations("run/annotation.geojson")
+    >>> gdf = ab.io.align_xenium_annotations(gdf, mdata)
+    >>> (ab.pl.points(mdata, color='total_counts') + ab.pl.annotation(gdf, color='name')).show()
+    """
+    import shapely
+    from astrolabe._utils import _transform_coords
+
+    he_adata = mdata[he_key]
+    spatial = he_adata.uns["spatial"]
+    lib = library_id or next(iter(spatial))
+    images = spatial[lib]["images"]
+    if image_key not in images:
+        raise KeyError(
+            f"align_xenium_annotations: no {image_key!r} image found in "
+            f"mdata[{he_key!r}].uns['spatial'][{lib!r}]['images']. "
+            "Call read_xenium(..., he_image=True) first."
+        )
+    spec = images[image_key]
+    if spec.registration_affine is None:
+        raise ValueError(
+            f"align_xenium_annotations: the H&E image (mdata[{he_key!r}]) has no "
+            "registration_affine (no he_imagealignment.csv was found/supplied). "
+            "Annotation coordinates are recorded in the H&E image's own pixel "
+            "space and cannot be placed in the Xenium micron frame without it."
+        )
+    M = spec.registration_affine
+
+    def _transform(coords: np.ndarray) -> np.ndarray:
+        return _transform_coords(coords.astype(np.float64), M)
+
+    out = gdf.copy()
+    geom_col = out.geometry.name
+    out[geom_col] = out.geometry.apply(lambda geom: shapely.transform(geom, _transform))
+    out = out.set_geometry(geom_col)
+    out.crs = None
+    return out
 
 
 def extract_morphology_intensities(
@@ -778,6 +930,107 @@ def _attach_morphology_image(
         spec.n_levels,
         spec.full_shape,
         spec.pixel_size_um,
+    )
+
+
+def _resolve_optional_file(
+    path: Path,
+    value: bool | str | Path | None,
+    default_filename: str,
+    label: str,
+) -> Path | None:
+    """Resolve a ``he_image``/``he_alignment``-style tri-state parameter to a path.
+
+    ``True`` tries *default_filename* under *path*, logging a warning and
+    returning ``None`` if it doesn't exist (soft, auto-discovery semantics).
+    ``False``/``None`` returns ``None`` (explicitly skip). A ``str``/``Path``
+    is an explicit override (bare filename resolved relative to *path*, or an
+    absolute path) that must exist — raises ``FileNotFoundError`` if not,
+    since the caller named it explicitly.
+    """
+    if value is False or value is None:
+        return None
+    if value is True:
+        candidate = path / default_filename
+        if not candidate.exists():
+            log.warning(
+                "%s: default file '%s' not found; skipping.", label, candidate
+            )
+            return None
+        return candidate
+
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = path / candidate
+    if not candidate.exists():
+        raise FileNotFoundError(f"{label}: specified file not found: {candidate}")
+    return candidate
+
+
+def _attach_he_image(
+    mdata: md.MuData,
+    path: Path,
+    he_image: bool | str | Path,
+    he_alignment: bool | str | Path | None,
+    *,
+    pixel_size_um: float,
+) -> None:
+    """Locate, optionally align, and attach a paired H&E image as ``mdata['he']``.
+
+    File locations are not assumed to follow a single fixed convention across
+    Xenium exports — *he_image*/*he_alignment* accept ``True`` (try the
+    common default filename, skipping gracefully if absent), an explicit
+    filename/path override (required to exist), or ``False``/``None`` to skip.
+    An alignment matrix is optional: when none is found or supplied, the H&E
+    image is attached unregistered (``registration_affine=None``) rather than
+    being skipped entirely.
+    """
+    img_path = _resolve_optional_file(path, he_image, _DEFAULT_HE_IMAGE_FILENAME, "he_image")
+    if img_path is None:
+        return
+
+    align_path = _resolve_optional_file(
+        path, he_alignment, _DEFAULT_HE_ALIGNMENT_FILENAME, "he_alignment"
+    )
+    affine: np.ndarray | None = None
+    if align_path is not None:
+        # 10x's imagealignment.csv is a (3, 3) matrix mapping the auxiliary
+        # (H&E) image's own raw pixel coordinates to the Xenium morphology
+        # image's raw pixel grid -- a pixel-index-to-pixel-index mapping, NOT
+        # a pixel->micron one. Empirically verified against the public Human
+        # Lung Cancer FFPE sample: the matrix's linear part has magnitude
+        # ~1.29, matching he_pixel_size_um / morph_pixel_size_um exactly (a
+        # pure pixel-grid unit conversion), and applying it directly (no
+        # inversion) to the H&E image's own corners plus all 11 real
+        # pathologist-annotation regions lands them on real tissue in the
+        # morphology image and within the H&E image's own footprint --
+        # whereas inverting it (the previous approach) does not. Converting
+        # the mapped morphology-pixel coordinates to microns needs the run's
+        # own pixel_size_um (morphology and H&E can have different physical
+        # pixel sizes; only the morphology/Xenium one defines the micron
+        # frame).
+        raw_affine = np.loadtxt(align_path, delimiter=",")
+        scale = np.array(
+            [[pixel_size_um, 0.0, 0.0], [0.0, pixel_size_um, 0.0], [0.0, 0.0, 1.0]]
+        )
+        affine = scale @ raw_affine
+    else:
+        log.info(
+            "No H&E alignment matrix found/specified for %s; "
+            "attaching H&E image unregistered.",
+            img_path,
+        )
+
+    from astrolabe.io._he import read_he
+    # library_id intentionally left at read_he's own default (file stem) so
+    # the H&E image gets its own uns['spatial'] entry rather than colliding
+    # with the Xenium modality's library_id.
+    read_he(img_path, affine=affine, mdata=mdata, mdata_key="he")
+
+    log.info(
+        "Attached H&E image from %s (%s)",
+        img_path,
+        "aligned" if affine is not None else "unregistered",
     )
 
 

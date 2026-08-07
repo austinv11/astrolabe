@@ -51,7 +51,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY
 from astrolabe._utils import ImageSpec
 
 __all__ = ["read_ome_tiff"]
@@ -205,10 +205,8 @@ def read_ome_tiff(
     # Optionally insert into MuData                                       #
     # ------------------------------------------------------------------ #
     if mdata is not None:
-        mdata.mod[mdata_key] = adata
-        mdata.uns.setdefault("spatial", {}).update(uns["spatial"])
-        # Only set default_modality if one wasn't already established (e.g. by read_xenium).
-        mdata.uns.setdefault(UNS_DEFAULT_MODALITY_KEY, mdata_key)
+        from astrolabe.io._io import attach_modality
+        attach_modality(mdata, adata, mdata_key)
 
     return adata
 
@@ -234,9 +232,14 @@ def _extract_image_spec(
         dim_order: str = series.axes
         level_shapes: list[tuple[int, ...]] = [tuple(lv.shape) for lv in series.levels]
 
-        fh, fw = level_shapes[0][-2], level_shapes[0][-1]
+        # Do not assume the last two axes are (Y, X): most OME-TIFFs use TCZYX
+        # (correct by coincidence), but channels-last layouts exist too.
+        axes_up = dim_order.upper()
+        y_idx = axes_up.index("Y") if "Y" in axes_up else len(level_shapes[0]) - 2
+        x_idx = axes_up.index("X") if "X" in axes_up else len(level_shapes[0]) - 1
+        fh, fw = level_shapes[0][y_idx], level_shapes[0][x_idx]
         level_scales: list[tuple[float, float]] = [
-            (fh / s[-2], fw / s[-1]) for s in level_shapes
+            (fh / s[y_idx], fw / s[x_idx]) for s in level_shapes
         ]
 
         ome_meta = _parse_ome_xml(tif)

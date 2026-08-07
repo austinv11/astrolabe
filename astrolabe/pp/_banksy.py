@@ -130,7 +130,7 @@ def banksy_matrix(
 
     References
     ----------
-    Singhal et al., *Nature Genetics* 2024.
+    Singhal et al., *Nature Genetics* 2024.  TODO: Full citation
     """
     conn_key = neighbors_key + "_connectivities"
     if conn_key not in adata.obsp:

@@ -9,14 +9,16 @@ O(n log n) in time and memory — no pointpats dependency.
 from __future__ import annotations
 
 import logging
+import threading
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from joblib import Parallel, delayed
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import from_kwarg, with_adata
+from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
 
 __all__ = [
     "moran",
@@ -55,6 +57,33 @@ def _build_weights(adata: ad.AnnData, neighbors_key: str):
     w = WSP(adata.obsp[conn_key]).to_W()
     w.transform = "r"
     return w
+
+
+def _thread_local_weights_getter(adata: ad.AnnData, neighbors_key: str):
+    """Return a zero-arg getter yielding a per-thread-exclusive libpysal W.
+
+    A single ``W`` instance must never be handed to more than one thread at
+    once: ``esda.Moran``/``esda.Geary`` reassign ``w.transform`` on *every*
+    construction, and libpysal's transform setter unconditionally invalidates
+    and rebuilds cached derived state (``w.sparse`` and friends) with no
+    locking. Concurrent constructions sharing one ``W`` race on that rebuild
+    and can hand back arrays with mismatched shapes. Building a fresh ``W`` costs
+    ~1-1.5s here, too slow to redo per gene, so this builds one independent
+    ``W`` per worker *thread* (lazily, on that thread's first call) via
+    ``threading.local`` — bounding the rebuild cost to `n_jobs`, not `n_genes`,
+    while guaranteeing no two genes running concurrently ever touch the same
+    ``W`` instance.
+    """
+    local = threading.local()
+
+    def _get() -> object:
+        w = getattr(local, "w", None)
+        if w is None:
+            w = _build_weights(adata, neighbors_key)
+            local.w = w
+        return w
+
+    return _get
 
 
 def _boundary_silhouette_graph(attr: np.ndarray, labels: np.ndarray, w) -> np.ndarray:
@@ -116,10 +145,18 @@ def _boundary_silhouette_graph(attr: np.ndarray, labels: np.ndarray, w) -> np.nd
     sil_df = pd.concat([a_vals, b_vals], axis=1)
     # Cells not on any cluster boundary (b is NaN) score 0 by convention.
     no_boundary = sil_df["b"].isna()
+    # Cells with no same-cluster spatial neighbor at all (a is NaN) are
+    # spatially isolated from their own label -- the esda.boundary_silhouette
+    # analogue is a singleton cluster, which it also scores 0. Filling a with
+    # 0.0 below and leaving these in would instead make them read as maximally
+    # *compact* (a=0), driving sil to +1 -- the opposite of what "isolated
+    # from its own cluster" should mean.
+    no_same_cluster_neighbor = sil_df["a"].isna()
     sil_df = sil_df.fillna(0.0)
     mx = sil_df[["a", "b"]].max(axis=1)
     sil = (sil_df["b"] - sil_df["a"]) / mx.where(mx > 0, other=1.0)
     sil[no_boundary] = 0.0
+    sil[no_same_cluster_neighbor] = 0.0
     scores[sil_df.index.to_numpy(dtype=np.intp)] = sil.to_numpy()
     return scores
 
@@ -181,7 +218,7 @@ def moran(
     *,
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
-    n_perms: int = 999,
+    n_perms: int = 1000,
     key_added: str = "moran",
 ) -> pd.DataFrame:
     """Global Moran's I for one or more expression or obs keys.
@@ -259,8 +296,9 @@ def moran_local(
     *,
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
-    n_perms: int = 999,
+    n_perms: int = 1000,
     p_adjust_method: str = "fdr_bh",
+    n_jobs: int = 1,
     key_added: str = "moran_local",
 ) -> pd.DataFrame:
     """Local Moran's I (LISA) for one or more expression or obs keys.
@@ -295,6 +333,10 @@ def moran_local(
     p_adjust_method
         Multiple-testing correction (e.g. ``'fdr_bh'``, ``'bonferroni'``).
         Applied independently per key across all cells.
+    n_jobs
+        Parallel workers for the conditional-randomisation permutations,
+        forwarded to ``esda.Moran_Local``. ``1`` (default) runs sequentially.
+        ``-1`` uses all available cores.
     key_added
         ``uns`` key where the result DataFrame is stored.
 
@@ -324,7 +366,7 @@ def moran_local(
     frames = []
     for key in keys:
         y = _extract_values(adata, key, layer)
-        lmi = esda.Moran_Local(y, w, permutations=n_perms)
+        lmi = esda.Moran_Local(y, w, permutations=n_perms, n_jobs=n_jobs)
 
         if n_perms > 0:
             p_sim = lmi.p_sim
@@ -360,7 +402,7 @@ def moran_bv(
     *,
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
-    n_perms: int = 999,
+    n_perms: int = 1000,
     key_added: str = "moran_bv",
 ) -> pd.DataFrame:
     """Global bivariate Moran's I for pairs of expression / obs keys.
@@ -444,8 +486,9 @@ def moran_local_bv(
     *,
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
-    n_perms: int = 999,
+    n_perms: int = 1000,
     p_adjust_method: str = "fdr_bh",
+    n_jobs: int = 1,
     key_added: str = "moran_local_bv",
 ) -> pd.DataFrame:
     """Local bivariate Moran's I (LISA) for pairs of expression / obs keys.
@@ -473,6 +516,10 @@ def moran_local_bv(
         Conditional randomisation permutations (``0`` → NaN p-values).
     p_adjust_method
         Multiple-testing correction applied per pair across all cells.
+    n_jobs
+        Parallel workers for the permutations, forwarded to
+        ``esda.Moran_Local_BV``. ``1`` (default) runs sequentially. ``-1``
+        uses all available cores.
     key_added
         ``uns`` key where the result DataFrame is stored.
 
@@ -496,7 +543,7 @@ def moran_local_bv(
     for xk, yk in zip(x_keys, y_keys):
         xv = _extract_values(adata, xk, layer)
         yv = _extract_values(adata, yk, layer)
-        lmi = esda.Moran_Local_BV(xv, yv, w, permutations=n_perms)
+        lmi = esda.Moran_Local_BV(xv, yv, w, permutations=n_perms, n_jobs=n_jobs)
 
         if n_perms > 0:
             p_sim = np.asarray(getattr(lmi, "p_sim", np.full(adata.n_obs, np.nan)))
@@ -532,9 +579,10 @@ def getis_ord(
     *,
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
-    n_perms: int = 999,
+    n_perms: int = 1000,
     p_adjust_method: str = "fdr_bh",
     alpha: float = 0.05,
+    n_jobs: int = 1,
     key_added: str = "getis_ord",
 ) -> pd.DataFrame:
     """Local Getis-Ord G* hot/cold spot detection.
@@ -565,6 +613,10 @@ def getis_ord(
     alpha
         Significance threshold used to assign ``type``
         (``'hot'`` / ``'cold'`` / ``'NS'``).
+    n_jobs
+        Parallel workers for the permutations, forwarded to
+        ``esda.G_Local``. ``1`` (default) runs sequentially. ``-1`` uses all
+        available cores.
     key_added
         ``uns`` key where the result DataFrame is stored.
 
@@ -592,14 +644,24 @@ def getis_ord(
     frames = []
     for key in keys:
         y = _extract_values(adata, key, layer)
-        lG = esda.G_Local(y, w, permutations=n_perms, transform="r", star=True)
+        # star=1 (rather than star=True): our spatial graph has a zero
+        # diagonal (no self-loops) and is already row-standardized, so
+        # esda.G_Local can't infer a self-weight for Gi* on its own --
+        # star=True leaves it to guess one *per row* (defaults to that row's
+        # max neighbor weight, with a UserWarning on every call). Passing an
+        # explicit self-weight of 1 (the standard Ord & Getis / GeoDa
+        # convention: the point counts as an ordinary neighbor of itself)
+        # gives every cell the same, reproducible self-weight instead of one
+        # that silently varies with local connectivity density, and avoids
+        # the warning.
+        lG = esda.G_Local(y, w, permutations=n_perms, transform="r", star=1, n_jobs=n_jobs)
 
         if n_perms > 0:
             z_vals = np.asarray(lG.z_sim)
             p_vals = np.asarray(lG.p_sim)
             p_adj = _adj_pvalues(p_vals, p_adjust_method)
         else:
-            z_vals = np.asarray(lG.z_norm)
+            z_vals = np.asarray(lG.Zs)
             p_vals = np.asarray(lG.p_norm)
             p_adj = p_vals  # no adjustment without permutations
 
@@ -706,6 +768,17 @@ def spatial_silhouette(
     within a cluster.  Differs from the standard sklearn silhouette, which
     uses global pairwise distances.
 
+    Values are signed and centered at 0, like a z-score: positive means a
+    boundary cell fits its own cluster better than the neighboring one it
+    borders, negative means the opposite (a likely-noisy assignment); cells
+    with no same-cluster spatial neighbor at all, or with no cross-cluster
+    neighbor at all (not on any boundary), score exactly 0. Plot with a
+    diverging colormap centered at 0 (e.g. ``cmap="astrolabe_div",
+    vcenter=0.0``) -- the default sequential colormap makes real but modest
+    variation (typically within roughly ±0.5 on real data, not the full ±1
+    range) hard to read, since it doesn't distinguish "near 0" from "clearly
+    negative" the way a diverging scale does.
+
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
 
     Parameters
@@ -727,7 +800,7 @@ def spatial_silhouette(
     Examples
     --------
     >>> ab.tl.spatial_silhouette(mdata, groupby="leiden")
-    >>> ab.pl.points(mdata, color="spatial_silhouette")
+    >>> ab.pl.points(mdata, color="spatial_silhouette", cmap="astrolabe_div", vcenter=0.0)
     """
     if groupby not in adata.obs.columns:
         raise KeyError(f"obs column '{groupby}' not found")
@@ -755,6 +828,7 @@ def _ripley_l_kdtree(
     radii: np.ndarray,
     n_perms: int,
     rng: "np.random.Generator",
+    n_jobs: int = 1,
 ) -> "tuple[np.ndarray, np.ndarray]":
     """KDTree-based Ripley's L — O(n log n × m) time, O(n log n) memory.
 
@@ -774,10 +848,13 @@ def _ripley_l_kdtree(
         # including i==j self-pairs.  Subtracting len(pts) removes self-pairs;
         # the remaining count is already doubled ((i,j) and (j,i) both counted),
         # which is the correct numerator for K(r) = A/(n(n-1)) × Σ_{i≠j} I(d<r).
-        raw = np.array(
-            [tree.count_neighbors(tree, r) - len(pts) for r in radii],
-            dtype=np.float64,
-        )
+        # count_neighbors accepts the whole `radii` array and does a *single*
+        # tree traversal for all of them ("Multiple radii are searched with a
+        # single tree traversal" per scipy's docs) -- calling it once per
+        # radius instead (as this used to) redundantly re-traverses the tree
+        # `len(radii)` times for the same result; ~6x slower on a
+        # 15k-point/200-radius benchmark.
+        raw = tree.count_neighbors(tree, radii).astype(np.float64) - len(pts)
         return area * raw / (n * (n - 1))
 
     def _l(k: np.ndarray) -> np.ndarray:
@@ -785,10 +862,22 @@ def _ripley_l_kdtree(
 
     l_obs = _l(_k(coords))
 
-    l_sims = np.empty((n_perms, len(radii)), dtype=np.float64)
-    for i in range(n_perms):
-        sim = rng.uniform(xy_min, xy_max, size=(n, 2))
-        l_sims[i] = _l(_k(sim))
+    def _one_sim(child_rng: "np.random.Generator") -> np.ndarray:
+        sim = child_rng.uniform(xy_min, xy_max, size=(n, 2))
+        return _l(_k(sim))
+
+    if n_perms > 0:
+        # Derive independent child streams from the shared rng so multiple
+        # groups (each calling this function once) still advance through a
+        # single deterministic sequence, while perms within a group are
+        # safe to run concurrently.
+        child_rngs = _spawn_rngs(int(rng.integers(0, 2**63 - 1)), n_perms)
+        sims = Parallel(n_jobs=n_jobs, prefer="threads")(
+            delayed(_one_sim)(child_rng) for child_rng in child_rngs
+        )
+        l_sims = np.stack(sims)
+    else:
+        l_sims = np.empty((0, len(radii)), dtype=np.float64)
 
     return l_obs, l_sims
 
@@ -800,15 +889,24 @@ def ripley_l(
     *,
     spatial_key: str = "spatial",
     support: int = 200,
-    n_perms: int = 99,
+    n_perms: int = 1000,
     seed: int | None = None,
+    n_jobs: int = 1,
     key_added: str = "ripley_l",
 ) -> dict[str, pd.DataFrame]:
     """Ripley's L function for cell-type point patterns.
 
     Tests whether cells of a given type are spatially clustered beyond what
-    is expected under complete spatial randomness (CSR).  Positive L(d) values
-    indicate clustering at distance *d*; L(d) = 0 under CSR.
+    is expected under complete spatial randomness (CSR).
+
+    The returned ``L_obs``/``L_hi``/``L_lo`` columns hold the *detrended*
+    quantity L(d) − d, not raw L(d) — this is why ``L_exp`` is a constant 0:
+    raw L(d) equals *d* under CSR (a diagonal reference line), while the
+    detrended L(d) − d equals 0 under CSR (a flat reference line), which is
+    what :func:`~astrolabe.pl.ripley_plot` plots. Positive values indicate
+    clustering at distance *d* (more same-type neighbors within *d* than
+    random chance predicts); negative values indicate regularity/dispersion
+    (fewer).
 
     Unlike Moran's I (which tests autocorrelation of a continuous variable),
     Ripley's L treats cells of a given type as a binary point pattern and
@@ -838,6 +936,11 @@ def ripley_l(
         (``0`` → no envelope; ``L_hi``/``L_lo`` will be ``NaN``).
     seed
         Random seed for reproducible CSR simulations.
+    n_jobs
+        Parallel workers for the CSR simulations within each group (joblib,
+        thread-backed — no extra memory copies since arrays are shared, not
+        pickled). ``1`` (default) runs sequentially. ``-1`` uses all
+        available cores.
     key_added
         ``uns`` key where results are stored.
 
@@ -883,7 +986,7 @@ def ripley_l(
             log.warning("Group '%s' has fewer than 3 cells; skipping.", name)
             continue
 
-        l_obs, l_sims = _ripley_l_kdtree(group_coords, radii, n_perms, rng)
+        l_obs, l_sims = _ripley_l_kdtree(group_coords, radii, n_perms, rng, n_jobs=n_jobs)
 
         df = pd.DataFrame(
             {"L_obs": l_obs, "L_exp": np.zeros_like(l_obs)},
@@ -919,16 +1022,19 @@ def _svg_moran(
     neighbors_key: str,
     n_perms: int,
     p_adjust_method: str,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     import esda
 
-    w = _build_weights(adata, neighbors_key)
-    rows = []
-    for g in genes:
+    get_weights = _thread_local_weights_getter(adata, neighbors_key)
+
+    def _one_gene(g: str) -> dict:
         y = _extract_values(adata, g, layer)
-        mi = esda.Moran(y, w, permutations=n_perms, two_tailed=True)
+        mi = esda.Moran(y, get_weights(), permutations=n_perms, two_tailed=True)
         p = float(mi.p_sim if n_perms > 0 else mi.p_norm)
-        rows.append({"gene": g, "score": float(mi.I), "pval": p})
+        return {"gene": g, "score": float(mi.I), "pval": p}
+
+    rows = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_one_gene)(g) for g in genes)
 
     df = pd.DataFrame(rows).set_index("gene")
     df["pval_adj"] = _adj_pvalues(df["pval"].to_numpy(), p_adjust_method)
@@ -942,19 +1048,22 @@ def _svg_geary(
     neighbors_key: str,
     n_perms: int,
     p_adjust_method: str,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     import esda
 
-    w = _build_weights(adata, neighbors_key)
-    rows = []
-    for g in genes:
+    get_weights = _thread_local_weights_getter(adata, neighbors_key)
+
+    def _one_gene(g: str) -> dict:
         y = _extract_values(adata, g, layer)
-        gc = esda.Geary(y, w, permutations=n_perms)
+        gc = esda.Geary(y, get_weights(), permutations=n_perms)
         # Geary's C: C < 1 = positive autocorrelation, C > 1 = negative.
-        # p_z_sim is the z-score-based p-value under the normality assumption;
+        # p_norm is the z-score-based p-value under the normality assumption;
         # p_sim is the permutation-based p-value when n_perms > 0.
-        p = float(gc.p_sim if n_perms > 0 else gc.p_z_sim)
-        rows.append({"gene": g, "score": float(gc.C), "pval": p})
+        p = float(gc.p_sim if n_perms > 0 else gc.p_norm)
+        return {"gene": g, "score": float(gc.C), "pval": p}
+
+    rows = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_one_gene)(g) for g in genes)
 
     df = pd.DataFrame(rows).set_index("gene")
     df["pval_adj"] = _adj_pvalues(df["pval"].to_numpy(), p_adjust_method)
@@ -971,6 +1080,7 @@ def spatially_variable_genes(
     neighbors_key: str = "spatial_neighbors",
     n_perms: int = 0,
     p_adjust_method: str = "fdr_bh",
+    n_jobs: int = 1,
     key_added: str = "spatially_variable",
 ) -> pd.DataFrame:
     """Identify spatially variable genes.
@@ -1013,6 +1123,13 @@ def spatially_variable_genes(
         permutation testing across hundreds of genes is prohibitively slow.
     p_adjust_method
         Multiple-testing correction (e.g. ``'fdr_bh'``, ``'bonferroni'``).
+    n_jobs
+        Parallel workers for the per-gene loop (joblib, thread-backed — no
+        extra memory copies since arrays are shared, not pickled). ``1``
+        (default) runs sequentially. ``-1`` uses all available cores.
+        Ignored on the GPU path (``ab.use_gpu(True)``), which parallelizes
+        across genes on-device instead. Applies regardless of ``n_perms``,
+        since the per-gene loop is the dominant cost even at ``n_perms=0``.
     modality
         For :class:`~mudata.MuData`: modality key.
     key_added
@@ -1086,9 +1203,9 @@ def spatially_variable_genes(
     )
 
     if flavor == "moran":
-        df = _svg_moran(adata, genes, layer, neighbors_key, n_perms, p_adjust_method)
+        df = _svg_moran(adata, genes, layer, neighbors_key, n_perms, p_adjust_method, n_jobs=n_jobs)
     else:
-        df = _svg_geary(adata, genes, layer, neighbors_key, n_perms, p_adjust_method)
+        df = _svg_geary(adata, genes, layer, neighbors_key, n_perms, p_adjust_method, n_jobs=n_jobs)
 
     df["flavor"] = flavor
 
@@ -1117,7 +1234,7 @@ def geary_c(
     *,
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
-    n_perms: int = 999,
+    n_perms: int = 1000,
     key_added: str = "geary_c",
 ) -> pd.DataFrame:
     """Global Geary's C spatial autocorrelation for one or more keys.

@@ -30,6 +30,69 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
+def _sync_transcripts_after_cell_filter(adata_uns: dict, removed_cell_ids: set) -> None:
+    """Drop uns['transcripts'] rows belonging to cells a cell filter removed.
+
+    Platform-agnostic by construction: only Xenium's reader ever populates
+    uns['transcripts'] (MERSCOPE/CosMx have no per-transcript table), so
+    this is a silent no-op for those modalities -- filter_cells/filter_genes
+    are the single shared code path behind filter_xenium/filter_merscope/
+    filter_cosmx, so all three platforms get identical treatment here.
+
+    Rows whose cell_id doesn't match any *current* obs_names at all (e.g.
+    Xenium's 'UNASSIGNED' sentinel for transcripts never assigned to a
+    segmented cell) are never in removed_cell_ids, since that's built from
+    obs_names -- so they always survive untouched, regardless of the
+    sentinel's literal spelling.
+    """
+    transcripts = adata_uns.get("transcripts")
+    if transcripts is None or not removed_cell_ids:
+        return
+    if "cell_id" not in transcripts.schema.names:
+        return
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    keep = pc.invert(
+        pc.is_in(transcripts.column("cell_id"), value_set=pa.array(list(removed_cell_ids)))
+    )
+    n_before = len(transcripts)
+    adata_uns["transcripts"] = transcripts.filter(keep)
+    n_after = len(adata_uns["transcripts"])
+    if n_after != n_before:
+        log.info(
+            "  synced uns['transcripts']: %d -> %d rows (dropped filtered-out cells)",
+            n_before, n_after,
+        )
+
+
+def _sync_transcripts_after_gene_filter(adata_uns: dict, removed_genes: set) -> None:
+    """Drop uns['transcripts'] rows for genes/features a gene filter removed.
+
+    See :func:`_sync_transcripts_after_cell_filter` for why this is
+    platform-agnostic (no-op when uns['transcripts'] doesn't exist).
+    """
+    transcripts = adata_uns.get("transcripts")
+    if transcripts is None or not removed_genes:
+        return
+    if "feature_name" not in transcripts.schema.names:
+        return
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    keep = pc.invert(
+        pc.is_in(transcripts.column("feature_name"), value_set=pa.array(list(removed_genes)))
+    )
+    n_before = len(transcripts)
+    adata_uns["transcripts"] = transcripts.filter(keep)
+    n_after = len(adata_uns["transcripts"])
+    if n_after != n_before:
+        log.info(
+            "  synced uns['transcripts']: %d -> %d rows (dropped filtered-out genes)",
+            n_before, n_after,
+        )
+
+
 def _add_nucleus_metrics(adata: ad.AnnData) -> None:
     """Append nucleus_to_cell_area_ratio and has_nucleus columns to obs."""
     if "nucleus_area" in adata.obs.columns and "cell_area" in adata.obs.columns:
@@ -466,6 +529,12 @@ def filter_cells(
     All thresholds are inclusive on the retained side (i.e.
     ``min_counts=100`` keeps cells with ``total_counts >= 100``).
 
+    If ``uns['transcripts']`` is present (Xenium only — MERSCOPE/CosMx never
+    populate it, so this is a no-op for them), rows belonging to removed
+    cells are dropped from it too, keeping the transcript-level table
+    consistent with the cell×gene matrix. Rows not tied to any real cell
+    (e.g. Xenium's ``'UNASSIGNED'`` sentinel) are never touched by this.
+
     Parameters
     ----------
     data
@@ -517,12 +586,16 @@ def filter_cells(
 
     n_removed = int((~mask).sum())
     log.info("filter_cells: removing %d / %d cells", n_removed, adata.n_obs)
+    removed_cell_ids = set(adata.obs_names[~mask]) if "transcripts" in adata.uns else set()
 
     if inplace:
+        _sync_transcripts_after_cell_filter(adata.uns, removed_cell_ids)
         adata._inplace_subset_obs(mask)
         return None
     else:
-        return adata[mask].copy(), mask
+        filtered = adata[mask].copy()
+        _sync_transcripts_after_cell_filter(filtered.uns, removed_cell_ids)
+        return filtered, mask
 
 
 @with_adata
@@ -536,6 +609,14 @@ def filter_genes(
     inplace: bool = False,
 ) -> ad.AnnData | tuple[ad.AnnData, np.ndarray] | None:
     """Filter genes/features by expression or type criteria.
+
+    If ``uns['transcripts']`` is present (Xenium only — MERSCOPE/CosMx never
+    populate it, so this is a no-op for them), rows for removed genes are
+    dropped from it too, keeping the transcript-level table consistent with
+    the cell×gene matrix — this is what keeps control-probe transcripts
+    (removed via ``exclude_controls=True``) and any other filtered-out gene
+    out of downstream transcript-level analyses (e.g.
+    :func:`~astrolabe.tl.colocation_quotient` in pixel mode).
 
     Parameters
     ----------
@@ -592,12 +673,16 @@ def filter_genes(
 
     n_removed = (~mask).sum()
     log.info("filter_genes: removing %d / %d features", n_removed, adata.n_vars)
+    removed_genes = set(adata.var_names[~mask]) if "transcripts" in adata.uns else set()
 
     if inplace:
+        _sync_transcripts_after_gene_filter(adata.uns, removed_genes)
         adata._inplace_subset_var(mask)
         return None
     else:
-        return adata[:, mask].copy(), mask
+        filtered = adata[:, mask].copy()
+        _sync_transcripts_after_gene_filter(filtered.uns, removed_genes)
+        return filtered, mask
 
 
 @with_adata
@@ -695,12 +780,16 @@ def filter_isolated(
         max_neighbor_dist_um if max_neighbor_dist_um is not None else float("inf"),
         min_neighbor_dist_um if min_neighbor_dist_um is not None else float("inf"),
     )
+    removed_cell_ids = set(adata.obs_names[~mask]) if "transcripts" in adata.uns else set()
 
     if inplace:
+        _sync_transcripts_after_cell_filter(adata.uns, removed_cell_ids)
         adata._inplace_subset_obs(mask)
         return None
     else:
-        return adata[mask].copy(), mask
+        filtered = adata[mask].copy()
+        _sync_transcripts_after_cell_filter(filtered.uns, removed_cell_ids)
+        return filtered, mask
 
 
 # ---------------------------------------------------------------------------

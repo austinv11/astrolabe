@@ -21,9 +21,10 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from joblib import Parallel, delayed
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import from_kwarg, with_adata
+from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _get_conn_matrix
 
 __all__ = [
@@ -79,6 +80,7 @@ def nhood_enrichment(
     neighbors_key: str = "spatial_neighbors",
     n_perms: int = 1000,
     seed: int = 0,
+    n_jobs: int = 1,
     key_added: str = "nhood_enrichment",
 ) -> None:
     """Neighborhood enrichment permutation test.
@@ -104,6 +106,10 @@ def nhood_enrichment(
         Number of label permutations for the null distribution.
     seed
         Random seed for reproducibility.
+    n_jobs
+        Parallel workers for the permutation loop (joblib, thread-backed —
+        no extra memory copies since arrays are shared, not pickled). ``1``
+        (default) runs sequentially. ``-1`` uses all available cores.
     key_added
         ``uns`` key to write results into.
 
@@ -133,22 +139,23 @@ def nhood_enrichment(
     # Observed: (n_types × n_types) edge count matrix
     obs_counts = (C.T @ adj @ C).toarray().astype(np.float64)
 
-    # Permutations — Welford's online algorithm avoids catastrophic
-    # cancellation when computing variance via sum-of-squares minus mean².
-    rng = np.random.default_rng(seed)
-    perm_mean = np.zeros_like(obs_counts)
-    perm_M2 = np.zeros_like(obs_counts)
-    perm_codes = codes.copy()
-
-    for i in range(1, n_perms + 1):
-        rng.shuffle(perm_codes)
+    # Permutations — each perm draws from an independent RNG substream so the
+    # loop is safe to parallelize; mean/std are computed two-pass afterward
+    # (numpy's mean-then-deviations), which avoids the same catastrophic-
+    # cancellation failure mode a single-pass sum-of-squares formula would hit.
+    def _one_perm(child_rng: "np.random.Generator") -> np.ndarray:
+        perm_codes = codes.copy()
+        child_rng.shuffle(perm_codes)
         Cp = _one_hot(perm_codes, n_types)
-        m = (Cp.T @ adj @ Cp).toarray().astype(np.float64)
-        delta = m - perm_mean
-        perm_mean += delta / i
-        perm_M2 += delta * (m - perm_mean)
+        return (Cp.T @ adj @ Cp).toarray().astype(np.float64)
 
-    perm_std = np.sqrt(perm_M2 / n_perms)
+    child_rngs = _spawn_rngs(seed, n_perms)
+    perm_mats = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_one_perm)(child_rng) for child_rng in child_rngs
+    )
+    perm_stack = np.stack(perm_mats)
+    perm_mean = perm_stack.mean(axis=0)
+    perm_std = perm_stack.std(axis=0)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         zscore = np.where(perm_std > 0, (obs_counts - perm_mean) / perm_std, 0.0)
@@ -182,7 +189,12 @@ def co_occurrence(
              {P(\\text{type B globally})}
 
     A ratio > 1 indicates enriched co-occurrence at that scale; < 1 indicates
-    avoidance.
+    avoidance. ``P(type B within d of type A cell)`` is a probability over
+    the neighbors actually present within *d* (of any type) — not a raw
+    neighbor count — so under no real spatial structure the ratio hovers
+    near 1 at every *d*, and it should trend toward 1 as *d* grows large
+    enough to approach the tissue's global type mixture, rather than
+    growing without bound.
 
     Parameters
     ----------
@@ -278,11 +290,20 @@ def co_occurrence(
             np.add.at(count_mat, (s, t), 1.0)
             np.add.at(count_mat, (t, s), 1.0)
 
-            # Conditional prob P(B | A at d): divide by # type-A cells
+            # Conditional prob P(B | A at d): divide by the total number of
+            # neighbors of *any* type within d of a type-A cell (the row sum
+            # of count_mat), not by the number of type-A cells. Dividing by
+            # type_counts[A] instead gives the mean *count* of type-B
+            # neighbors per A-cell -- an unbounded quantity that grows ~d^2
+            # as the search radius sweeps in more cells of every type -- not
+            # a probability, so the ratio against the (bounded) marginal
+            # P(B) diverges with d instead of converging to ~1 far from any
+            # real spatial structure.
+            row_totals = count_mat.sum(axis=1)
             with np.errstate(divide="ignore", invalid="ignore"):
                 cond = np.where(
-                    type_counts[:, None] > 0,
-                    count_mat / type_counts[:, None],
+                    row_totals[:, None] > 0,
+                    count_mat / row_totals[:, None],
                     0.0,
                 )
                 occ[:, :, k] = np.where(
@@ -305,6 +326,8 @@ def centrality_scores(
     groupby: str,
     *,
     neighbors_key: str = "spatial_neighbors",
+    max_closeness_n: int = 5_000,
+    force_closeness: bool = False,
     key_added: str = "centrality_scores",
 ) -> None:
     """Spatial graph centrality metrics aggregated per cell type.
@@ -312,13 +335,30 @@ def centrality_scores(
     Computes three per-cell centrality metrics from the spatial graph and
     averages them within each cell type:
 
-    - **degree_centrality** — fraction of other cells the cell is connected to;
-      high = spatially well-connected hub.
+    - **degree_centrality** — fraction of *all* cells (``degree / (n-1)``,
+      the standard networkx/squidpy convention) the cell is directly
+      connected to. On a KNN or distance-pruned Delaunay spatial graph, raw
+      degree is bounded by a small, roughly constant local neighborhood
+      size regardless of cell type (it mostly reflects local tissue packing
+      density, which is often fairly uniform across a section) — so this
+      metric commonly comes out both tiny (dividing a small bounded degree
+      by a large *n*) and nearly flat across cell types. That is expected,
+      not a bug; :func:`centrality_scores` still reports it for consistency
+      with squidpy, but ``closeness_centrality`` below is usually more
+      informative for this graph type since it reflects position in the
+      *whole* tissue, not just the immediate neighborhood.
     - **clustering** — fraction of a cell's neighbors that are also neighbors
-      of each other; high = tightly clustered local neighborhood.
+      of each other; high = tightly clustered local neighborhood. Also
+      dominated by local graph geometry (Delaunay triangulations have a
+      characteristic clustering coefficient largely independent of cell
+      type) more than by biology.
     - **closeness_centrality** — inverse mean shortest-path to all other cells;
-      high = spatially central cell.  Skipped for datasets > 5 000 cells
-      because the O(n²) computation is too slow.
+      high = spatially central cell. Skipped by default for datasets larger
+      than ``max_closeness_n`` because the underlying networkx computation
+      is O(n²) and becomes impractically slow; pass ``force_closeness=True``
+      to compute it anyway (expect this to take minutes-to-hours well past
+      10⁵ cells — it's a genuinely expensive computation, not just an
+      arbitrary cutoff).
 
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
 
@@ -332,6 +372,12 @@ def centrality_scores(
         Modality key when *data* is :class:`~mudata.MuData`.
     neighbors_key
         ``uns`` key written by :func:`~astrolabe.tl.spatial_neighbors`.
+    max_closeness_n
+        Skip ``closeness_centrality`` (fill with NaN) when ``adata.n_obs``
+        exceeds this, unless ``force_closeness=True``.
+    force_closeness
+        Compute ``closeness_centrality`` regardless of ``max_closeness_n`` —
+        an explicit opt-in given the O(n²) cost.
     key_added
         ``uns`` key to write the result DataFrame into.
 
@@ -346,6 +392,7 @@ def centrality_scores(
     Examples
     --------
     >>> ab.tl.centrality_scores(mdata, 'leiden')
+    >>> ab.tl.centrality_scores(mdata, 'leiden', force_closeness=True)  # force closeness on a big dataset
     >>> ab.pl.centrality_scores_plot(mdata, 'leiden')
     """
     import networkx as nx
@@ -363,18 +410,17 @@ def centrality_scores(
     G = nx.from_scipy_sparse_array(adj)
     clustering = np.fromiter(nx.clustering(G).values(), dtype=np.float64, count=n)
 
-    # Closeness centrality: O(n²) — skip for large graphs
-    _MAX_CLOSENESS = 5_000
-    if n <= _MAX_CLOSENESS:
+    # Closeness centrality: O(n²) — skip for large graphs unless overridden
+    if force_closeness or n <= max_closeness_n:
         closeness = np.fromiter(
             nx.closeness_centrality(G).values(), dtype=np.float64, count=n
         )
     else:
         log.warning(
             "centrality_scores: skipping closeness_centrality (n=%d > %d). "
-            "Set a smaller subset or use degree/clustering only.",
+            "Pass force_closeness=True to compute it anyway.",
             n,
-            _MAX_CLOSENESS,
+            max_closeness_n,
         )
         closeness = np.full(n, np.nan)
 
@@ -553,6 +599,7 @@ def ligrec(
     n_perms: int = 200,
     seed: int = 0,
     threshold: float = 0.05,
+    n_jobs: int = 1,
     key_added: str = "ligrec",
 ) -> None:
     """Spatially-contextualized ligand-receptor permutation test.
@@ -592,6 +639,12 @@ def ligrec(
         Random seed.
     threshold
         P-value threshold reported in the log summary (does not filter results).
+    n_jobs
+        Parallel workers for the CPU permutation loop (joblib, thread-backed
+        — no extra memory copies since arrays are shared, not pickled).
+        ``1`` (default) runs sequentially. ``-1`` uses all available cores.
+        Ignored on the GPU path (``ab.use_gpu(True)``), which delegates to
+        ``rsc.gr.ligrec`` instead.
     key_added
         ``uns`` key to write results into.
 
@@ -692,16 +745,20 @@ def ligrec(
 
     obs_scores = _mean_by_ct(ct_idx)  # (n_ct, n_lr)
 
-    # Permutations
-    rng = np.random.default_rng(seed)
-    perm_ge = np.zeros((n_ct, n_lr), dtype=np.float64)
-    perm_codes = codes.copy()
-
-    for _ in range(n_perms):
-        rng.shuffle(perm_codes)
+    # Permutations — each draws from an independent RNG substream so the
+    # loop is safe to parallelize.
+    def _one_perm(child_rng: "np.random.Generator") -> np.ndarray:
+        perm_codes = codes.copy()
+        child_rng.shuffle(perm_codes)
         perm_ct_idx = perm_codes[edge_src] * n_types + perm_codes[edge_dst]
         perm_s = _mean_by_ct(perm_ct_idx)
-        perm_ge += (perm_s >= obs_scores).astype(np.float64)
+        return (perm_s >= obs_scores).astype(np.float64)
+
+    child_rngs = _spawn_rngs(seed, n_perms)
+    perm_ge_list = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_one_perm)(child_rng) for child_rng in child_rngs
+    )
+    perm_ge = np.sum(perm_ge_list, axis=0) if perm_ge_list else np.zeros((n_ct, n_lr), dtype=np.float64)
 
     pvalues = perm_ge / n_perms  # (n_ct, n_lr)
 

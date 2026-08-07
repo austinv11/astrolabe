@@ -49,7 +49,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
+from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY
 from astrolabe._utils import ImageSpec
 
 __all__ = ["read_he"]
@@ -189,9 +189,8 @@ def read_he(
     )
 
     if mdata is not None:
-        mdata.mod[mdata_key] = adata
-        mdata.uns.setdefault("spatial", {}).update(uns["spatial"])
-        mdata.uns.setdefault(UNS_DEFAULT_MODALITY_KEY, mdata_key)
+        from astrolabe.io._io import attach_modality
+        attach_modality(mdata, adata, mdata_key)
 
     return adata
 
@@ -220,9 +219,15 @@ def _extract_he_spec(
         dim_order = raw_axes.replace("S", "C")
 
     full_shape = level_shapes[0]
-    fh, fw = full_shape[-2], full_shape[-1]
+    # Do not assume the last two axes are (Y, X): H&E/RGB TIFFs are commonly
+    # stored channels-last (YXC/YXS after the S->C mapping above), unlike the
+    # CYX convention used for fluorescence/morphology images.
+    axes_up = dim_order.upper()
+    y_idx = axes_up.index("Y") if "Y" in axes_up else len(full_shape) - 2
+    x_idx = axes_up.index("X") if "X" in axes_up else len(full_shape) - 1
+    fh, fw = full_shape[y_idx], full_shape[x_idx]
     level_scales: list[tuple[float, float]] = [
-        (fh / s[-2], fw / s[-1]) for s in level_shapes
+        (fh / s[y_idx], fw / s[x_idx]) for s in level_shapes
     ]
 
     return ImageSpec(
@@ -233,6 +238,7 @@ def _extract_he_spec(
         level_shapes=level_shapes,
         level_scales=level_scales,
         registration_affine=registration_affine,
+        is_brightfield=True,
     )
 
 
@@ -380,7 +386,19 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     norms = np.where(norms > 0, norms, 1.0)
     he = he / norms
 
-    # Invert to get deconvolution matrix (concentrations = od @ M)
+    # Invert to get deconvolution matrix (concentrations = od @ M). A poorly
+    # conditioned he.T (near-parallel stain vectors — e.g. from a coarse
+    # pyramid level with little stain-color diversity) inverts to huge
+    # coefficients that blow up any real OD input; fall back rather than
+    # return a deconvolution matrix that's numerically useless.
+    cond = np.linalg.cond(he.T)
+    if cond > 100:
+        log.warning(
+            "Macenko stain vectors are poorly separated (condition number %.1f); "
+            "falling back to Ruifrok matrix.",
+            cond,
+        )
+        return _ruifrok_matrix()
     try:
         M = np.linalg.inv(he.T)
     except np.linalg.LinAlgError:

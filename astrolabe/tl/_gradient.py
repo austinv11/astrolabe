@@ -53,9 +53,10 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from joblib import Parallel, delayed
 from scipy.stats import false_discovery_control
 
-from astrolabe._utils import from_kwarg, with_adata
+from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _extract_values, _get_conn_matrix
 
 __all__ = [
@@ -500,6 +501,7 @@ def gradient_significance(
     layer: str | None = None,
     n_perms: int = 200,
     random_state: int = 0,
+    n_jobs: int = 1,
     key_added: str = "gradient_significance",
 ) -> None:
     """Permutation test for gradient magnitude and directional coherence.
@@ -543,6 +545,13 @@ def gradient_significance(
         p-values; use ``1000`` for publication-level precision.
     random_state
         Seed for reproducibility.
+    n_jobs
+        Parallel workers for the permutation loop (joblib, thread-backed —
+        no extra memory copies since arrays are shared, not pickled). ``1``
+        (default) runs sequentially, logging progress every ~10% of
+        permutations; ``-1`` uses all available cores (per-iteration
+        progress logging is skipped since iteration order isn't meaningful
+        when parallel).
     key_added
         Key in ``uns`` for results.
 
@@ -589,21 +598,39 @@ def gradient_significance(
 
         f = _extract_values(adata, key, layer)
 
-        null_magnitudes = np.zeros(n_perms, dtype=np.float64)
-        null_coherences = np.zeros(n_perms, dtype=np.float64)
-        log_every = max(1, n_perms // 10)
-        for i in range(n_perms):
-            if i % log_every == 0:
-                log.info("gradient_significance: permutation %d/%d", i + 1, n_perms)
-            perm_idx = rng.permutation(n_cells)
+        def _one_perm(child_rng: "np.random.Generator") -> tuple[float, float]:
+            perm_idx = child_rng.permutation(n_cells)
             perm_f = f[perm_idx]
             if n_diffusion_steps > 0:
                 perm_f = _diffuse_expression(perm_f, conn_mat, n_diffusion_steps)
             perm_grad = _mls_gradient(coords, perm_f, src, dst, w).astype(np.float64)
-            null_magnitudes[i] = np.linalg.norm(perm_grad, axis=1).mean()
-            null_coherences[i] = _mean_resultant_length(
-                np.arctan2(perm_grad[:, 1], perm_grad[:, 0])
+            magnitude = float(np.linalg.norm(perm_grad, axis=1).mean())
+            coherence = _mean_resultant_length(np.arctan2(perm_grad[:, 1], perm_grad[:, 0]))
+            return magnitude, coherence
+
+        # Each key consumes one draw from the shared rng to seed its own
+        # independent permutation substreams — keeps the overall sequence
+        # deterministic across keys while permutations within a key run
+        # safely in parallel.
+        child_rngs = _spawn_rngs(int(rng.integers(0, 2**63 - 1)), n_perms)
+        if n_jobs == 1:
+            log_every = max(1, n_perms // 10)
+            results = []
+            for i, child_rng in enumerate(child_rngs):
+                if i % log_every == 0:
+                    log.info("gradient_significance: permutation %d/%d", i + 1, n_perms)
+                results.append(_one_perm(child_rng))
+        else:
+            log.info(
+                "gradient_significance: '%s' running %d permutations with n_jobs=%d",
+                key, n_perms, n_jobs,
             )
+            results = Parallel(n_jobs=n_jobs, prefer="threads")(
+                delayed(_one_perm)(child_rng) for child_rng in child_rngs
+            )
+
+        null_magnitudes = np.array([r[0] for r in results], dtype=np.float64)
+        null_coherences = np.array([r[1] for r in results], dtype=np.float64)
 
         p_mag = float(np.mean(null_magnitudes >= obs_magnitude))
         p_coh = float(np.mean(null_coherences >= obs_coherence))

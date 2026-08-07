@@ -185,6 +185,96 @@ def _select_channel_from_ndarray(
     return img
 
 
+def _to_hwc(img: np.ndarray, dim: str) -> np.ndarray:
+    """Reduce a loaded TIFF array to (H, W, C), channel axis last, collapsing T (and Z when a real C axis is present).
+
+    Used by :func:`_load_all_channels` for multi-channel StarDist models
+    (e.g. ``'2D_versatile_he'``, which requires ``axes='YXC'`` — a true RGB
+    stack, not a single selected channel). ``dim`` must describe ``img``'s
+    *current* axis order (already-collapsed axes removed from the string to
+    match), mirroring how :func:`_select_channel_from_ndarray` is called.
+    """
+    pos = dim.find("T")
+    if pos >= 0:
+        img = img.take(0, axis=pos)
+        dim = dim[:pos] + dim[pos + 1:]
+    has_c = "C" in dim
+    pos = dim.find("Z")
+    if pos >= 0:
+        if has_c:
+            img = img.take(0, axis=pos)
+            dim = dim[:pos] + dim[pos + 1:]
+        else:
+            # No dedicated C axis — Z plays the role of channel; keep it.
+            dim = dim[:pos] + "C" + dim[pos + 1:]
+    if "C" not in dim:
+        img = img[..., np.newaxis]
+        dim = dim + "C"
+    y_pos, x_pos, c_pos = dim.index("Y"), dim.index("X"), dim.index("C")
+    return np.transpose(img, (y_pos, x_pos, c_pos))
+
+
+def _load_all_channels(
+    spec: ImageSpec,
+    region_px: tuple[int, int, int, int] | None = None,
+) -> np.ndarray:
+    """Load every channel from a pyramidal TIFF. Returns (H, W, C) float32.
+
+    Counterpart to :func:`_load_channel` for multi-channel StarDist models
+    (``model.config.n_channel_in > 1``, e.g. ``'2D_versatile_he'`` for H&E,
+    which needs a true 3-channel RGB stack — selecting a single channel via
+    :func:`_load_channel` and handing it a 2-D array raises
+    ``ValueError: axes (YXC) must be of length 2`` inside StarDist).
+    """
+    import tifffile
+
+    dim = spec.dimension_order
+    has_c = "C" in dim
+
+    if region_px is not None:
+        row_min, row_max, col_min, col_max = region_px
+        try:
+            import zarr
+            with tifffile.TiffFile(spec.path) as tf:
+                store = tf.series[0].levels[0].aszarr()
+            z = zarr.open(store, mode="r")
+            slices: list = []
+            kept_dim = ""
+            for ax in dim:
+                if ax == "T":
+                    slices.append(0)
+                elif ax == "C":
+                    slices.append(slice(None))
+                    kept_dim += ax
+                elif ax == "Z":
+                    if has_c:
+                        slices.append(0)
+                    else:
+                        slices.append(slice(None))
+                        kept_dim += ax
+                elif ax == "Y":
+                    slices.append(slice(row_min, row_max))
+                    kept_dim += ax
+                elif ax == "X":
+                    slices.append(slice(col_min, col_max))
+                    kept_dim += ax
+                else:
+                    slices.append(0)
+            img = np.asarray(z[tuple(slices)])
+            return _to_hwc(img, kept_dim).astype(np.float32)
+        except Exception:
+            # Fallback: load full level and slice.
+            with tifffile.TiffFile(spec.path) as tf:
+                img = tf.series[0].levels[0].asarray()
+            img = _to_hwc(img, dim)
+            return img[row_min:row_max, col_min:col_max].astype(np.float32)
+
+    with tifffile.TiffFile(spec.path) as tf:
+        img = tf.series[0].levels[0].asarray()
+
+    return _to_hwc(img, dim).astype(np.float32)
+
+
 def _masks_to_adata(
     masks: np.ndarray,
     spec: ImageSpec,
@@ -283,7 +373,7 @@ def segment_cellpose(
     source: "ImageSpec | ad.AnnData | object",
     *,
     channel: int | str = 0,
-    model_type: str = "cyto2",
+    pretrained_model: str = "cpsam_v2",
     diameter: float | None = None,
     flow_threshold: float = 0.4,
     cellprob_threshold: float = 0.0,
@@ -308,7 +398,7 @@ def segment_cellpose(
     channel
         Channel index (int) or channel name (str) to run Cellpose on.
         Use the nuclear/DAPI channel for ``model_type='nuclei'``.
-    model_type
+    pretrained_model
         Cellpose model to use.  Common choices: ``'cyto2'`` (whole-cell),
         ``'nuclei'`` (nuclear segmentation).
     diameter
@@ -374,10 +464,10 @@ def segment_cellpose(
     log.info("segment_cellpose: loading channel %r from %s", channel, spec.path)
     img = _load_channel(spec, channel, region_px=region_px)
 
-    model = cp_models.CellposeModel(model_type=model_type, gpu=gpu)
+    model = cp_models.CellposeModel(pretrained_model=pretrained_model, gpu=gpu)
     log.info(
         "segment_cellpose: running %s on image %s (diameter=%s)",
-        model_type, img.shape, diameter,
+        pretrained_model, img.shape, diameter,
     )
     masks, _, _ = model.eval(
         img,
@@ -480,13 +570,29 @@ def segment_stardist(
             region_um, region_px[0], region_px[1], region_px[2], region_px[3],
         )
 
-    log.info("segment_stardist: loading channel %r from %s", channel, spec.path)
-    img = _load_channel(spec, channel, region_px=region_px)
+    model = StarDist2D.from_pretrained(model_name)
+
+    # Multi-channel models (e.g. '2D_versatile_he', trained on 3-channel RGB
+    # H&E) need the full channel stack -- axes='YXC' with n_channel_in==3 --
+    # not a single selected channel. Loading just one channel and handing the
+    # model a 2-D array raises "axes (YXC) must be of length 2" inside
+    # StarDist. Single-channel models (e.g. '2D_versatile_fluo') keep the
+    # existing behavior: load exactly the requested `channel`.
+    n_channel_in = getattr(model.config, "n_channel_in", 1)
+    if n_channel_in > 1:
+        log.info(
+            "segment_stardist: model expects %d channels; loading all channels from %s",
+            n_channel_in, spec.path,
+        )
+        img = _load_all_channels(spec, region_px=region_px)
+        norm_axis = (0, 1)  # per-channel percentiles over (Y, X), not pooled across channels
+    else:
+        log.info("segment_stardist: loading channel %r from %s", channel, spec.path)
+        img = _load_channel(spec, channel, region_px=region_px)
+        norm_axis = None
 
     if normalize:
-        img = csbdeep_normalize(img, norm_pct_low, norm_pct_high)
-
-    model = StarDist2D.from_pretrained(model_name)
+        img = csbdeep_normalize(img, norm_pct_low, norm_pct_high, axis=norm_axis)
 
     predict_kwargs: dict = {}
     if prob_thresh is not None:
@@ -500,10 +606,20 @@ def segment_stardist(
     n_found = int(labels.max())
     log.info("segment_stardist: found %d cells", n_found)
 
-    # StarDist returns polygon vertices directly in details['coord']
-    # as (n_cells, n_verts, 2) in (y, x) pixel order.
-    # Use them instead of running find_contours on the label mask.
-    coord_yx = details["coord"]  # (n_cells, n_verts, 2)
+    if n_found == 0:
+        log.warning("No cells found in segmentation mask.")
+        adata = ad.AnnData()
+        adata.obsm["spatial"] = np.zeros((0, 2), dtype=np.float32)
+        adata.obsm["cell_boundaries"] = ak.Array([])
+        return adata
+
+    # StarDist returns polygon vertices directly in details['coord'], but as
+    # (n_cells, 2, n_rays) -- axis 1 is the (y, x) pair, axis 2 is the ray
+    # vertices (confirmed against details['points']: coord.mean(axis=2)
+    # matches the reported cell centers). Transpose to (n_cells, n_verts, 2)
+    # so downstream code can iterate per-cell (n_verts, 2) vertex arrays.
+    # Use these directly instead of running find_contours on the label mask.
+    coord_yx = np.transpose(details["coord"], (0, 2, 1))  # (n_cells, n_verts, 2)
 
     # Apply region offset so coordinates are in full-image pixel space.
     if offset_yx != (0, 0):

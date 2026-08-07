@@ -34,6 +34,9 @@ question you actually have.
 | [`07_banksy_spatial_domains.ipynb`](07_banksy_spatial_domains.ipynb) | What if I want clusters that bake in spatial context directly, instead of checking for spatial structure after the fact? BANKSY feature augmentation, built by hand once and then via the `banksy_sweep` convenience. |
 | [`08_multi_sample_and_persistence.ipynb`](08_multi_sample_and_persistence.ipynb) | I have more than one Xenium run — how do I analyze them together without mixing up incompatible coordinate systems? `concat_samples`, the library's built-in single-library plotting guard, and a deeper save/load round-trip. |
 | [`09_merscope_and_cosmx.ipynb`](09_merscope_and_cosmx.ipynb) | Does the same playbook work if my data didn't come from Xenium? The same load → QC/filter → normalize shape repeated on Vizgen MERSCOPE and NanoString CosMx data, with what's identical and what's platform-specific called out explicitly. |
+| [`10_gradient_and_flux.ipynb`](10_gradient_and_flux.ipynb) | Beyond *whether* a gene is spatially clustered, which way is it flowing? Per-cell MLS expression gradients, gridded streamlines and divergence, permutation-based directional significance, cross-compartment flux between Leiden clusters, Coifman–Lafon graph-Laplacian diffusion and spectral eigenmodes, and phenomenological decay-length fitting. |
+| [`11_parameter_deep_dive.ipynb`](11_parameter_deep_dive.ipynb) | Every other notebook picks one reasonable value per parameter and moves on — when should I actually trust that default, and when does my data demand something else? Sweeps single parameters (KNN/radius/Delaunay graph settings, Leiden resolution, BANKSY λ, diffusion steps, and more) across a representative range and shows the qualitative and quantitative effect on the downstream result. |
+| [`12_visium_hd.ipynb`](12_visium_hd.ipynb) | My data is Visium HD, not imaging-based — there's no segmentation out of the box, and the bin matrix is huge. How do I load it lazily, convert resolution, and get real cells out of it? Loading native 2µm bins lazily, materializing a region on demand, bespoke 8µm/16µm rebinning, native Space Ranger segmentation vs. the bin2cell nucleus-segmentation-and-bin-assignment path (with its PCA-transcriptional-similarity tie-break), then the standard downstream pipeline on the resulting cells. |
 
 ## Conventions shared by every notebook
 
@@ -68,3 +71,6 @@ uv run --with jupyter --with nbconvert --with ipykernel \
 
 `09_merscope_and_cosmx.ipynb` downloads larger public datasets (~126 MB and
 ~155 MB respectively) on first run; everything else downloads in seconds.
+`12_visium_hd.ipynb` downloads two Visium HD datasets (a ~297 MB tiny
+smoke-test run with native segmentation, and a larger real run used to
+demonstrate the bin2cell path) on first run.
