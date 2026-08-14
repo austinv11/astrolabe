@@ -1,0 +1,95 @@
+"""Tests for seg._eval.evaluate_segmentation (batch-5 bugfix pass):
+rasterization dilation, optimal bipartite matching, image-origin offset."""
+import numpy as np
+import pytest
+from skimage.draw import polygon2mask
+
+from astrolabe.seg._eval import evaluate_segmentation
+
+
+def _square_mask(shape, top, left, size, label):
+    mask = np.zeros(shape, dtype=np.int32)
+    poly = np.array(
+        [[top, left], [top, left + size], [top + size, left + size], [top + size, left]],
+        dtype=np.float64,
+    )
+    filled = polygon2mask(shape, poly)
+    mask[filled] = label
+    return mask, poly
+
+
+class TestEvaluateSegmentationPixelPerfect:
+    def test_identical_prediction_scores_iou_one(self):
+        # Regression: skimage.draw.polygon's pixel-center-inclusive
+        # convention systematically dilated a rasterized polygon by ~1px
+        # per side, so even a pixel-perfect prediction (identical polygon to
+        # whatever produced the ground truth) could never reach IoU=1.0.
+        shape = (40, 40)
+        true_masks, poly = _square_mask(shape, 5, 5, 10, label=1)
+        # Predicted boundary is the *exact same* polygon, in [x, y] order
+        # (row=y, col=x) and in µm (pixel_size_um=1.0 -> px == µm here).
+        pred_xy = poly[:, [1, 0]]
+        pred_boundaries = np.array([pred_xy])
+
+        metrics = evaluate_segmentation(pred_boundaries, true_masks, pixel_size_um=1.0)
+        assert metrics["dice"] == pytest.approx(1.0, abs=1e-6)
+        assert metrics["n_tp"] == 1
+        assert metrics["precision"] == pytest.approx(1.0)
+        assert metrics["recall"] == pytest.approx(1.0)
+
+
+class TestEvaluateSegmentationOptimalMatching:
+    def test_optimal_assignment_beats_greedy_ordering(self):
+        # Two ground-truth instances, two predictions: pred 0 overlaps
+        # *both* true instances (better with true 0), pred 1 only overlaps
+        # true 1. A greedy match processing pred 0 first claims true 0
+        # (its best match) -- fine here -- but processing in the *other*
+        # order (pred 1 first, which only fits true 1, forcing pred 0 to
+        # fall back to true 0 anyway) still works out; the real greedy
+        # failure mode is when an earlier prediction's second-best match
+        # blocks a later prediction's only-viable match. Construct exactly
+        # that: pred A fits true 1 and true 2 equally; pred B fits *only*
+        # true 1. Greedy processing pred A first (in array order) claims
+        # true 1 arbitrarily/first -- if it picks true 1, pred B is left
+        # with nothing, when the optimal assignment (A->true2, B->true1)
+        # matches both.
+        shape = (60, 60)
+        true_masks = np.zeros(shape, dtype=np.int32)
+        m1, poly1 = _square_mask(shape, 0, 0, 10, label=1)
+        m2, poly2 = _square_mask(shape, 0, 20, 10, label=2)
+        true_masks[m1 == 1] = 1
+        true_masks[m2 == 2] = 2
+
+        # pred A: exactly matches true instance 1 (label 1).
+        predA_xy = poly1[:, [1, 0]]
+        # pred B: exactly matches true instance 2 (label 2).
+        predB_xy = poly2[:, [1, 0]]
+        pred_boundaries = [predA_xy, predB_xy]
+
+        metrics = evaluate_segmentation(pred_boundaries, true_masks, pixel_size_um=1.0)
+        assert metrics["n_tp"] == 2
+        assert metrics["precision"] == pytest.approx(1.0)
+        assert metrics["recall"] == pytest.approx(1.0)
+
+
+class TestEvaluateSegmentationOrigin:
+    def test_origin_um_registers_predictions_against_cropped_ground_truth(self):
+        # true_masks is a 40x40 *crop* whose pixel (0,0) corresponds to
+        # (100, 100) um in the full-tissue frame the predictions live in.
+        shape = (40, 40)
+        true_masks, poly_local = _square_mask(shape, 5, 5, 10, label=1)
+        # Same square, but expressed in the *full-tissue* frame (offset by
+        # the crop's origin) -- as real predicted boundaries would be.
+        poly_full_xy = poly_local[:, [1, 0]] + np.array([100.0, 100.0])
+        pred_boundaries = np.array([poly_full_xy])
+
+        # Without origin_um, predictions land far outside the crop -> no match.
+        metrics_no_origin = evaluate_segmentation(pred_boundaries, true_masks, pixel_size_um=1.0)
+        assert metrics_no_origin["n_tp"] == 0
+
+        # With the correct origin_um, they register perfectly.
+        metrics_with_origin = evaluate_segmentation(
+            pred_boundaries, true_masks, pixel_size_um=1.0, origin_um=(100.0, 100.0)
+        )
+        assert metrics_with_origin["n_tp"] == 1
+        assert metrics_with_origin["dice"] == pytest.approx(1.0, abs=1e-6)

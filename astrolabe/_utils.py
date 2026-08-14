@@ -345,8 +345,14 @@ def _aggregate_sparse_by_group(X, group_ids: np.ndarray, n_groups: int):
     """
     n_rows = X.shape[0]
     group_ids = np.asarray(group_ids, dtype=np.int64)
+    # indicator's dtype matches X's (not a hardcoded float64): scipy's
+    # matmul promotes to the wider of the two operand dtypes, so a
+    # float64 indicator against a float32 X (the common case for count
+    # matrices) silently doubled peak memory on the largest Visium HD
+    # bin matrices this is used on.
+    indicator_dtype = X.dtype if np.issubdtype(X.dtype, np.floating) else np.float32
     indicator = sp.coo_matrix(
-        (np.ones(n_rows, dtype=np.float64), (group_ids, np.arange(n_rows))),
+        (np.ones(n_rows, dtype=indicator_dtype), (group_ids, np.arange(n_rows))),
         shape=(n_groups, n_rows),
     ).tocsr()
     return (indicator @ X).tocsr()
@@ -590,3 +596,34 @@ def _resolve_adata(
     """
     adata, _ = _resolve_adata_and_modality(data, modality)
     return adata
+
+
+_LIBRARY_ID_KEY = "library_id"
+
+
+def _check_single_library(adata: ad.AnnData) -> None:
+    """Raise a clear error when cells from multiple libraries are present.
+
+    Spatial coordinates are independent per Xenium run — each run starts its
+    own µm coordinate frame from (0, 0). Computing spatial statistics or
+    plotting cells from different runs together silently mixes unrelated
+    tissue sections, which is almost never the desired behavior. Shared by
+    every spatially-aware ``pl``/``tl`` function that reads per-cell
+    coordinates (``obsm['spatial']``) — a ``obs['library_id']`` column is
+    written by :func:`astrolabe.io.concat_samples`.
+    """
+    if _LIBRARY_ID_KEY not in adata.obs.columns:
+        return
+    libs = adata.obs[_LIBRARY_ID_KEY].unique()
+    if len(libs) <= 1:
+        return
+    lib_list = sorted(str(l) for l in libs)
+    first = lib_list[0]
+    raise ValueError(
+        f"This AnnData contains cells from {len(libs)} libraries: {lib_list}.\n"
+        f"Each Xenium run has its own independent µm coordinate frame — computing "
+        f"spatial statistics or plotting them together mixes unrelated tissue "
+        f"sections on the same axes.\n\n"
+        f"Filter to a single sample first:\n"
+        f'    adata_sub = adata[adata.obs["{_LIBRARY_ID_KEY}"] == "{first}"]'
+    )

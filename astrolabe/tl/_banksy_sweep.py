@@ -28,7 +28,7 @@ def banksy_sweep(
     *,
     lambda_params: list[float] = (0.0, 0.2, 0.5, 0.8),
     resolutions: list[float] = (0.3, 0.5, 1.0),
-    n_pcs: int = 30,
+    n_pcs: int = 50,
     n_neighbors: int = 15,
     agf: bool = False,
     agf_weight: float = 0.5,
@@ -76,7 +76,12 @@ def banksy_sweep(
     resolutions
         Leiden resolution values to sweep for each λ.
     n_pcs
-        Number of PCA components for the BANKSY embedding.
+        Number of PCA components for the BANKSY embedding. Matches
+        :func:`~astrolabe.tl.pca`'s own default (``50``) -- the two used to
+        silently diverge (this defaulted to ``30``), producing genuinely
+        different cluster counts (13 vs 11 observed on real data at
+        identical λ/resolution) between a manual BANKSY run and a sweep run
+        with no indication anything differed.
     n_neighbors
         Neighbors used when building the KNN graph on the BANKSY PCA
         embedding for Leiden.
@@ -130,11 +135,24 @@ def banksy_sweep(
     # needs to be serialized across λ workers.
     obs_lock = threading.Lock()
 
-    def _run_lambda(lam: float) -> list[dict]:
-        lam_tag = f"{lam:.2f}".rstrip("0").rstrip(".")
-        tmp_key = f"_banksy_tmp_{lam_tag}"
+    def _run_lambda(lam_idx: int, lam: float) -> list[dict]:
+        # Internal/ephemeral per-lambda keys are namespaced by loop *index*,
+        # not a rounded-and-stripped "{lam:.2f}" string -- two distinct
+        # lambda values that happen to round to the same 2 decimals (e.g.
+        # 0.201 and 0.204 both -> "0.2") used to collide onto the *same*
+        # obsm/obsp/uns keys, silently overwriting one run's intermediate
+        # state with another's under n_jobs=1, and raising a KeyError when
+        # one thread's cleanup deleted a key another thread was still using
+        # under n_jobs>1. An index is unique by construction regardless of
+        # how close two lambda values are.
+        tmp_key = f"_banksy_tmp_{lam_idx}"
         pca_key = f"{tmp_key}_pca"
         neighbors_key_lam = f"{tmp_key}_neighbors"
+        # The user-facing obs_key tag stays human-readable, but uses `:g`
+        # (up to ~6 significant digits, no fixed-decimal truncation) instead
+        # of the lossy `.2f`+strip -- collision-free for any lambda/
+        # resolution values a user would plausibly pass as distinct.
+        lam_tag = f"{lam:g}"
 
         banksy_matrix(
             adata,
@@ -159,7 +177,7 @@ def banksy_sweep(
 
         lam_records = []
         for res in resolutions:
-            res_tag = f"{res:.2f}".rstrip("0").rstrip(".")
+            res_tag = f"{res:g}"
             obs_key = f"{key_added}_L{lam_tag}_R{res_tag}"
 
             with obs_lock:
@@ -198,7 +216,7 @@ def banksy_sweep(
         return lam_records
 
     results = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_run_lambda)(lam) for lam in lambda_params
+        delayed(_run_lambda)(i, lam) for i, lam in enumerate(lambda_params)
     )
     records = [row for lam_records in results for row in lam_records]
 

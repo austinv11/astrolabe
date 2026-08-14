@@ -9,7 +9,7 @@ called in sequence, not as a single monolithic pipeline::
     ab.pp.normalize_total(mdata)
     ab.pp.log1p(mdata)
     ab.tl.spatial_neighbors(mdata)
-    ab.tl.cluster(mdata)
+    ab.tl.cluster(mdata, neighbors_key='spatial_neighbors')
 
 Functions
 ---------
@@ -279,7 +279,7 @@ def filter_xenium(
     >>> ab.pp.normalize_total(mdata)
     >>> ab.pp.log1p(mdata)
     >>> ab.tl.spatial_neighbors(mdata)
-    >>> ab.tl.cluster(mdata)
+    >>> ab.tl.cluster(mdata, neighbors_key='spatial_neighbors')
     """
     import astrolabe.pp as pp
 
@@ -407,7 +407,7 @@ def filter_merscope(
     >>> ab.pp.normalize_total(mdata)
     >>> ab.pp.log1p(mdata)
     >>> ab.tl.spatial_neighbors(mdata)
-    >>> ab.tl.cluster(mdata)
+    >>> ab.tl.cluster(mdata, neighbors_key='spatial_neighbors')
     """
     import astrolabe.pp as pp
 
@@ -540,7 +540,7 @@ def filter_cosmx(
     >>> ab.pp.normalize_total(mdata)
     >>> ab.pp.log1p(mdata)
     >>> ab.tl.spatial_neighbors(mdata)
-    >>> ab.tl.cluster(mdata)
+    >>> ab.tl.cluster(mdata, neighbors_key='spatial_neighbors')
     """
     import astrolabe.pp as pp
 

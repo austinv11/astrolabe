@@ -1,0 +1,18 @@
+[project]
+name = "benchmark-bin2cell"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "astrolabe[cellpose]",
+    "bin2cell",
+    "geopandas",
+    "jupyter",
+    "ipykernel",
+    "nbconvert",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+astrolabe = { path = "../..", editable = true }

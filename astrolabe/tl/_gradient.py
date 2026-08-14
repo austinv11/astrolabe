@@ -56,7 +56,7 @@ import scipy.sparse as sp
 from joblib import Parallel, delayed
 from scipy.stats import false_discovery_control
 
-from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
+from astrolabe._utils import _check_single_library, _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _extract_values, _get_conn_matrix
 
 __all__ = [
@@ -107,20 +107,32 @@ def _diffuse_expression(
 
 
 def _edge_weights(
+    coords: np.ndarray,
     adata: ad.AnnData,
     conn_key: str,
-    dist_key: str,
     weight_by_distance: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (src, dst, weights) from the spatial graph COO representation."""
+    """Return (src, dst, weights) from the spatial graph COO representation.
+
+    Distances are recomputed directly from *coords*, not read from a stored
+    ``obsp`` distance matrix. That matrix is only guaranteed to carry an
+    entry for every edge under `tl.spatial_neighbors`' own default graph --
+    under `tl.blend_neighbors` (a joint spatial+expression graph CLAUDE.md
+    itself documents and recommends), a connectivity edge frequently has no
+    matching distance-matrix entry at all. A missing sparse entry reads as
+    a stored `0.0`, indistinguishable from two literally-coincident cells,
+    so `1.0 / (dist + 1e-8)` silently assigned those edges a weight of 1e8
+    -- six orders of magnitude too large -- corrupting 54% of edges in that
+    workflow. Recomputing Euclidean distance from coordinates has no such
+    "missing vs. genuinely zero" ambiguity and is O(n_edges), cheap relative
+    to the MLS solve this feeds.
+    """
     conn_coo = adata.obsp[conn_key].tocoo()
     src = conn_coo.row.astype(np.intp)
     dst = conn_coo.col.astype(np.intp)
 
-    if weight_by_distance and dist_key in adata.obsp:
-        dist_csr = adata.obsp[dist_key].tocsr()
-        # Element-wise fancy indexing: (n_edges,) via matrix broadcast
-        dists = np.asarray(dist_csr[src, dst], dtype=np.float64).ravel()
+    if weight_by_distance:
+        dists = np.linalg.norm(coords[dst] - coords[src], axis=1)
         w = 1.0 / (dists + 1e-8)
     else:
         w = np.ones(len(src), dtype=np.float64)
@@ -180,12 +192,26 @@ def _mls_gradient(
     return gradients.astype(np.float32)
 
 
-def _mean_resultant_length(angles: np.ndarray) -> float:
-    """Circular mean resultant length R̄ ∈ [0, 1] from an array of angles (rad).
+def _mean_resultant_length(grad: np.ndarray, magnitude_eps: float = 1e-8) -> float:
+    """Circular mean resultant length R̄ ∈ [0, 1] of gradient vector directions.
 
     R̄ = 1 indicates perfectly aligned directions; R̄ ≈ 0 indicates uniform.
     Mardia & Jupp 2000 (Directional Statistics, Wiley), eq. 2.2.
+
+    Takes the raw ``(n, 2)`` gradient vectors, not pre-computed angles, and
+    excludes near-zero-magnitude ones before computing directions:
+    ``arctan2(0, 0) = 0`` is a real, defined numpy return value, not
+    NaN/undefined, so degenerate zero gradients (routine in
+    diffusion-smoothed sparse/zero-inflated regions) would otherwise all
+    pile up at angle exactly 0 and artificially inflate R̄ -- pure numerical
+    noise reading as strong directional coherence (measured: real signal
+    R̄=0.48 inflated to a reported 0.92 on affected data).
     """
+    magnitude = np.linalg.norm(grad, axis=1)
+    valid = magnitude > magnitude_eps
+    if not np.any(valid):
+        return float("nan")
+    angles = np.arctan2(grad[valid, 1], grad[valid, 0])
     return float(np.abs(np.mean(np.exp(1j * angles))))
 
 
@@ -273,7 +299,13 @@ def expression_gradient(
         If ``True`` (default), weight neighbors by inverse Euclidean distance.
         If ``False``, all neighbors receive equal weight.
     key_added
-        Base name for output keys.  Default: ``'gradient_{key}'``.
+        Prefix for output keys, combined with each entry of *keys* as
+        ``'{key_added}_{key}'``. ``None`` (default) uses the plain
+        ``'gradient_{key}'`` naming below. Pass this same value as
+        ``gradient_key_added`` to :func:`~astrolabe.tl.gradient_field`,
+        :func:`~astrolabe.tl.gradient_significance`, or
+        :func:`~astrolabe.tl.compartment_flux` to read gradients computed
+        with a custom prefix.
 
     Writes
     ------
@@ -288,6 +320,8 @@ def expression_gradient(
     ``uns['gradient_params']``
         Dict of parameters used for this run.
     """
+    _check_single_library(adata)
+
     if isinstance(keys, str):
         keys = [keys]
 
@@ -298,9 +332,9 @@ def expression_gradient(
         )
     coords = adata.obsm[spatial_key][:, :2].astype(np.float64)
 
-    conn_key, dist_key = _get_neighbors_keys(adata, neighbors_key)
+    conn_key, _dist_key = _get_neighbors_keys(adata, neighbors_key)
     conn_mat = adata.obsp[conn_key]
-    src, dst, w = _edge_weights(adata, conn_key, dist_key, weight_by_distance)
+    src, dst, w = _edge_weights(coords, adata, conn_key, weight_by_distance)
 
     # Warn on very sparse inputs
     for key in keys:
@@ -326,7 +360,14 @@ def expression_gradient(
 
         grad = _mls_gradient(coords, f.astype(np.float64), src, dst, w)
 
-        base = key_added or f"gradient_{key}"
+        # A plain `key_added or f"gradient_{key}"` used to reuse the exact
+        # same literal `key_added` string for every key in a multi-key call,
+        # so obsm[base] was silently overwritten by each subsequent key --
+        # only the last gene's gradient survived. `key_added` is now always
+        # combined with `key` as a prefix, so it stays unique per key; the
+        # `key_added=None` default naming (by far the common case) is
+        # unchanged.
+        base = f"{key_added}_{key}" if key_added else f"gradient_{key}"
         adata.obsm[base] = grad
         adata.obs[f"{base}_magnitude"] = np.linalg.norm(grad, axis=1).astype(np.float32)
         adata.obs[f"{base}_direction"] = np.arctan2(
@@ -338,7 +379,7 @@ def expression_gradient(
             "directional coherence R̄=%.3f",
             key,
             float(adata.obs[f"{base}_magnitude"].mean()),
-            _mean_resultant_length(adata.obs[f"{base}_direction"].to_numpy()),
+            _mean_resultant_length(grad),
         )
 
     adata.uns["gradient_params"] = {
@@ -358,7 +399,8 @@ def gradient_field(
     spatial_key: str = "spatial",
     n_grid: int = 50,
     bandwidth_um: float | None = None,
-    mask_threshold: float = -5.0,
+    mask_threshold: float = 1.0,
+    gradient_key_added: str | None = None,
     key_added: str | None = None,
 ) -> None:
     """Interpolate per-cell gradient vectors onto a masked regular grid.
@@ -372,8 +414,14 @@ def gradient_field(
     via ``numpy.gradient`` (second-order central differences).
 
     A tissue-support mask is derived from the log-density of a Gaussian KDE
-    fit to cell positions; grid points in tissue voids (log-density <
-    *mask_threshold*) have U/V/divergence/curl set to ``NaN``.
+    fit to cell positions; grid points in tissue voids have U/V/divergence/curl
+    set to ``NaN``. The mask cutoff is a **percentile of the same KDE's
+    log-density evaluated at the actual cell locations**, not an absolute
+    log-density value — an absolute cutoff has no fixed meaning across
+    datasets (KDE log-density scale depends on tissue footprint, cell count,
+    and bandwidth; real Xenium runs typically sit around −12 to −18, so a
+    fixed threshold anywhere near 0 masks out every grid point, silently
+    returning an all-NaN field with no error).
 
     The grid field is the prerequisite for :func:`~astrolabe.pl.gradient_streamlines`
     and :func:`~astrolabe.pl.divergence_plot`.  The streamlines represent
@@ -388,7 +436,9 @@ def gradient_field(
         Modality key when *data* is a MuData.
     key
         Feature key used in :func:`~astrolabe.tl.expression_gradient`
-        (e.g. ``'EPCAM'`` → reads ``obsm['gradient_EPCAM']``).
+        (e.g. ``'EPCAM'`` → reads ``obsm['gradient_EPCAM']``, or
+        ``obsm['{gradient_key_added}_EPCAM']`` if that call used a custom
+        ``key_added``).
     spatial_key
         Key in ``obsm`` with ``(n_cells, 2)`` µm coordinates.
     n_grid
@@ -398,9 +448,16 @@ def gradient_field(
         KDE bandwidth for the tissue mask (µm).  Defaults to Scott's rule
         applied to the coordinate range.
     mask_threshold
-        Log-density threshold for the tissue mask.  Grid points below this
-        value are set to ``NaN``.  Decrease (more negative) to expand the
-        masked region; increase to shrink it.
+        Percentile (0-100) of the cell-location KDE log-density used as the
+        tissue-void cutoff.  Grid points below this percentile are set to
+        ``NaN``.  ``1.0`` (default) masks out only the sparsest ~1% of the
+        density range actually observed at real cell locations. Increase to
+        shrink the supported region (stricter); decrease to expand it.
+    gradient_key_added
+        ``key_added`` used in the :func:`~astrolabe.tl.expression_gradient`
+        call this reads from, if it was given a custom one. ``None``
+        (default) reads ``obsm['gradient_{key}']``, matching
+        :func:`~astrolabe.tl.expression_gradient`'s own default.
 
     Writes ``uns[key_added or f'gradient_field_{key}']``, mirrored to
     ``mdata.uns[<that key>][<modality>]`` when called on a MuData.
@@ -417,11 +474,14 @@ def gradient_field(
     from scipy.interpolate import RBFInterpolator
     from scipy.stats import gaussian_kde
 
-    grad_key = f"gradient_{key}"
+    _check_single_library(adata)
+
+    grad_key = f"{gradient_key_added}_{key}" if gradient_key_added else f"gradient_{key}"
     if grad_key not in adata.obsm:
+        key_added_hint = f", key_added='{gradient_key_added}'" if gradient_key_added else ""
         raise KeyError(
             f"obsm['{grad_key}'] not found. "
-            f"Run ab.tl.expression_gradient(mdata, keys=['{key}']) first."
+            f"Run ab.tl.expression_gradient(mdata, keys=['{key}']{key_added_hint}) first."
         )
 
     coords = adata.obsm[spatial_key][:, :2].astype(np.float64)
@@ -445,12 +505,19 @@ def gradient_field(
     U = rbf_u(grid_pts).reshape(n_grid, n_grid)
     V = rbf_v(grid_pts).reshape(n_grid, n_grid)
 
-    # Tissue mask via Gaussian KDE log-density
+    # Tissue mask via Gaussian KDE log-density. The cutoff is a percentile of
+    # the *same* KDE's log-density evaluated at actual cell locations, not an
+    # absolute log-density value -- that scale depends on tissue footprint,
+    # cell count, and bandwidth, so a fixed absolute cutoff has no portable
+    # meaning across datasets (see docstring).
     bw = bandwidth_um if bandwidth_um is not None else "scott"
+    cutoff = None
     try:
         kde = gaussian_kde(coords.T, bw_method=bw)
+        cell_log_dens = np.log(kde(coords.T))
+        cutoff = float(np.percentile(cell_log_dens, mask_threshold))
         log_dens = np.log(kde(grid_pts.T)).reshape(n_grid, n_grid)
-        mask = log_dens > mask_threshold
+        mask = log_dens > cutoff
     except Exception:
         log.warning("gradient_field: KDE tissue mask failed; using all-True mask.")
         mask = np.ones((n_grid, n_grid), dtype=bool)
@@ -481,6 +548,7 @@ def gradient_field(
             "spatial_key": spatial_key,
             "n_grid": n_grid,
             "mask_threshold": mask_threshold,
+            "mask_log_density_cutoff": cutoff,
         },
     }
     log.info(
@@ -502,6 +570,7 @@ def gradient_significance(
     n_perms: int = 200,
     random_state: int = 0,
     n_jobs: int = 1,
+    gradient_key_added: str | None = None,
     key_added: str = "gradient_significance",
 ) -> None:
     """Permutation test for gradient magnitude and directional coherence.
@@ -552,6 +621,10 @@ def gradient_significance(
         permutations; ``-1`` uses all available cores (per-iteration
         progress logging is skipped since iteration order isn't meaningful
         when parallel).
+    gradient_key_added
+        ``key_added`` used in the :func:`~astrolabe.tl.expression_gradient`
+        call this reads from, if it was given a custom one. ``None``
+        (default) reads ``obsm['gradient_{key}']``.
     key_added
         Key in ``uns`` for results.
 
@@ -569,10 +642,12 @@ def gradient_significance(
         - ``p_magnitude_adj`` — Benjamini–Hochberg adjusted p-value
         - ``p_coherence_adj`` — Benjamini–Hochberg adjusted p-value
     """
+    _check_single_library(adata)
+
     if isinstance(keys, str):
         keys = [keys]
 
-    conn_key, dist_key = _get_neighbors_keys(adata, neighbors_key)
+    conn_key, _dist_key = _get_neighbors_keys(adata, neighbors_key)
     conn_mat = adata.obsp[conn_key]
     coords = adata.obsm["spatial"][:, :2].astype(np.float64)
     n_cells = len(coords)
@@ -582,19 +657,20 @@ def gradient_significance(
     params = adata.uns.get("gradient_params", {})
     weight_by_distance = params.get("weight_by_distance", True)
     n_diffusion_steps = params.get("n_diffusion_steps", 1)
-    src, dst, w = _edge_weights(adata, conn_key, dist_key, weight_by_distance)
+    src, dst, w = _edge_weights(coords, adata, conn_key, weight_by_distance)
 
     rows = []
     for key in keys:
-        grad_key = f"gradient_{key}"
+        grad_key = f"{gradient_key_added}_{key}" if gradient_key_added else f"gradient_{key}"
         if grad_key not in adata.obsm:
+            key_added_hint = f", key_added='{gradient_key_added}'" if gradient_key_added else ""
             raise KeyError(
                 f"obsm['{grad_key}'] not found. "
-                f"Run ab.tl.expression_gradient(mdata, keys=['{key}']) first."
+                f"Run ab.tl.expression_gradient(mdata, keys=['{key}']{key_added_hint}) first."
             )
         grad = adata.obsm[grad_key].astype(np.float64)
         obs_magnitude = float(np.linalg.norm(grad, axis=1).mean())
-        obs_coherence = _mean_resultant_length(np.arctan2(grad[:, 1], grad[:, 0]))
+        obs_coherence = _mean_resultant_length(grad)
 
         f = _extract_values(adata, key, layer)
 
@@ -605,7 +681,7 @@ def gradient_significance(
                 perm_f = _diffuse_expression(perm_f, conn_mat, n_diffusion_steps)
             perm_grad = _mls_gradient(coords, perm_f, src, dst, w).astype(np.float64)
             magnitude = float(np.linalg.norm(perm_grad, axis=1).mean())
-            coherence = _mean_resultant_length(np.arctan2(perm_grad[:, 1], perm_grad[:, 0]))
+            coherence = _mean_resultant_length(perm_grad)
             return magnitude, coherence
 
         # Each key consumes one draw from the shared rng to seed its own
@@ -632,8 +708,10 @@ def gradient_significance(
         null_magnitudes = np.array([r[0] for r in results], dtype=np.float64)
         null_coherences = np.array([r[1] for r in results], dtype=np.float64)
 
-        p_mag = float(np.mean(null_magnitudes >= obs_magnitude))
-        p_coh = float(np.mean(null_coherences >= obs_coherence))
+        # (k+1)/(n+1) floor -- an exact 0 isn't a valid Monte Carlo p-value
+        # estimate and breaks downstream -log10(p)/FDR steps.
+        p_mag = (int((null_magnitudes >= obs_magnitude).sum()) + 1.0) / (n_perms + 1.0)
+        p_coh = (int((null_coherences >= obs_coherence).sum()) + 1.0) / (n_perms + 1.0)
         rows.append(
             {
                 "key": key,
@@ -671,6 +749,7 @@ def compartment_flux(
     *,
     neighbors_key: str = "spatial_neighbors",
     spatial_key: str = "spatial",
+    gradient_key_added: str | None = None,
     key_added: str = "compartment_flux",
 ) -> None:
     """Net expression flux across cell-type/compartment boundaries.
@@ -704,6 +783,10 @@ def compartment_flux(
         Spatial graph key.
     spatial_key
         ``obsm`` key for µm coordinates.
+    gradient_key_added
+        ``key_added`` used in the :func:`~astrolabe.tl.expression_gradient`
+        call this reads from, if it was given a custom one. ``None``
+        (default) reads ``obsm['gradient_{key}']``.
     key_added
         Key in ``uns`` for results.
 
@@ -715,6 +798,8 @@ def compartment_flux(
         group B (NaN if no cross-boundary A→B edges exist).
         Mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
     """
+    _check_single_library(adata)
+
     if isinstance(keys, str):
         keys = [keys]
 
@@ -731,8 +816,17 @@ def compartment_flux(
     cats = labels.cat.categories.tolist()
     n_groups = len(cats)
 
-    # Find cross-boundary edges
-    cross_mask = codes[src_all] != codes[dst_all]
+    # Find cross-boundary edges. Cells with a missing/NaN `groupby` value get
+    # code -1 from pandas -- excluded here (not just left to fall out of
+    # `codes[src]!=codes[dst]`), since `np.add.at` below indexes flux_sum with
+    # these codes directly, and numpy silently treats a -1 index as "last
+    # row/column" rather than raising. Without this filter, any edge
+    # touching a NaN-labeled cell would wrap around and corrupt whichever
+    # real category happens to sort last, fabricating a same-category flux
+    # entry that looks like real biology.
+    has_label = codes[src_all] >= 0
+    has_label &= codes[dst_all] >= 0
+    cross_mask = has_label & (codes[src_all] != codes[dst_all])
     src_cross = src_all[cross_mask]
     dst_cross = dst_all[cross_mask]
 
@@ -744,11 +838,12 @@ def compartment_flux(
 
     results: dict[str, pd.DataFrame] = {}
     for key in keys:
-        grad_key = f"gradient_{key}"
+        grad_key = f"{gradient_key_added}_{key}" if gradient_key_added else f"gradient_{key}"
         if grad_key not in adata.obsm:
+            key_added_hint = f", key_added='{gradient_key_added}'" if gradient_key_added else ""
             raise KeyError(
                 f"obsm['{grad_key}'] not found. "
-                f"Run ab.tl.expression_gradient(mdata, keys=['{key}']) first."
+                f"Run ab.tl.expression_gradient(mdata, keys=['{key}']{key_added_hint}) first."
             )
         grad = adata.obsm[grad_key].astype(np.float64)
 
@@ -794,11 +889,12 @@ def spatial_diffusion(
     *,
     spatial_key: str = "spatial",
     neighbors_key: str = "spatial_neighbors",
-    n_steps: int = 5,
     normalize: Literal["coifman_lafon", "row"] = "coifman_lafon",
     compute_eigenmodes: bool = False,
     n_eigenmodes: int = 10,
     diffusion_score: bool = False,
+    max_diffusion_steps: int = 500,
+    diffusion_convergence_tol: float = 0.2,
     key_added: str = "diffusion",
 ) -> None:
     """Graph heat-equation diffusion on the spatial cell graph.
@@ -814,18 +910,25 @@ def spatial_diffusion(
 
     .. math::
 
-        f(t) \\approx M^n\\,f_0, \\quad n = \\text{n\\_steps}
+        f(t) \\approx M^n\\,f_0
 
     Uses the **Coifman–Lafon density normalization** (α = 1) which
     separates the geometry of the tissue from cell-density variation:
 
     .. math::
 
-        \\hat{K}_{ij} = \\frac{K_{ij}}{\\sqrt{q_i q_j}},
+        \\hat{K}_{ij} = \\frac{K_{ij}}{q_i q_j},
         \\quad q_i = \\sum_j K_{ij}
 
     Without this normalization, naive row-normalization causes diffusion
-    to track high-density tumor cores rather than expression geometry.
+    to track high-density tumor cores rather than expression geometry. α = 1
+    (full `q_i q_j` in the denominator) gives the strongest density-invariance
+    guarantee in Coifman & Lafon's general α-family (`K / (q_i^α q_j^α)`,
+    α ∈ [0, 1]) — α = 1/2 (the more common "graph Laplacian" choice,
+    `K / sqrt(q_i q_j)`) only partially corrects for density and leaves
+    non-uniform sampling density measurably entangled with the diffusion
+    geometry, which is exactly the failure mode this normalization exists to
+    avoid (see the module docstring's motivation).
 
     **References:** Coifman & Lafon 2006 (Appl. Comput. Harmon. Anal.) —
     diffusion maps and density normalization; Andersson & Lundeberg 2021
@@ -843,8 +946,6 @@ def spatial_diffusion(
         ``obsm`` key for µm coordinates.
     neighbors_key
         Spatial graph key.
-    n_steps
-        Number of diffusion steps (higher = more smoothing).
     normalize
         Normalization strategy for the graph Laplacian:
 
@@ -858,9 +959,25 @@ def spatial_diffusion(
     n_eigenmodes
         Number of eigenmodes to compute when ``compute_eigenmodes=True``.
     diffusion_score
-        If ``True``, compute a Sepal-style time-to-uniformity score for every
-        gene in ``X`` and store in ``var['diffusion_score']``.  This ranks genes
-        by how long their spatial pattern persists under diffusion.
+        If ``True``, compute a literal Sepal-style (Andersson & Lundeberg
+        2021) **time-to-uniformity** score for every gene in ``X`` and
+        store in ``var['diffusion_score']``: starting from each gene's
+        observed expression, repeatedly apply the diffusion operator
+        ``f ← M @ f`` and report the number of steps until the pattern's
+        mean absolute deviation from the graph-wide mean, relative to
+        where it started, drops below ``diffusion_convergence_tol``. Genes
+        that never converge within ``max_diffusion_steps`` are
+        right-censored at that value. Higher scores mean a spatial pattern
+        that survives diffusion longer — i.e. more persistent / spatially
+        coherent.
+    max_diffusion_steps
+        Upper bound on diffusion steps per gene when ``diffusion_score=True``.
+        Genes that haven't converged by this step are censored at this
+        value rather than run indefinitely. Has no effect otherwise.
+    diffusion_convergence_tol
+        Relative mean-absolute-deviation threshold (from the graph-wide
+        mean) below which a gene's pattern is considered to have reached
+        uniformity, when ``diffusion_score=True``. Has no effect otherwise.
     key_added
         Key in ``uns`` for metadata.
 
@@ -873,10 +990,13 @@ def spatial_diffusion(
         ``(n_cells, n_eigenmodes)`` float64 — spatial Fourier modes
         (only when ``compute_eigenmodes=True``; adata-resident only).
     ``var['diffusion_score']``
-        float64 — Sepal-style persistence score per gene
+        float64 — Sepal-style steps-to-uniformity persistence score per
+        gene, right-censored at ``max_diffusion_steps``
         (only when ``diffusion_score=True``; adata-resident only).
     """
     from scipy.sparse.linalg import eigsh
+
+    _check_single_library(adata)
 
     conn_key, _ = _get_neighbors_keys(adata, neighbors_key)
     A = adata.obsp[conn_key].astype(np.float64)
@@ -885,9 +1005,11 @@ def spatial_diffusion(
         # Step 1: density normalization — d_i = sum_j K_ij
         d = np.asarray(A.sum(axis=1), dtype=np.float64).ravel()
         d[d == 0] = 1.0
-        D_inv_sqrt = sp.diags(1.0 / np.sqrt(d))
+        # alpha=1 (see docstring): full 1/(q_i q_j), not 1/sqrt(q_i q_j)
+        # (alpha=1/2) -- D_inv (not D_inv_sqrt) applied on both sides.
+        D_inv = sp.diags(1.0 / d)
         # Step 2: normalized kernel (symmetric)
-        A_hat = D_inv_sqrt @ A @ D_inv_sqrt
+        A_hat = D_inv @ A @ D_inv
     else:
         A_hat = A.copy()
 
@@ -900,7 +1022,6 @@ def spatial_diffusion(
         "params": {
             "spatial_key": spatial_key,
             "neighbors_key": neighbors_key,
-            "n_steps": n_steps,
             "normalize": normalize,
         }
     }
@@ -921,26 +1042,69 @@ def spatial_diffusion(
         uns_entry["eigenvalues"] = eigenvalues[sort_idx].tolist()
 
     if diffusion_score:
-        log.info("spatial_diffusion: computing per-gene diffusion scores …")
+        log.info(
+            "spatial_diffusion: computing per-gene steps-to-uniformity scores "
+            "(max_diffusion_steps=%d, tol=%.3f) …",
+            max_diffusion_steps, diffusion_convergence_tol,
+        )
         mat = adata.X
         if sp.issparse(mat):
             mat = mat.toarray()
         mat = np.asarray(mat, dtype=np.float64)
-        n_score_steps = max(n_steps, 5)
-        initial_var = mat.var(axis=0)
-        initial_var[initial_var == 0] = 1.0
+        n_genes = mat.shape[1]
+
+        # Literal Sepal (Andersson & Lundeberg 2021) time-to-uniformity
+        # definition: iterate f <- M @ f per gene until its mean absolute
+        # deviation from the graph-wide mean, relative to where it started,
+        # drops below `diffusion_convergence_tol`; report the step count.
+        # Replaces an earlier fixed-step variance-retained-ratio score
+        # (`final_var / initial_var` after a fixed n_steps) -- that score
+        # and this one both increase with persistence, but this is the
+        # reference metric itself rather than a fixed-horizon proxy for it.
+        zero_var = mat.var(axis=0) == 0  # equivalently: mean-abs-deviation == 0
+        target = mat.mean(axis=0)
+        scale = np.abs(mat - target).mean(axis=0)
+
+        scores = np.full(n_genes, float(max_diffusion_steps), dtype=np.float64)
+
+        # Batched across all still-unconverged genes at once; only the
+        # global loop (not each gene individually) exits early once every
+        # gene has converged. zero_var genes are excluded here (nothing to
+        # diffuse) and scored NaN below instead.
+        remaining = ~zero_var
         f_t = mat.copy()
-        for _ in range(n_score_steps):
-            f_t = (M @ f_t)
-        final_var = f_t.var(axis=0)
-        scores = 1.0 - (final_var / initial_var).clip(0.0, 1.0)
+        for t in range(1, max_diffusion_steps + 1):
+            if not remaining.any():
+                break
+            f_t = M @ f_t
+            rel_dev = np.abs(f_t - target).mean(axis=0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                rel_dev = np.where(scale > 0, rel_dev / scale, 0.0)
+            newly_converged = remaining & (rel_dev < diffusion_convergence_tol)
+            scores[newly_converged] = float(t)
+            remaining &= ~newly_converged
+
+        n_censored = int((remaining).sum())
+        if n_censored:
+            log.warning(
+                "spatial_diffusion: %d/%d genes did not converge within "
+                "max_diffusion_steps=%d; their scores are right-censored "
+                "at that value.",
+                n_censored, n_genes, max_diffusion_steps,
+            )
+
+        # A zero-variance (undetected/constant) gene has no real signal to
+        # diffuse at all -- excluded via NaN rather than left to read as a
+        # real (and, under this metric, minimum-possible) persistence score.
+        scores[zero_var] = np.nan
         adata.var["diffusion_score"] = scores.astype(np.float64)
+        uns_entry["params"]["max_diffusion_steps"] = max_diffusion_steps
+        uns_entry["params"]["diffusion_convergence_tol"] = diffusion_convergence_tol
 
     adata.uns[key_added] = uns_entry
     log.info(
-        "spatial_diffusion: %d cells, %d steps, normalize='%s'",
+        "spatial_diffusion: %d cells, normalize='%s'",
         adata.n_obs,
-        n_steps,
         normalize,
     )
 
@@ -1011,6 +1175,8 @@ def decay_length(
         ``mdata.uns[<that key>][<modality>]`` when called on a MuData.
     """
     from scipy.optimize import curve_fit
+
+    _check_single_library(adata)
 
     coords = adata.obsm[spatial_key][:, :2].astype(np.float64)
 

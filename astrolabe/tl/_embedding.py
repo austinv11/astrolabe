@@ -90,6 +90,7 @@ def pca(
     >>> # PCA on the BANKSY matrix
     >>> ab.pp.banksy_matrix(mdata, lambda_param=0.8)
     >>> ab.tl.pca(mdata, use_rep="X_banksy")
+    >>> ab.tl.transcriptional_neighbors(mdata)  # graph over the BANKSY-PCA embedding
     >>> ab.tl.cluster(mdata)
     """
     if use_rep is None and gpu_enabled():

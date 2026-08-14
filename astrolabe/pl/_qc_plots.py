@@ -79,11 +79,24 @@ def _feature_type_palette() -> dict[str, str]:
     }
 
 
-def _categorical_cmap(name: str | None) -> mcolors.Colormap:
-    """Resolve a categorical colormap: *name* if given, else the theme's core palette."""
-    if name is not None:
-        return plt.get_cmap(name)
-    return mcolors.ListedColormap(get_theme().cat_core)
+def _categorical_colors(cmap: str | None, n: int) -> list:
+    """Resolve *n* distinguishable categorical colors for a line/bar-per-category plot.
+
+    Mirrors `_build_cat_colors`'s (`pl/_spatial.py`) >8-category fallback for
+    astrolabe's own default theme palette (`cmap=None`): naively indexing the
+    8-hue `cat_core` with `i % 8` silently collides two categories onto one
+    color past 8 groups (routine with e.g. 9-10 Leiden clusters), so this
+    switches to the OKLCH-hue-sweep `_extended_cat_colors` ramp instead once
+    `n > 8`. An explicitly named `cmap` is respected as-is and still cycled
+    via modulo -- that's the user's own colormap choice, not astrolabe's
+    default palette, so the >8 fallback doesn't apply.
+    """
+    if cmap is None:
+        t = get_theme()
+        return list(t.cat_core if n <= 8 else _extended_cat_colors(n, t.name))
+    cmap_obj = plt.get_cmap(cmap)
+    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 10
+    return [cmap_obj(i % n_colors) for i in range(n)]
 
 
 @with_adata
@@ -719,8 +732,7 @@ def ripley_plot(
     else:
         fig = ax.get_figure()
 
-    cmap_obj = _categorical_cmap(cmap)
-    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 10
+    colors = _categorical_colors(cmap, len(cell_types))
     for i, ct in enumerate(cell_types):
         if ct not in result:
             continue
@@ -742,7 +754,7 @@ def ripley_plot(
         # even under pure CSR (verified: a synthetic CSR-labeled dataset
         # showed real L(d)-d ~ -56 at d=800 but plotted as ~ -856).
         l_d = l_vals
-        color = cmap_obj(i % n_colors)
+        color = colors[i]
         ax.plot(bins[:len(l_d)], l_d, label=ct, color=color)
         # Draw simulation envelope if available
         if hasattr(entry, "columns") and "L_hi" in entry.columns and "L_lo" in entry.columns:
@@ -794,13 +806,13 @@ def gene_qv_scatter(
     *gene_col*) or read from a pre-computed ``var`` column (*mean_qv_key*).
 
     .. note::
-        ``read_xenium``'s default auto-loaded ``uns['transcripts']`` excludes
-        control-probe transcripts (``include_controls=False``), so by default
-        control feature types have no Q-score to plot and only show up as an
-        empty legend entry. Call
-        ``ab.io.read_xenium_transcripts(data, include_controls=True)`` first
-        to repopulate ``uns['transcripts']`` with controls included, or pass
-        a controls-inclusive table via *transcripts=* directly.
+        ``read_xenium``'s default auto-loaded ``uns['transcripts']`` includes
+        control-probe transcripts (``include_controls=True``), so control
+        feature types get a real Q-score by default. If a control type still
+        shows no points, check whether it was later removed from ``var`` by
+        ``pp.filter_genes(exclude_controls=True)``/``pipeline.filter_xenium``
+        — that also drops its rows from ``uns['transcripts']`` — or whether
+        ``uns['transcripts']`` was reloaded with ``include_controls=False``.
 
     Parameters
     ----------
@@ -947,11 +959,11 @@ def gene_qv_scatter(
     unique_types = sorted(set(feature_types))
 
     # Assign a color to any feature type not in the palette
-    fallback_cmap = _categorical_cmap(None)
     known = set(effective_palette)
     extra = [ft for ft in unique_types if ft not in known]
+    fallback_colors = _categorical_colors(None, len(extra))
     for i, ft in enumerate(extra):
-        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 8))
+        effective_palette[ft] = mcolors.to_hex(fallback_colors[i])
 
     # Draw Gene Expression first (background), controls on top
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
@@ -1092,10 +1104,11 @@ def gene_detection_scatter(
 
     # Assign fallback colors for any unlisted types
     unique_types = sorted(set(feature_types))
-    fallback_cmap = _categorical_cmap(None)
     known = set(effective_palette)
-    for i, ft in enumerate(ft for ft in unique_types if ft not in known):
-        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 8))
+    extra = [ft for ft in unique_types if ft not in known]
+    fallback_colors = _categorical_colors(None, len(extra))
+    for i, ft in enumerate(extra):
+        effective_palette[ft] = mcolors.to_hex(fallback_colors[i])
 
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
 
@@ -1210,10 +1223,10 @@ def mean_variance_plot(
     effective_palette = {**_feature_type_palette(), **(palette or {})}
     unique_types = sorted(set(feature_types))
 
-    fallback_cmap = _categorical_cmap(None)
     extra = [ft for ft in unique_types if ft not in effective_palette]
+    fallback_colors = _categorical_colors(None, len(extra))
     for i, ft in enumerate(extra):
-        effective_palette[ft] = mcolors.to_hex(fallback_cmap(i % 8))
+        effective_palette[ft] = mcolors.to_hex(fallback_colors[i])
 
     # Gene Expression first (background), controls on top
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
@@ -2136,8 +2149,8 @@ def scatter_gate(
     log_x: bool = False,
     log_y: bool = False,
     cmap: str = _DEFAULT_CONTINUOUS_CMAP,
-    point_size: float = 2.0,
-    alpha: float = 0.4,
+    point_size: float | None = None,
+    alpha: float | None = None,
     show_counts: bool = True,
     title: str | None = None,
     figsize: tuple[float, float] = (6, 6),
@@ -2177,9 +2190,13 @@ def scatter_gate(
     cmap
         Colormap for density or third-channel coloring.
     point_size
-        Scatter point size in points².
+        Scatter point size in points². ``None`` (default) picks ``2.0`` for
+        large datasets (> 5,000 cells, where overplotting is the risk) or
+        ``6.0`` for smaller ones (where the risk is invisible sparse points
+        instead).
     alpha
-        Scatter point opacity.
+        Scatter point opacity. ``None`` (default) picks ``0.4``/``0.7`` using
+        the same size threshold as ``point_size``.
     show_counts
         Annotate each quadrant with its cell count and percentage.
     title
@@ -2200,6 +2217,17 @@ def scatter_gate(
     finite = np.isfinite(xv) & np.isfinite(yv)
     xf, yf = xv[finite], yv[finite]
 
+    # Small datasets need visibly larger, more opaque points -- the
+    # opposite risk of the large-dataset overplotting these defaults are
+    # normally tuned for. Reuses the same 5,000-cell threshold as the
+    # rasterization switch below for one consistent "small vs. large
+    # dataset" mental model.
+    small_dataset = len(xf) <= 5_000
+    if point_size is None:
+        point_size = 6.0 if small_dataset else 2.0
+    if alpha is None:
+        alpha = 0.7 if small_dataset else 0.4
+
     # ------------------------------------------------------------------ #
     # Gates                                                               #
     # ------------------------------------------------------------------ #
@@ -2218,7 +2246,8 @@ def scatter_gate(
             vmin=float(np.nanpercentile(c_scatter, 1)),
             vmax=float(np.nanpercentile(c_scatter, 99)),
         )
-        scatter_c = plt.get_cmap(cmap)(norm(c_scatter))
+        point_cmap = plt.get_cmap(cmap)
+        scatter_c = point_cmap(norm(c_scatter))
         colorbar_label = c_name
     else:
         density = _density_values(xf, yf, density_bins)
@@ -2226,10 +2255,20 @@ def scatter_gate(
         xf, yf = xf[order], yf[order]
         density = density[order]
         norm = mcolors.Normalize(vmin=density.min(), vmax=density.max())
-        scatter_c = plt.get_cmap(cmap)(norm(density))
+        # Every plotted point has density >= 1 (it's a member of its own
+        # bin), so the *palest* end of the colormap -- near-white -- is
+        # what most points get whenever density is low almost everywhere,
+        # e.g. a small or diffuse dataset. Combined with scatter alpha,
+        # that renders the majority of points invisible against a light
+        # background. Drop the palest ~35% of the ramp so even the
+        # lowest-density points stay visibly colored; reused for the
+        # colorbar below so dots and colorbar stay consistent.
+        base_cmap = plt.get_cmap(cmap)
+        point_cmap = mcolors.LinearSegmentedColormap.from_list(
+            f"{cmap}_density", base_cmap(np.linspace(0.35, 1.0, 256))
+        )
+        scatter_c = point_cmap(norm(density))
         colorbar_label = "density"
-        if color is not None:
-            c_scatter = c_scatter[order]
 
     # ------------------------------------------------------------------ #
     # Layout: 2×2 GridSpec — top-left = x marginal, bottom-left = scatter,
@@ -2348,7 +2387,7 @@ def scatter_gate(
     # ------------------------------------------------------------------ #
     # Colorbar                                                            #
     # ------------------------------------------------------------------ #
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm = plt.cm.ScalarMappable(cmap=point_cmap, norm=norm)
     sm.set_array([])
     cb = fig.colorbar(sm, cax=ax_cb, orientation="vertical")
     cb.set_label(colorbar_label, fontsize=8)
@@ -2672,10 +2711,10 @@ def co_occurrence_plot(
     else:
         fig = ax.figure
 
-    cmap_obj = _categorical_cmap(cmap)
-    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 20
-    for line_i, (a, b) in enumerate([(a, b) for a in src_idx for b in tgt_idx]):
-        ax.plot(interval, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=cmap_obj(line_i % n_colors))
+    pairs = [(a, b) for a in src_idx for b in tgt_idx]
+    colors = _categorical_colors(cmap, len(pairs))
+    for line_i, (a, b) in enumerate(pairs):
+        ax.plot(interval, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=colors[line_i])
 
     ax.axhline(1.0, color=get_theme().muted, linestyle="--", linewidth=0.8, zorder=0)
     ax.set_xlabel("Distance (µm)")
@@ -2744,7 +2783,7 @@ def centrality_scores_plot(
     if n_metrics == 1:
         axes = [axes]
 
-    colors = _categorical_cmap(cmap)(np.linspace(0, 0.9, n_groups))
+    colors = _categorical_colors(cmap, n_groups)
     for ax, metric in zip(axes, metrics):
         vals = df[metric].fillna(0).to_numpy()
         cats = df.index.tolist()
@@ -2820,12 +2859,11 @@ def expression_by_distance_plot(
     else:
         fig = ax.figure
 
-    cmap_obj = _categorical_cmap(cmap)
-    n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 10
+    colors = _categorical_colors(cmap, len(plot_genes))
     for i, gene in enumerate(plot_genes):
         mean = mean_df[gene].to_numpy(dtype=float)
         se = se_df[gene].to_numpy(dtype=float)
-        color = cmap_obj(i % n_colors)
+        color = colors[i]
         ax.plot(distances, mean, label=gene, color=color)
         ax.fill_between(distances, mean - se, mean + se, alpha=0.2, color=color)
 
@@ -3014,7 +3052,8 @@ def som_umatrix(
     key
         ``uns`` key written by :func:`~astrolabe.tl.som`.
     cmap
-        Colormap. Default ``'viridis'``.
+        Colormap. Defaults to the active theme's sequential colormap
+        (``'astrolabe_seq'``).
     annotate
         Overlay ``"{col}_{row}"`` node labels on each cell.
     figsize
@@ -3164,7 +3203,8 @@ def som_hits(
     key
         ``uns`` key written by :func:`~astrolabe.tl.som`.
     cmap
-        Colormap. Default ``'Blues'``.
+        Colormap. Defaults to the active theme's sequential colormap
+        (``'astrolabe_seq'``).
     annotate
         Overlay cell count in each node.
     figsize

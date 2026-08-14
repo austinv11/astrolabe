@@ -1,0 +1,17 @@
+[project]
+name = "benchmark-astropy-stats"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "astrolabe",
+    "astropy>=6.0",
+    "jupyter",
+    "ipykernel",
+    "nbconvert",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+astrolabe = { path = "../..", editable = true }

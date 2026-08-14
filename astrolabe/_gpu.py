@@ -13,6 +13,7 @@ Usage
 >>> with ab.gpu(mdata):
 ...     ab.pp.normalize_total(mdata)
 ...     ab.tl.pca(mdata)
+...     ab.tl.transcriptional_neighbors(mdata)
 ...     ab.tl.cluster(mdata)
 >>>
 >>> # Persistent toggle with manual data management
@@ -100,6 +101,7 @@ class gpu:
     >>> with ab.gpu(mdata):
     ...     ab.pp.normalize_total(mdata)
     ...     ab.tl.pca(mdata)
+    ...     ab.tl.transcriptional_neighbors(mdata)
     ...     ab.tl.cluster(mdata)
     """
 

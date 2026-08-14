@@ -616,7 +616,7 @@ def filter_genes(
     the cell×gene matrix — this is what keeps control-probe transcripts
     (removed via ``exclude_controls=True``) and any other filtered-out gene
     out of downstream transcript-level analyses (e.g.
-    :func:`~astrolabe.tl.colocation_quotient` in pixel mode).
+    :func:`~astrolabe.io.read_xenium_transcripts`-based plots).
 
     Parameters
     ----------
@@ -646,15 +646,32 @@ def filter_genes(
     """
     mask = np.ones(adata.n_vars, dtype=bool)
 
+    # NaN in total_counts/n_cells_by_counts means "not evaluated" (per
+    # calculate_qc_metrics's documented exclude_controls=True behavior:
+    # per-gene metrics are left NaN on control-probe rows, not zeroed) --
+    # not "failed the threshold." A plain `>= min_X` comparison already
+    # evaluates to False for NaN in float64 (matching min_counts below), but
+    # min_cells additionally *cast* the column to int32 first -- NaN cast to
+    # int32 silently becomes INT32_MIN, which still reads as "failed" but
+    # for the wrong reason and inconsistently with min_counts' float64 cast.
+    # Net effect either way: every control-probe gene was silently dropped
+    # by *any* min_counts/min_cells filtering, regardless of exclude_controls
+    # -- a user filtering on cell/count thresholds alone (not asking to
+    # remove controls at all) unexpectedly lost every control probe too.
+    # NaN rows are now explicitly passed through this filter instead (still
+    # removable via exclude_controls=True, the documented and only intended
+    # gate for control-probe removal).
     if min_counts is not None:
         if "total_counts" not in adata.var.columns:
             raise KeyError("var['total_counts'] not found. Run pp.calculate_qc_metrics first")
-        mask &= adata.var["total_counts"].to_numpy(dtype=np.float64) >= min_counts
+        values = adata.var["total_counts"].to_numpy(dtype=np.float64)
+        mask &= (values >= min_counts) | np.isnan(values)
 
     if min_cells is not None:
         if "n_cells_by_counts" not in adata.var.columns:
             raise KeyError("var['n_cells_by_counts'] not found. Run pp.calculate_qc_metrics first")
-        mask &= adata.var["n_cells_by_counts"].to_numpy(dtype=np.int32) >= min_cells
+        values = adata.var["n_cells_by_counts"].to_numpy(dtype=np.float64)
+        mask &= (values >= min_cells) | np.isnan(values)
 
     if exclude_controls:
         if "is_control_probe" not in adata.var.columns:
@@ -802,11 +819,24 @@ def _min_rect_axes(gs) -> tuple[np.ndarray, np.ndarray]:
     majors: list[float] = []
     minors: list[float] = []
     for geom in gs:
+        # A degenerate-but-not-`is_empty` polygon (e.g. all vertices
+        # collinear or coincident after `buffer(0)` self-intersection
+        # cleanup) can have `minimum_rotated_rectangle` collapse to a
+        # `Point` or `LineString` instead of a `Polygon` -- neither has an
+        # `.exterior` attribute, so accessing it unconditionally raised
+        # AttributeError partway through writing obs columns, leaving the
+        # AnnData half-populated. Skip (NaN) rather than crash; `is_empty`
+        # alone doesn't catch this case since the input geometry itself is
+        # not empty, only its rotated-rectangle summary is degenerate.
         if geom.is_empty:
             majors.append(np.nan)
             minors.append(np.nan)
             continue
         rect = geom.minimum_rotated_rectangle
+        if rect.geom_type != "Polygon":
+            majors.append(np.nan)
+            minors.append(np.nan)
+            continue
         coords = np.array(rect.exterior.coords)[:4]
         s1 = float(np.linalg.norm(coords[1] - coords[0]))
         s2 = float(np.linalg.norm(coords[2] - coords[1]))
@@ -841,8 +871,19 @@ def calculate_shape_metrics(
       1 = perfect circle, lower values indicate elongated or irregular shapes.
     - **solidity** (``esda.shape.convex_hull_ratio``) — polygon area /
       convex-hull area; values < 1 indicate concave or lobular boundaries.
-    - **elongation** (``esda.shape.diameter_ratio``) — length / width;
-      higher values indicate elongated cells (fibroblasts, neurons).
+    - **elongation** (the Flaherty & Crumplin 1992 LW_7 length-width
+      measure, equivalent to ``esda.shape.diameter_ratio`` but derived
+      directly from this function's own minimum-rotated-rectangle pass
+      rather than a second, separate esda call) —
+      ``min(width, height) / max(width, height)``
+      of the minimum rotated bounding rectangle, bounded in ``(0, 1]``.
+      **Lower values indicate more elongated cells** (fibroblasts, neurons);
+      ``1.0`` = square/round. This is the exact reciprocal of
+      ``aspect_ratio`` by construction (``elongation * aspect_ratio == 1``
+      for every shape) -- both are provided since each matches a different
+      literature convention for the same underlying rectangle. A filter for
+      elongated cells looks like ``cell_elongation < 0.3``, not ``> 3`` (the
+      unbounded direction belongs to ``aspect_ratio`` instead).
     - **rna_density** — ``obs[counts_key] / area`` in counts/µm². Written only
       when *counts_key* is present in ``obs`` and the area is non-zero.
 
@@ -869,7 +910,7 @@ def calculate_shape_metrics(
     >>> ab.pp.calculate_shape_metrics(mdata, boundaries_key='nucleus_boundaries')
     """
     import geopandas as gpd
-    from esda.shape import convex_hull_ratio, diameter_ratio, isoperimetric_quotient
+    from esda.shape import convex_hull_ratio, isoperimetric_quotient
     from shapely.geometry import Polygon
 
     if boundaries_key not in adata.obsm:
@@ -898,8 +939,29 @@ def calculate_shape_metrics(
     gs = gpd.GeoSeries(polys)
 
     # ── Shapely vectorised metrics ────────────────────────────────────────────
+    area_col = f"{prefix}area"
+    if area_col in adata.obs.columns:
+        # Vendor-supplied readers (read_xenium/read_merscope/read_cosmx) all
+        # populate obs['cell_area']/['nucleus_area'] already -- this
+        # polygon-based recomputation used to silently overwrite it under
+        # the same column name, changing what the column *means* with no
+        # warning. Worst on MERSCOPE, where CLAUDE.md documents
+        # obs['cell_area'] as a bounding-box proxy (not a true polygon
+        # area) -- the overwrite silently swaps in a different quantity
+        # under an unchanged name. Still overwritten by default (this
+        # function's entire purpose is to (re)compute polygon-derived shape
+        # metrics, and renaming the output would break every existing
+        # downstream reference to obs['cell_area']), but no longer silent.
+        log.warning(
+            "calculate_shape_metrics: overwriting existing obs['%s'] with a "
+            "polygon-based recomputation from obsm['%s'] -- if this was "
+            "vendor-supplied (e.g. MERSCOPE's bounding-box-derived "
+            "cell_area), its meaning is now different, not just its "
+            "precision.",
+            area_col, boundaries_key,
+        )
     area = np.asarray(gs.area, dtype=np.float32)
-    adata.obs[f"{prefix}area"] = area
+    adata.obs[area_col] = area
     adata.obs[f"{prefix}perimeter"] = np.asarray(gs.length, dtype=np.float32)
 
     bounds = gs.bounds  # DataFrame: minx, miny, maxx, maxy
@@ -916,9 +978,30 @@ def calculate_shape_metrics(
     adata.obs[f"{prefix}aspect_ratio"] = aspect
 
     # ── esda shape metrics ────────────────────────────────────────────────────
+    # circularity/solidity are safe to compute directly on the whole
+    # GeoSeries: esda.shape.isoperimetric_quotient/convex_hull_ratio use
+    # shapely.area/length/convex_hull, which give one 0 (-> NaN via 0/0,
+    # with an expected RuntimeWarning) per input geometry, empty or not --
+    # no length mismatch.
     adata.obs[f"{prefix}circularity"] = np.asarray(isoperimetric_quotient(gs), dtype=np.float32)
     adata.obs[f"{prefix}solidity"] = np.asarray(convex_hull_ratio(gs), dtype=np.float32)
-    adata.obs[f"{prefix}elongation"] = np.asarray(diameter_ratio(gs), dtype=np.float32)
+    # elongation = min(width, height) / max(width, height) of the minimum
+    # rotated rectangle -- by definition identical to minor/major above, so
+    # derived directly from _min_rect_axes' own (already degenerate-safe)
+    # output instead of a second, separate esda.shape.diameter_ratio(gs)
+    # call. That call has its own real bug independent of anything in this
+    # file: esda.shape.diameter_ratio(rotated=True) flattens every
+    # geometry's minimum_rotated_rectangle coordinates into one array via
+    # shapely.get_coordinates() and slices it with a fixed stride of 5
+    # (4 corners + closing repeat) per geometry -- an empty/degenerate
+    # geometry contributes 0 coordinates instead of 5, desynchronizing the
+    # stride for every geometry after it and returning an array *shorter*
+    # than the input GeoSeries (confirmed: 2 elements back for 3 input
+    # geometries, one degenerate), which crashes the columns.DataFrame
+    # assignment below with a length mismatch.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        elongation = np.where(major > 0, minor / major, np.nan).astype(np.float32)
+    adata.obs[f"{prefix}elongation"] = elongation
 
     # ── RNA density ───────────────────────────────────────────────────────────
     new_cols = [
@@ -949,7 +1032,7 @@ def calculate_transcript_assignment_qc(
     transcripts=None,
     cell_id_col: str = "cell_id",
     gene_col: str = "feature_name",
-    unassigned_id: int | str = 0,
+    unassigned_id: int | str | None = None,
     inplace: bool = True,
 ) -> ad.AnnData | None:
     """Compute per-gene transcript assignment rates from the full transcript table.
@@ -986,7 +1069,11 @@ def calculate_transcript_assignment_qc(
         Column in the transcript table with gene/feature names.
     unassigned_id
         Value in ``cell_id_col`` that marks an unassigned transcript.
-        ``0`` is the Xenium convention.
+        ``None`` (default) auto-detects from ``cell_id_col``'s actual
+        column type: real Xenium Onboard Analysis (XOA) >= 2.0 uses the
+        literal string ``'UNASSIGNED'`` for a string-typed ``cell_id``
+        column; older/numeric exports use integer ``0``. Pass explicitly to
+        override either convention.
     inplace
         If ``True`` (default), modify *data* in place and return ``None``.
         If ``False``, operate on a copy and return it.
@@ -1022,7 +1109,15 @@ def calculate_transcript_assignment_qc(
     # Unassigned transcripts per gene — cast unassigned_id to match the column type
     # so pc.equal works regardless of whether cell_id is stored as int or string.
     col_type = transcripts.schema.field(cell_id_col).type
-    if pa.types.is_string(col_type) or pa.types.is_large_string(col_type):
+    is_string_col = pa.types.is_string(col_type) or pa.types.is_large_string(col_type)
+    if unassigned_id is None:
+        # Default sentinel silently reported 0% unassigned for every gene on
+        # real Xenium Onboard Analysis (XOA) >= 2.0 output -- its
+        # string-typed cell_id column uses the literal 'UNASSIGNED', never
+        # the numeric 0 this used to always default to (reading as a clean
+        # QC result while actually testing for a value that never occurs).
+        unassigned_scalar = "UNASSIGNED" if is_string_col else 0
+    elif is_string_col:
         unassigned_scalar = str(unassigned_id)
     else:
         unassigned_scalar = unassigned_id

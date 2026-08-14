@@ -16,7 +16,7 @@ def test_summary_shows_source_path_relative_to_cwd(small_mdata, tmp_path):
 
 def test_summary_detects_spatial_only_neighbors_and_prefixed_cluster_key(small_mdata):
     ab.tl.spatial_neighbors(small_mdata)
-    ab.tl.cluster(small_mdata, resolution=0.5, key_added="spatial_leiden")
+    ab.tl.cluster(small_mdata, resolution=0.5, neighbors_key="spatial_neighbors", key_added="spatial_leiden")
 
     s = ab.summary(small_mdata)
     info = s._info

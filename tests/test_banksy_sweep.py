@@ -81,3 +81,41 @@ class TestBanksySweepNJobs:
         assert "neighbors" not in adata.uns
         assert "distances" not in adata.obsp
         assert "connectivities" not in adata.obsp
+
+
+class TestBanksySweepDefaultNPCs:
+    def test_matches_tl_pca_default_of_fifty(self):
+        # Regression: banksy_sweep hardcoded n_pcs=30 while tl.pca's own
+        # documented default (astrolabe/tl/_embedding.py: n_comps=50) is 50,
+        # silently diverging and producing different cluster counts than a
+        # manual BANKSY run at "the same" settings. Both functions are
+        # @with_adata decorated, which collapses their introspectable
+        # signature to (data, *args, modality=None, **kwargs) -- inspecting
+        # the actual default requires reading the source directly instead.
+        import astrolabe.tl._banksy_sweep as mod
+        with open(mod.__file__, encoding="utf-8") as f:
+            src = f.read()
+        assert "n_pcs: int = 50" in src
+
+
+class TestBanksySweepTagCollision:
+    def test_close_lambda_values_do_not_collide_under_old_two_decimal_rounding(self):
+        # Regression: lam_tag used to be f"{lam:.2f}".rstrip("0").rstrip(".")
+        # -- two distinct lambda values rounding to the same 2 decimals
+        # (e.g. 0.201 and 0.204, both -> "0.2") collided onto the *same*
+        # internal obsm/obsp/uns keys, silently overwriting one run's
+        # intermediate state with another's (or raising KeyError under
+        # n_jobs>1 when one thread's cleanup deleted a key another thread
+        # was still using). Both runs must now produce genuinely distinct,
+        # independently-correct results.
+        adata = _adata_for_sweep(n=60, n_genes=25)
+        result = banksy_sweep(
+            adata, lambda_params=[0.201, 0.204], resolutions=[0.3], n_jobs=2
+        )
+        assert len(result) == 2
+        assert result["obs_key"].nunique() == 2
+        for obs_key in result["obs_key"]:
+            assert obs_key in adata.obs.columns
+            assert adata.obs[obs_key].nunique() >= 1
+        # No leftover ephemeral keys despite the near-identical lambda tags.
+        assert not any(k.startswith("_banksy_tmp_") for k in adata.obsm)

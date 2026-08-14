@@ -25,7 +25,7 @@ def cluster(
     *,
     method: Literal["leiden", "louvain"] = "leiden",
     resolution: float = 1.0,
-    neighbors_key: str = "spatial_neighbors",
+    neighbors_key: str = "neighbors",
     key_added: str | None = None,
     random_state: int = 0,
     **kwargs,
@@ -34,8 +34,13 @@ def cluster(
 
     Wraps :func:`scanpy.tl.leiden` / :func:`scanpy.tl.louvain` and stores
     cluster labels in ``obs[key_added]``.  Requires that
-    :func:`astrolabe.tl.spatial_neighbors` (or ``sc.pp.neighbors``) has
-    been run first.
+    :func:`astrolabe.tl.transcriptional_neighbors` (or ``sc.pp.neighbors``)
+    has been run first, matching this function's own default
+    ``neighbors_key='neighbors'`` — cell identity is defined
+    transcriptomically by default, consistent with :func:`astrolabe.tl.umap`
+    (which has always defaulted to ``'neighbors'``). Pass
+    ``neighbors_key='spatial_neighbors'`` explicitly for spatial-domain
+    clustering on the graph built by :func:`astrolabe.tl.spatial_neighbors`.
 
     Parameters
     ----------
@@ -52,8 +57,13 @@ def cluster(
         values yield more clusters.
     neighbors_key
         Key in ``uns`` pointing to the neighborhood graph.  Defaults to
-        ``'spatial_neighbors'`` (set by :func:`astrolabe.tl.spatial_neighbors`).
-        Pass ``'neighbors'`` if using a transcriptomic (PCA-based) graph.
+        ``'neighbors'`` (the transcriptomic/PCA-based graph, set by
+        :func:`astrolabe.tl.transcriptional_neighbors` or
+        ``sc.pp.neighbors``), matching :func:`astrolabe.tl.umap`'s own
+        default. Pass ``'spatial_neighbors'`` (set by
+        :func:`astrolabe.tl.spatial_neighbors`) for spatial-domain
+        clustering instead, or ``'joint_neighbors'`` (set by
+        :func:`astrolabe.tl.blend_neighbors`) for cospatial clustering.
     key_added
         Column name in ``obs`` for cluster labels.  Defaults to
         ``method`` (e.g. ``'leiden'``).
@@ -65,9 +75,13 @@ def cluster(
 
     Examples
     --------
-    >>> ab.tl.spatial_neighbors(mdata["xenium"])
+    >>> ab.tl.transcriptional_neighbors(mdata["xenium"])
     >>> ab.tl.cluster(mdata["xenium"], resolution=0.5)
     >>> mdata["xenium"].obs["leiden"]
+
+    >>> # Spatial-domain clustering instead of expression-based:
+    >>> ab.tl.spatial_neighbors(mdata["xenium"])
+    >>> ab.tl.cluster(mdata["xenium"], neighbors_key="spatial_neighbors", key_added="spatial_leiden")
     """
     # FIXME: TEMP: Use future default args for speed with leiden, should eventually be removed
     if method == 'leiden':

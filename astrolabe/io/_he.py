@@ -318,9 +318,15 @@ def _ruifrok_matrix() -> np.ndarray:
 def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     """Estimate a stain matrix for this slide using the Macenko SVD method.
 
-    Reads the coarsest pyramid level to avoid loading the full image.
+    Reads a downsampled pyramid level (not the full image) for speed.
     """
-    level_idx = spec.n_levels - 1  # coarsest for speed
+    # The coarsest level (used here previously) can be a heavily-averaged
+    # thumbnail for a large WSI (e.g. ~500x500), which pulls stain colors
+    # toward gray and degrades separation -- exactly the failure mode this
+    # function's own fallback warning below anticipates. A mid-resolution
+    # level keeps enough real stain-color diversity while still avoiding a
+    # full-resolution read.
+    level_idx = spec.select_pyramid_level(target_max_dim=2048)
 
     with tifffile.TiffFile(spec.path) as tif:
         raw: np.ndarray = tif.series[0].levels[level_idx].asarray()
@@ -363,7 +369,26 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
 
     # SVD — take top 2 principal components
     _, _, Vt = np.linalg.svd(od_fg, full_matrices=False)
-    plane = Vt[:2]  # (2, 3)
+    plane = Vt[:2].copy()  # (2, 3)
+
+    # SVD singular vectors have an arbitrary sign (np.linalg.svd gives no
+    # sign guarantee, and it can differ run-to-run / slide-to-slide with no
+    # visible cause). An unlucky sign can rotate the OD cloud's *actual*
+    # angular cluster so it straddles the +-pi branch cut that arctan2
+    # introduces below -- percentile(angles, 1)/percentile(angles, 99) on a
+    # wrapped distribution reads as two points near the wrap, not the true
+    # extremes of the real spread, collapsing v1~=v2 into a near-singular
+    # stain matrix and silently falling back to Ruifrok on nearly every
+    # real slide (condition number 400-900 observed). Fixed by orienting
+    # each singular vector to point toward the OD cloud's own centroid
+    # before computing angles, the standard sign-normalization for this
+    # exact SVD-based stain-separation approach -- this doesn't change
+    # *which* plane was found (a sign flip of a basis vector spans the same
+    # plane), only where its zero-angle reference sits relative to the data.
+    mean_dir = od_fg.mean(axis=0)
+    for i in range(2):
+        if np.dot(plane[i], mean_dir) < 0:
+            plane[i] = -plane[i]
 
     # Project and find extreme angular percentiles
     proj = od_fg @ plane.T  # (N, 2)
@@ -374,9 +399,17 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     v1 = plane[0] * np.cos(ang_lo) + plane[1] * np.sin(ang_lo)
     v2 = plane[0] * np.cos(ang_hi) + plane[1] * np.sin(ang_hi)
 
-    # Hematoxylin absorbs more blue (low B → high OD_B), eosin absorbs more red.
-    # Assign: stain with higher OD_B component = hematoxylin.
-    if v1[2] > v2[2]:
+    # Hematoxylin (blue/purple) absorbs red light strongly -> high OD in the
+    # red channel; eosin (pink) absorbs comparatively little red -> low OD_R.
+    # Canonical reference stain vectors (Ruifrok & Johnston 2001) separate on
+    # this red component by a wide margin (~0.65 vs ~0.07); the blue
+    # component this used to check separates them far more narrowly (~0.29
+    # vs ~0.11, and the code's own prior comment describing "low B -> high
+    # OD_B" for hematoxylin was physically backwards besides) -- a faintly
+    # eosinophilic or over-blued slide could flip blue-channel ordering and
+    # silently swap the hematoxylin/eosin channels. Assign: stain with the
+    # higher OD_R (red) component = hematoxylin.
+    if v1[0] > v2[0]:
         he = np.stack([v1, v2, np.cross(v1, v2)])
     else:
         he = np.stack([v2, v1, np.cross(v2, v1)])
@@ -386,12 +419,25 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     norms = np.where(norms > 0, norms, 1.0)
     he = he / norms
 
-    # Invert to get deconvolution matrix (concentrations = od @ M). A poorly
-    # conditioned he.T (near-parallel stain vectors — e.g. from a coarse
-    # pyramid level with little stain-color diversity) inverts to huge
-    # coefficients that blow up any real OD input; fall back rather than
-    # return a deconvolution matrix that's numerically useless.
-    cond = np.linalg.cond(he.T)
+    # Invert to get deconvolution matrix (concentrations = od @ M). `he` is
+    # stacked as rows = stain vectors (H, E, residual), each a unit vector
+    # in OD-RGB space: od_pixel ~= concentrations @ he, so recovering
+    # concentrations from an OD pixel needs M = inv(he), used as
+    # `concentrations = od @ M = od @ inv(he)`. This previously inverted
+    # `he.T` instead -- a real bug, but until the SVD branch-cut fix just
+    # above, it was almost never reached: the branch-cut bug inflated `cond`
+    # past the fallback threshold on nearly every slide, so execution always
+    # took the Ruifrok fallback and never actually exercised this line.
+    # Fixing the branch-cut alone, without also fixing this, would have
+    # newly activated the wrong-convention inverse for the first time on
+    # every slide that now passes the condition check -- both must ship
+    # together.
+    #
+    # A poorly conditioned he (near-parallel stain vectors -- e.g. from a
+    # coarse pyramid level with little stain-color diversity) inverts to
+    # huge coefficients that blow up any real OD input; fall back rather
+    # than return a deconvolution matrix that's numerically useless.
+    cond = np.linalg.cond(he)
     if cond > 100:
         log.warning(
             "Macenko stain vectors are poorly separated (condition number %.1f); "
@@ -400,7 +446,7 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
         )
         return _ruifrok_matrix()
     try:
-        M = np.linalg.inv(he.T)
+        M = np.linalg.inv(he)
     except np.linalg.LinAlgError:
         log.warning("Macenko matrix inversion failed; falling back to Ruifrok.")
         return _ruifrok_matrix()

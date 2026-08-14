@@ -6,6 +6,9 @@ Functions
 crop
     Filter cells whose centroids fall inside a polygon region; zoom plots
     automatically via ``uns['spatial_bounds']``.
+auto_crop
+    Crop to a robust bounding box computed from the cells themselves --
+    percentile-trimmed to ignore stray outliers, no manual region needed.
 rotate
     Rotate cell coordinates (and image transform chain) CCW by a given angle.
 flip
@@ -28,6 +31,7 @@ import mudata as md
 import numpy as np
 import pyarrow as pa
 
+from astrolabe._shapes import rectangle
 from astrolabe._utils import (
     ImageFilter,
     ImageSpec,
@@ -190,6 +194,39 @@ def _apply_coord_transform(
             adata.obsm[bkey] = _transform_boundary_obsm(adata.obsm[bkey], M)
 
 
+def _transform_spatial_bounds(adata: ad.AnnData, M: np.ndarray) -> None:
+    """Keep uns['spatial_bounds'] (the pp.crop() viewport hint) in sync with *M*.
+
+    rotate()/flip() used to leave a pre-existing spatial_bounds (set by an
+    earlier pp.crop()) untouched -- describing the *pre-transform* window --
+    so a rotated/flipped, previously-cropped panel rendered auto-zoomed to
+    the wrong region (severely visually clipped or offset), the same class
+    of MuData-consistency gap pp.crop() itself already handles for sibling
+    modalities. The 4 corners of the old bounding box are transformed by the
+    same affine and re-enclosed in a new axis-aligned box, since a rotation
+    can turn an axis-aligned rectangle into a non-axis-aligned one.
+    """
+    bounds = adata.uns.get("spatial_bounds")
+    if bounds is None:
+        return
+    corners = np.array(
+        [
+            [bounds["xmin"], bounds["ymin"]],
+            [bounds["xmax"], bounds["ymin"]],
+            [bounds["xmax"], bounds["ymax"]],
+            [bounds["xmin"], bounds["ymax"]],
+        ],
+        dtype=np.float64,
+    )
+    transformed = _transform_coords(corners, M)
+    adata.uns["spatial_bounds"] = {
+        "xmin": float(transformed[:, 0].min()),
+        "xmax": float(transformed[:, 0].max()),
+        "ymin": float(transformed[:, 1].min()),
+        "ymax": float(transformed[:, 1].max()),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -321,6 +358,99 @@ def crop(
         return subset
 
 
+def auto_crop(
+    data: ad.AnnData | md.MuData,
+    *,
+    modality: str | None = None,
+    spatial_key: str = "spatial",
+    percentile: float = 1.0,
+    padding: float = 0.15,
+    crop_transcripts: bool = True,
+    transcripts_x_col: str = "x_location",
+    transcripts_y_col: str = "y_location",
+    inplace: bool = False,
+) -> ad.AnnData | None:
+    """Crop to a robust bounding box computed from the cells themselves.
+
+    Building a crop region from the true min/max of cell centroids is
+    fragile: a single stray or isolated cell far from the rest of the tissue
+    silently drags the box out to include a large, mostly-empty margin (real
+    example: a 358-cell sample where 357 cells sat in a ~245x135 um patch
+    but one lone cell ~580 um away inflated a min/max box to ~1067 um tall,
+    ~80% blank). ``auto_crop`` instead trims *percentile* off each end of
+    each axis independently before computing bounds, so a handful of
+    outliers on either side don't set the frame, then pads the trimmed box
+    by *padding* (a fraction of its own width/height) and delegates to
+    :func:`crop` for the actual filtering -- every other parameter here is
+    forwarded to it unchanged, including its sibling-modality-sync and
+    ``inplace`` behavior.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        Which modality's cell centroids define the crop region, when *data*
+        is a MuData. Falls back to ``uns['default_modality']`` if not given.
+    spatial_key
+        Key in ``obsm`` for cell centroids.
+    percentile
+        Trim this percentile of cells from each end of each axis before
+        computing bounds (default ``1.0``, i.e. use the 1st-99th percentile
+        range). ``0`` falls back to the true min/max (no outlier trimming).
+    padding
+        Fractional margin added around the trimmed bounding box, relative to
+        its own width/height (default ``0.15`` = 15% on each side).
+    crop_transcripts, transcripts_x_col, transcripts_y_col, inplace
+        Forwarded to :func:`crop` -- see its docstring.
+
+    Returns
+    -------
+    None or AnnData
+        Same convention as :func:`crop`.
+
+    Examples
+    --------
+    >>> ab.pp.auto_crop(mdata, inplace=True)  # tight crop around the cells, in place
+    >>> tight = ab.pp.auto_crop(mdata, padding=0.05)  # returned copy, minimal margin
+    """
+    adata, _ = _resolve_adata_and_modality(data, modality)
+
+    if spatial_key not in adata.obsm:
+        raise KeyError(
+            f"obsm['{spatial_key}'] not found. "
+            "Ensure spatial coordinates have been loaded"
+        )
+
+    centroids = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
+    if len(centroids) == 0:
+        raise ValueError("auto_crop: no cells to crop around (obsm is empty)")
+
+    lo, hi = float(percentile), 100.0 - float(percentile)
+    x_lo, x_hi = np.percentile(centroids[:, 0], [lo, hi])
+    y_lo, y_hi = np.percentile(centroids[:, 1], [lo, hi])
+
+    cx, cy = (x_lo + x_hi) / 2.0, (y_lo + y_hi) / 2.0
+    w, h = (x_hi - x_lo) * (1.0 + padding), (y_hi - y_lo) * (1.0 + padding)
+    # A degenerate span (e.g. every kept cell sharing an x or y coordinate)
+    # would produce a zero-area region and crop away everything; fall back
+    # to a small fixed-size window around the centroid in that case.
+    w = w if w > 0 else 1.0
+    h = h if h > 0 else 1.0
+    region = rectangle((cx, cy), w, h)
+
+    return crop(
+        data,
+        region,
+        modality=modality,
+        spatial_key=spatial_key,
+        crop_transcripts=crop_transcripts,
+        transcripts_x_col=transcripts_x_col,
+        transcripts_y_col=transcripts_y_col,
+        inplace=inplace,
+    )
+
+
 @with_adata
 def rotate(
     adata: ad.AnnData,
@@ -368,11 +498,13 @@ def rotate(
     if inplace:
         _apply_coord_transform(adata, M, spatial_key, boundaries_keys)
         _append_image_transform(adata, M)
+        _transform_spatial_bounds(adata, M)
         return None
     else:
         out = adata.copy()
         _apply_coord_transform(out, M, spatial_key, boundaries_keys)
         _append_image_transform(out, M)
+        _transform_spatial_bounds(out, M)
         return out
 
 
@@ -427,11 +559,13 @@ def flip(
     if inplace:
         _apply_coord_transform(adata, M, spatial_key, boundaries_keys)
         _append_image_transform(adata, M)
+        _transform_spatial_bounds(adata, M)
         return None
     else:
         out = adata.copy()
         _apply_coord_transform(out, M, spatial_key, boundaries_keys)
         _append_image_transform(out, M)
+        _transform_spatial_bounds(out, M)
         return out
 
 
@@ -491,6 +625,7 @@ def apply_affine(
         if spatial_key in adata.obsm:
             _apply_coord_transform(adata, matrix, spatial_key, list(boundaries_keys))
         _append_image_transform(adata, matrix)
+        _transform_spatial_bounds(adata, matrix)
 
     return None if inplace else target
 

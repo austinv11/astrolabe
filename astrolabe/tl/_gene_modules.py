@@ -163,6 +163,14 @@ def spatial_gene_modules(
     pd.DataFrame
         ``(n_genes_tested, 2)`` frame with columns ``gene`` and ``module``
         (integer 0-indexed module IDs), sorted by module then gene name.
+        Undetected/zero-variance genes get ``module = -1`` ("excluded", not
+        a real module) rather than being clustered at all: with no spatial
+        signal to standardize, they'd otherwise all collapse to an
+        identical all-zero profile and cluster together into a module
+        indistinguishable from a genuine co-expression module —
+        ``fcluster(..., criterion="maxclust")`` always returns exactly
+        ``n_modules`` groups regardless of whether real structure exists
+        for all of them.
 
     Examples
     --------
@@ -201,25 +209,43 @@ def spatial_gene_modules(
         X = X.toarray()
     X = np.asarray(X, dtype=np.float64)[:, gene_idx]  # (n_cells, n_genes)
 
-    # Standardise: zero mean, unit variance per gene
+    # Standardise: zero mean, unit variance per gene. Zero-variance
+    # (undetected/constant) genes are excluded from clustering entirely,
+    # below -- standardizing them here would give every one of them an
+    # identical all-zero Z profile.
     mu = X.mean(axis=0)
-    sigma = X.std(axis=0)
-    sigma[sigma == 0] = 1.0
+    sigma_raw = X.std(axis=0)
+    zero_var_mask = sigma_raw == 0
+    sigma = np.where(zero_var_mask, 1.0, sigma_raw)
     Z = (X - mu) / sigma
+
+    if zero_var_mask.any():
+        log.warning(
+            "spatial_gene_modules: %d of %d genes have zero variance "
+            "(undetected or constant) -- excluded from clustering (module=-1) "
+            "rather than pooled into a phantom module with each other.",
+            int(zero_var_mask.sum()), n_genes,
+        )
+
+    valid_idx = np.where(~zero_var_mask)[0]
+    n_valid = len(valid_idx)
+    n_modules_eff = min(n_modules_eff, n_valid) if n_valid > 0 else 0
 
     # ── Spatial graph ──────────────────────────────────────────────────────────
     W_norm = _row_normalize(adata.obsp[conn_key])
 
-    # ── Gene × gene spatial correlation ───────────────────────────────────────
-    log.info(
-        "spatial_gene_modules: building %s correlation matrix (%d × %d)",
-        correlation, n_genes, n_genes,
-    )
-    corr = _spatial_corr_matrix(Z, W_norm, correlation)
+    module_labels = np.full(n_genes, -1, dtype=np.int32)
+    if n_valid > 0 and n_modules_eff > 0:
+        # ── Gene × gene spatial correlation (valid genes only) ─────────────────
+        log.info(
+            "spatial_gene_modules: building %s correlation matrix (%d × %d)",
+            correlation, n_valid, n_valid,
+        )
+        corr = _spatial_corr_matrix(Z[:, valid_idx], W_norm, correlation)
 
-    # ── Cluster genes ──────────────────────────────────────────────────────────
-    log.info("spatial_gene_modules: clustering (%s, k=%d)", clustering, n_modules_eff)
-    module_labels = _cluster_genes(corr, n_modules_eff, clustering)
+        # ── Cluster genes ────────────────────────────────────────────────────
+        log.info("spatial_gene_modules: clustering (%s, k=%d)", clustering, n_modules_eff)
+        module_labels[valid_idx] = _cluster_genes(corr, n_modules_eff, clustering)
 
     df = pd.DataFrame({"gene": gene_names, "module": module_labels})
     df = df.sort_values(["module", "gene"]).reset_index(drop=True)

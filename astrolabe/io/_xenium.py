@@ -152,7 +152,7 @@ def read_xenium(
     load_transcripts
         If ``True`` (default), stream ``transcripts.parquet`` via
         :func:`read_xenium_transcripts` (with its default filters: ``min_qv=20``,
-        controls excluded) and store the result as a :class:`pyarrow.Table` in
+        controls included) and store the result as a :class:`pyarrow.Table` in
         ``mdata['xenium'].uns['transcripts']``.  Set ``False`` to skip; the
         file can be large (100 M–500 M rows) and loading may take tens of seconds.
     morphology_image
@@ -324,7 +324,7 @@ def read_xenium_transcripts(
     genes: list[str] | None = None,
     min_qv: float | None = 20.0,
     z_range: tuple[float, float] | None = None,
-    include_controls: bool = False,
+    include_controls: bool = True,
     columns: list[str] | None = None,
     chunksize: int = 500_000,
 ) -> "md.MuData | None":
@@ -359,7 +359,11 @@ def read_xenium_transcripts(
     z_range
         ``(z_min, z_max)`` in microns; filter by ``z_location``.
     include_controls
-        If ``False`` (default), control-probe transcripts are excluded.
+        If ``True`` (default), control-probe transcripts are included —
+        matching ``X``, which always retains control-probe *genes*
+        (flagged via ``var['is_control_probe']``, never removed on load).
+        Pass ``False`` to exclude them, e.g. for analyses that only care
+        about real genes and want a smaller table.
     columns
         Subset of parquet columns to load.  ``None`` loads all columns.
         Standard columns: ``transcript_id``, ``cell_id``, ``overlaps_nucleus``,

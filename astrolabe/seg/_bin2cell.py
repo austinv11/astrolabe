@@ -302,8 +302,25 @@ def assign_bins(
     used_fallback = False
     for bin_idx, candidates in contested_candidates.items():
         candidates = sorted(set(candidates))
+        # PCA-based comparison is only fair when *every* candidate has a
+        # provisional profile to embed -- restricting to just the eligible
+        # subset (the previous behavior) doesn't just disadvantage a
+        # candidate with no core/unambiguous-expansion bins of its own, it
+        # excludes it from the contest entirely: with exactly one eligible
+        # candidate left, `argmin` over a single-element list "wins" by
+        # construction, with no actual distance comparison ever happening.
+        # A small cell whose entire footprint is contested bins then loses
+        # every single one to any eligible neighbor regardless of true
+        # similarity (confirmed on synthetic data with *identical*
+        # expression vectors across all bins -- no transcriptional signal
+        # to prefer either cell -- where the small cell still lost half its
+        # contested bins purely from this structural exclusion). Falling
+        # back to geometric nearest-centroid among *all* candidates whenever
+        # any candidate lacks a PCA profile keeps the comparison fair.
         eligible_candidates = (
-            [c for c in candidates if cell_pca_row[c] >= 0] if pca is not None else []
+            candidates
+            if pca is not None and all(cell_pca_row[c] >= 0 for c in candidates)
+            else []
         )
         if eligible_candidates:
             bin_normed = _normalize_rows(X_bins[bin_idx], target_sum)

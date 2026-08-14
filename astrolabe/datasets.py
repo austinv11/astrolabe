@@ -14,7 +14,7 @@ Canonical usage
 >>> mdata = ab.datasets.cosmx()         # NanoString Lung12 public S3 (155 MB)
 >>> mdata = ab.datasets.visium_hd()      # 10x Genomics Visium HD Mouse Small Intestine
 >>> mdata = ab.datasets.visium_hd_tiny() # 10x Genomics Visium HD tiny (297 MB, smoke tests)
->>> adata = ab.datasets.ome_tiff()      # OME Bio-Formats sample (226 KB)
+>>> adata = ab.datasets.ome_tiff()      # OME Bio-Formats sample (2 x 264 KB)
 >>> adata = ab.datasets.he()            # OpenSlide Huron H&E brightfield (36 MB)
 
 Cache
@@ -103,10 +103,20 @@ _VISIUM_HD_TINY_URL = (
     "Visium_HD_Tiny_3prime_Dataset/Visium_HD_Tiny_3prime_Dataset_outs.zip"
 )
 
-_OME_TIFF_URL = (
-    "https://downloads.openmicroscopy.org/images/OME-TIFF/2016-06/"
-    "bioformats-artificial/multi-channel.ome.tif"
+# "tubhiswt" (tubulin/histone wild-type) sample: a real two-channel
+# acquisition of a 4-cell embryo (OME Bio-Formats sample data, CC BY 4.0),
+# shipped by OME as two single-channel companion OME-TIFFs. Deliberately
+# *not* the OME "bioformats-artificial/multi-channel.ome.tif" sample --
+# that one is a synthetic test pattern with the filename/dimensions burned
+# into the pixels as a watermark, which renders as illegible mirrored text
+# under astrolabe's row-up image display convention (see
+# _apply_registration_rotation's own regression tests for why that
+# convention is deliberate) and looks broken in tutorials.
+_OME_TIFF_BASE = (
+    "https://downloads.openmicroscopy.org/images/OME-TIFF/2016-06/tubhiswt-2D/"
 )
+_OME_TIFF_C0_URL = _OME_TIFF_BASE + "tubhiswt_C0.ome.tif"
+_OME_TIFF_C1_URL = _OME_TIFF_BASE + "tubhiswt_C1.ome.tif"
 
 _HE_URL = (
     "https://openslide.cs.cmu.edu/download/openslide-testdata/Huron/Huron-1.tif"
@@ -379,10 +389,18 @@ def visium_hd_tiny(cache_dir=None):
 
 
 def ome_tiff(cache_dir=None):
-    """Download and return a 3-channel OME-TIFF sample image.
+    """Download and return a 2-channel OME-TIFF sample image.
 
-    Source: OME Bio-Formats artificial sample (OME consortium), 226 KB.
-    Returns an :class:`anndata.AnnData` with 3 channel variables and an
+    Source: OME Bio-Formats "tubhiswt" sample (OME consortium, CC BY 4.0),
+    a real two-color acquisition of a 4-cell embryo (~264 KB per channel):
+    ``tubulin`` (transmitted-light channel) and ``histone`` (fluorescence
+    channel marking chromosomes). OME ships this as two single-channel
+    companion OME-TIFF files sharing one OME-XML document; astrolabe reads
+    each channel's raw plane directly (bypassing tifffile's multi-file OME
+    series stitching, which requires both files to be co-located) and
+    combines them into one local multi-channel OME-TIFF on first download,
+    cached alongside the originals so subsequent calls skip the combine step.
+    Returns an :class:`anndata.AnnData` with 2 channel variables and an
     :class:`~astrolabe._utils.ImageSpec` in ``uns['spatial']``.
     Use ``ab.pp.extract_if_intensities`` to compute per-cell intensities
     after loading cell boundaries separately.
@@ -394,10 +412,27 @@ def ome_tiff(cache_dir=None):
         ``<cwd>/.astrolabe_cache/datasets/ome_tiff/``.
     """
     d = _cache_root(cache_dir) / "ome_tiff"
-    fpath = d / "multi-channel.ome.tif"
-    _download(_OME_TIFF_URL, fpath, "OME-TIFF 3-channel sample (OME, 226 KB)")
+    c0_path = d / "tubhiswt_C0.ome.tif"
+    c1_path = d / "tubhiswt_C1.ome.tif"
+    combined_path = d / "tubhiswt.ome.tif"
+    _download(_OME_TIFF_C0_URL, c0_path, "OME-TIFF tubhiswt tubulin channel (OME, 264 KB)")
+    _download(_OME_TIFF_C1_URL, c1_path, "OME-TIFF tubhiswt histone channel (OME, 264 KB)")
+    if not combined_path.exists():
+        import numpy as np
+        import tifffile
+        with tifffile.TiffFile(str(c0_path)) as tif:
+            c0 = tif.pages[0].asarray()
+        with tifffile.TiffFile(str(c1_path)) as tif:
+            c1 = tif.pages[0].asarray()
+        log.info("Combining tubhiswt channels into a single multi-channel OME-TIFF ...")
+        tifffile.imwrite(
+            str(combined_path),
+            np.stack([c0, c1], axis=0),
+            photometric="minisblack",
+            metadata={"axes": "CYX", "Channel": {"Name": ["tubulin", "histone"]}},
+        )
     from astrolabe import io
-    return io.read_ome_tiff(str(fpath))
+    return io.read_ome_tiff(str(combined_path))
 
 
 def he(cache_dir=None):

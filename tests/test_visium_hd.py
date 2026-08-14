@@ -8,7 +8,12 @@ import pytest
 import scipy.sparse as sp
 
 import astrolabe as ab
-from astrolabe.io._visium_hd import _resolve_matrix_h5
+from astrolabe.io._visium_hd import (
+    _resolve_matrix_h5,
+    _resolve_pixel_size,
+    _resolve_cytassist_pixel_size,
+    _find_he_image,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +167,125 @@ class TestReadVisiumHD:
     def test_missing_binned_outputs_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             ab.io.read_visium_hd(str(tmp_path / "nonexistent"), load_he=False, load_segmented=False)
+
+
+# ---------------------------------------------------------------------------
+# CytAssist fallback pixel-scale bug (audit item #18 / batch 8)
+#
+# Regression: the CytAssist registration-target image is captured by a
+# different scanner at a different pixel resolution than the fullres tissue
+# image bin centroids are placed in. _attach_he_image used to silently
+# register *any* fallback image (including CytAssist) with the bin-space
+# pixel_size_um, placing it in a coordinate frame disjoint from the actual
+# bin/cell data. _find_he_image now reports which branch matched, and
+# _resolve_cytassist_pixel_size resolves the CytAssist image's own scale
+# from a separate scalefactors_json.json key -- never falling back to the
+# fullres pixel size.
+# ---------------------------------------------------------------------------
+
+
+class TestFindHEImage:
+    def test_finds_fullres_pattern_not_cytassist(self, tmp_path):
+        outs_dir = tmp_path / "outs"
+        spatial_dir = outs_dir / "spatial"
+        spatial_dir.mkdir(parents=True)
+        (outs_dir / "sample_tissue_image.tif").write_bytes(b"")
+        (spatial_dir / "cytassist_image.tiff").write_bytes(b"")
+
+        found = _find_he_image(outs_dir)
+
+        assert found is not None
+        img_path, is_cytassist = found
+        assert img_path.name == "sample_tissue_image.tif"
+        assert is_cytassist is False
+
+    def test_falls_back_to_cytassist_and_flags_it(self, tmp_path):
+        outs_dir = tmp_path / "outs"
+        spatial_dir = outs_dir / "spatial"
+        spatial_dir.mkdir(parents=True)
+        (spatial_dir / "cytassist_image.tiff").write_bytes(b"")
+
+        found = _find_he_image(outs_dir)
+
+        assert found is not None
+        img_path, is_cytassist = found
+        assert img_path.name == "cytassist_image.tiff"
+        assert is_cytassist is True
+
+    def test_returns_none_when_nothing_found(self, tmp_path):
+        outs_dir = tmp_path / "outs"
+        outs_dir.mkdir()
+        assert _find_he_image(outs_dir) is None
+
+
+class TestResolveCytAssistPixelSize:
+    def test_resolves_regist_target_key(self, tmp_path):
+        spatial_dir = tmp_path / "spatial"
+        spatial_dir.mkdir()
+        (spatial_dir / "scalefactors_json.json").write_text(json.dumps({
+            "microns_per_pixel": 0.2,
+            "regist_target_img_scalef_microns_per_pixel": 1.375,
+        }))
+
+        assert _resolve_cytassist_pixel_size(spatial_dir) == pytest.approx(1.375)
+
+    def test_returns_none_when_key_absent_does_not_fall_back_to_fullres_scale(self, tmp_path):
+        # The critical regression check: no silent substitution of the
+        # fullres microns_per_pixel when the CytAssist-specific key is missing.
+        spatial_dir = tmp_path / "spatial"
+        spatial_dir.mkdir()
+        (spatial_dir / "scalefactors_json.json").write_text(json.dumps({
+            "microns_per_pixel": 0.2,
+        }))
+
+        assert _resolve_cytassist_pixel_size(spatial_dir) is None
+
+    def test_returns_none_when_file_absent(self, tmp_path):
+        spatial_dir = tmp_path / "spatial"
+        spatial_dir.mkdir()
+        assert _resolve_cytassist_pixel_size(spatial_dir) is None
+
+
+class TestResolvePixelSizeIgnoresCytAssistKey:
+    def test_does_not_fall_back_to_regist_target_key(self, tmp_path):
+        # Regression: _resolve_pixel_size used to try
+        # regist_target_img_scalef_microns_per_pixel as a second choice when
+        # microns_per_pixel was absent -- but that key describes a *different*
+        # image's scale, not the fullres frame bin centroids are placed in.
+        # Absent microns_per_pixel must fall through to the empirical
+        # bin-grid-spacing derivation instead.
+        spatial_dir = tmp_path / "spatial"
+        spatial_dir.mkdir()
+        (spatial_dir / "scalefactors_json.json").write_text(json.dumps({
+            "regist_target_img_scalef_microns_per_pixel": 1.375,
+        }))
+        tp = pd.DataFrame({
+            "array_row": [0, 0],
+            "array_col": [0, 1],
+            "pxl_col_in_fullres": [100.0, 110.0],
+        })
+
+        resolved = _resolve_pixel_size(spatial_dir, tp, bin_size_um=2.0)
+
+        assert resolved != pytest.approx(1.375)
+        assert resolved == pytest.approx(2.0 / 10.0)
+
+
+class TestReadVisiumHDCytAssistFallback:
+    def test_load_he_skips_with_warning_when_only_cytassist_and_no_scale_key(
+        self, small_visium_hd_dir, caplog
+    ):
+        import logging
+
+        outs_dir, X, barcodes, gene_names, pixel_size_um = small_visium_hd_dir
+        spatial_dir = outs_dir / "binned_outputs" / "square_002um" / "spatial"
+        (spatial_dir / "cytassist_image.tiff").write_bytes(b"")
+
+        with caplog.at_level(logging.WARNING):
+            mdata = ab.io.read_visium_hd(str(outs_dir), load_he=True, load_segmented=False)
+
+        assert "he" not in mdata.mod
+        assert "cannot reliably register" in caplog.text.lower()
 
 
 class TestNativeSegmentation:
@@ -486,6 +610,47 @@ class TestAssignBins:
         bin_data, cell_seg = _make_bin2cell_fixture()
         result = ab.seg.assign_bins(bin_data, cell_seg, expand_um=6.0, inplace=False)
         assert "cell_boundaries_expanded" in result.obsm
+
+    def test_no_core_bin_cell_can_still_win_a_contested_bin(self):
+        # Regression: a cell with zero core/unambiguous-expansion bins of
+        # its own was structurally excluded from `eligible_candidates` for
+        # *any* contested bin it competed for, so it could never win one --
+        # not just disadvantaged, excluded outright, regardless of true
+        # geometric or transcriptional similarity. Demonstrated on synthetic
+        # data where every bin (core and contested) has an *identical*
+        # expression vector -- there is no transcriptional basis to prefer
+        # either cell -- so the correct tie-break is purely geometric.
+        #
+        # Cell A: square [0,4]x[0,4], centroid (2,2), 3 core bins.
+        # Cell B: square [10,14]x[0,4], centroid (12,2), *zero* core bins.
+        # Contested bin at (9,2): distance to A=7, to B=3 -- B is the
+        # correct (nearer) match once B is allowed to compete at all.
+        poly_a = np.array([[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]], dtype=np.float32)
+        poly_b = np.array([[10, 0], [14, 0], [14, 4], [10, 4], [10, 0]], dtype=np.float32)
+        cell_seg = ad.AnnData(
+            obs=pd.DataFrame({"cell_area": [16.0, 16.0]}, index=["cellA", "cellB"])
+        )
+        cell_seg.obsm["spatial"] = np.array([[2.0, 2.0], [12.0, 2.0]], dtype=np.float32)
+        cell_seg.obsm["cell_boundaries"] = ak.Array([poly_a, poly_b])
+
+        coords = np.array([[1, 2], [2, 2], [3, 2], [9, 2]], dtype=np.float32)
+        X = np.array(
+            [[10, 0], [10, 0], [10, 0], [10, 0]], dtype=np.float32
+        )  # identical profile everywhere -- no transcriptional signal at all
+        bin_data = ad.AnnData(
+            X=sp.csr_matrix(X),
+            obs=pd.DataFrame(index=[f"bin{i}" for i in range(4)]),
+            var=pd.DataFrame(index=pd.Index(["GeneA", "GeneB"], name="gene_name")),
+        )
+        bin_data.obsm["spatial"] = coords
+
+        result = ab.seg.assign_bins(
+            bin_data, cell_seg, expand_um=6.0, tie_break="pca", min_bin_counts=1, inplace=False,
+        )
+        # cellB (no core bins, but geometrically nearer) must win the
+        # contested bin -- not automatically lose it to cellA.
+        assert result.obs["n_bins"]["cellB"] == 1
+        assert result.obs["n_bins"]["cellA"] == 3
 
 
 # ---------------------------------------------------------------------------

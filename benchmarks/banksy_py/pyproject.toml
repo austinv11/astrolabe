@@ -1,0 +1,24 @@
+[project]
+name = "benchmark-banksy-py"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "astrolabe",
+    "banksy-py",
+    "leidenalg",
+    "jupyter",
+    "ipykernel",
+    "nbconvert",
+]
+
+[tool.uv]
+package = false
+# banksy-py's published pins (matplotlib<3.9 on 0.0.1, scikit-learn==1.2.0
+# exactly on 0.0.7) are otherwise unresolvable alongside astrolabe's own
+# matplotlib>=3.10.9 / scikit-learn>=1.5.0 -- overridden here since nothing
+# banksy-py's neighbor-weight-matrix code actually uses has changed in a
+# way that would break under newer versions of either package.
+override-dependencies = ["matplotlib>=3.10.9", "scikit-learn>=1.5.0", "scanpy>=1.12.1", "numpy>=2,<2.5"]
+
+[tool.uv.sources]
+astrolabe = { path = "../..", editable = true }

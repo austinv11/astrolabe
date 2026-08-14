@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from astrolabe._utils import ImageSpec
-from astrolabe.pp._transform import rotate, flip, apply_affine, crop
+from astrolabe.pp._transform import rotate, flip, apply_affine, crop, auto_crop
 
 
 def _adata_with_libraries(n_libs):
@@ -250,3 +250,190 @@ class TestCropSyncsSiblingModalitySpatialBounds:
         adata = _adata_with_transcripts()
         result = crop(adata, _REGION, inplace=False)
         assert result.n_obs == 2
+
+
+def _adata_with_outlier(rng=None):
+    # 99 cells tightly clustered in [0, 1] x [0, 1], plus one cell far away.
+    # Mirrors the real bug this feature fixes: notebooks/04_if_and_he_images.ipynb
+    # (xenium_tiny) had 357/358 cells in a ~245x135 um patch and one lone cell
+    # ~580 um away, which blew a min/max-based crop region out to ~80% empty space.
+    rng = rng or np.random.default_rng(0)
+    cluster = rng.uniform(0.0, 1.0, size=(99, 2)).astype(np.float32)
+    outlier = np.array([[1000.0, 1000.0]], dtype=np.float32)
+    obsm = {"spatial": np.vstack([cluster, outlier])}
+    adata = ad.AnnData(obs=pd.DataFrame(index=[f"c{i}" for i in range(100)]), obsm=obsm)
+    return adata, cluster
+
+
+class TestAutoCrop:
+    def test_default_bounds_match_percentile_formula(self):
+        adata, _ = _adata_with_outlier()
+        spatial = adata.obsm["spatial"].astype(np.float64)
+
+        result = auto_crop(adata, inplace=False)
+
+        x_lo, x_hi = np.percentile(spatial[:, 0], [1.0, 99.0])
+        y_lo, y_hi = np.percentile(spatial[:, 1], [1.0, 99.0])
+        w, h = (x_hi - x_lo) * 1.15, (y_hi - y_lo) * 1.15
+        expected = {
+            "xmin": (x_lo + x_hi) / 2.0 - w / 2.0,
+            "xmax": (x_lo + x_hi) / 2.0 + w / 2.0,
+            "ymin": (y_lo + y_hi) / 2.0 - h / 2.0,
+            "ymax": (y_lo + y_hi) / 2.0 + h / 2.0,
+        }
+        bounds = result.uns["spatial_bounds"]
+        for k in expected:
+            assert bounds[k] == pytest.approx(expected[k])
+
+    def test_outlier_excluded_from_bounds_by_default(self):
+        # The whole point of the feature: the lone outlier at (1000, 1000)
+        # must not set the crop frame the way it would with plain min/max.
+        adata, cluster = _adata_with_outlier()
+
+        result = auto_crop(adata, inplace=False)
+
+        bounds = result.uns["spatial_bounds"]
+        assert bounds["xmax"] < 20.0
+        assert bounds["ymax"] < 20.0
+        # The outlier cell itself must have been cropped out.
+        assert result.n_obs == 99
+        assert np.allclose(np.sort(result.obsm["spatial"], axis=0), np.sort(cluster, axis=0))
+
+    def test_percentile_zero_uses_true_min_max_no_trimming(self):
+        adata, _ = _adata_with_outlier()
+        spatial = adata.obsm["spatial"].astype(np.float64)
+
+        result = auto_crop(adata, percentile=0.0, inplace=False)
+
+        x_lo, x_hi = spatial[:, 0].min(), spatial[:, 0].max()
+        y_lo, y_hi = spatial[:, 1].min(), spatial[:, 1].max()
+        bounds = result.uns["spatial_bounds"]
+        assert bounds["xmax"] == pytest.approx(x_hi + (x_hi - x_lo) * 0.15 / 2.0)
+        assert bounds["ymax"] == pytest.approx(y_hi + (y_hi - y_lo) * 0.15 / 2.0)
+        # No trimming means every cell, including the outlier, is kept.
+        assert result.n_obs == 100
+
+    def test_padding_widens_bounds_proportionally(self):
+        adata, _ = _adata_with_outlier()
+
+        tight = auto_crop(adata, padding=0.0, inplace=False)
+        padded = auto_crop(adata, padding=0.5, inplace=False)
+
+        tb, pb = tight.uns["spatial_bounds"], padded.uns["spatial_bounds"]
+        assert (pb["xmax"] - pb["xmin"]) == pytest.approx((tb["xmax"] - tb["xmin"]) * 1.5)
+        assert (pb["ymax"] - pb["ymin"]) == pytest.approx((tb["ymax"] - tb["ymin"]) * 1.5)
+
+    def test_inplace_returns_none_and_mutates(self):
+        adata, _ = _adata_with_outlier()
+
+        result = auto_crop(adata, inplace=True)
+
+        assert result is None
+        assert adata.n_obs == 99
+        assert "spatial_bounds" in adata.uns
+
+    def test_missing_spatial_key_raises(self):
+        adata = ad.AnnData(obs=pd.DataFrame(index=["c0"]))
+        with pytest.raises(KeyError):
+            auto_crop(adata)
+
+    def test_empty_adata_raises(self):
+        obsm = {"spatial": np.empty((0, 2), dtype=np.float32)}
+        adata = ad.AnnData(obs=pd.DataFrame(index=pd.Index([], dtype=str)), obsm=obsm)
+        with pytest.raises(ValueError):
+            auto_crop(adata)
+
+    def test_degenerate_span_falls_back_to_fixed_window(self):
+        # Every cell at the exact same coordinate -- zero-width/height span
+        # must not silently crop away every cell.
+        obsm = {"spatial": np.full((10, 2), 5.0, dtype=np.float32)}
+        adata = ad.AnnData(obs=pd.DataFrame(index=[f"c{i}" for i in range(10)]), obsm=obsm)
+
+        result = auto_crop(adata, inplace=False)
+
+        assert result.n_obs == 10
+
+    def test_modality_forwarded_and_sibling_bounds_synced(self):
+        # auto_crop must delegate to crop() faithfully, including its
+        # MuData modality resolution and sibling spatial_bounds sync.
+        xen, _ = _adata_with_outlier()
+        xen.uns["spatial"] = {"lib_xen": {"images": {}}}
+        he = ad.AnnData(obs=pd.DataFrame(index=pd.Index([], name="cell_id", dtype=str)))
+        he.uns["spatial"] = {"lib_he": {"images": {}}}
+        mdata = md.MuData({"xenium": xen, "he": he})
+        mdata.uns["default_modality"] = "xenium"
+
+        result = auto_crop(mdata, inplace=True)
+
+        assert result is None
+        assert mdata["xenium"].n_obs == 99
+        assert "spatial_bounds" in mdata["he"].uns
+        assert mdata["he"].uns["spatial_bounds"] == mdata["xenium"].uns["spatial_bounds"]
+
+
+class TestRotateFlipSyncSpatialBounds:
+    # Regression: rotate()/flip() used to leave a pre-existing
+    # uns['spatial_bounds'] (set by an earlier pp.crop()) describing the
+    # *pre-transform* window, so a rotated/flipped, previously-cropped panel
+    # rendered auto-zoomed to the wrong region.
+
+    def _adata_with_bounds(self):
+        rng = np.random.default_rng(0)
+        adata = ad.AnnData(obsm={"spatial": rng.uniform(0, 10, (5, 2)).astype(np.float32)})
+        adata.uns["spatial_bounds"] = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 10.0}
+        return adata
+
+    def test_rotate_transforms_existing_bounds(self):
+        adata = self._adata_with_bounds()
+        rotate(adata, 90.0, center=(0.0, 0.0), inplace=True)
+        # 90 deg CCW about origin: (x, y) -> (-y, x). Corners of [0,10]x[0,10]
+        # map to (0,0),(0,10),(-10,10),(-10,0) -> new box [-10,0] x [0,10].
+        bounds = adata.uns["spatial_bounds"]
+        assert bounds["xmin"] == pytest.approx(-10.0)
+        assert bounds["xmax"] == pytest.approx(0.0)
+        assert bounds["ymin"] == pytest.approx(0.0)
+        assert bounds["ymax"] == pytest.approx(10.0)
+
+    def test_rotate_not_inplace_transforms_copy_bounds_only(self):
+        adata = self._adata_with_bounds()
+        original = dict(adata.uns["spatial_bounds"])
+        result = rotate(adata, 90.0, center=(0.0, 0.0), inplace=False)
+        assert adata.uns["spatial_bounds"] == original
+        assert result.uns["spatial_bounds"]["xmin"] == pytest.approx(-10.0)
+
+    def test_rotate_no_existing_bounds_stays_absent(self):
+        rng = np.random.default_rng(0)
+        adata = ad.AnnData(obsm={"spatial": rng.uniform(0, 10, (5, 2)).astype(np.float32)})
+        rotate(adata, 45.0, inplace=True)
+        assert "spatial_bounds" not in adata.uns
+
+    def test_flip_transforms_existing_bounds(self):
+        adata = self._adata_with_bounds()
+        flip(adata, "x", center=(0.0, 0.0), inplace=True)
+        # axis='x' about origin: (x, y) -> (-x, y). [0,10]x[0,10] -> [-10,0]x[0,10].
+        bounds = adata.uns["spatial_bounds"]
+        assert bounds["xmin"] == pytest.approx(-10.0)
+        assert bounds["xmax"] == pytest.approx(0.0)
+        assert bounds["ymin"] == pytest.approx(0.0)
+        assert bounds["ymax"] == pytest.approx(10.0)
+
+
+class TestApplyAffineSyncsSpatialBounds:
+    def test_translates_existing_bounds_per_modality(self):
+        mdata = _make_mdata_for_apply_affine()
+        mdata["a"].uns["spatial_bounds"] = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 10.0}
+        mdata["b"].uns["spatial_bounds"] = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 10.0}
+        M = np.array([[1.0, 0.0, 5.0], [0.0, 1.0, 3.0], [0.0, 0.0, 1.0]])
+
+        apply_affine(mdata, M, inplace=True)
+
+        expected = {"xmin": 5.0, "xmax": 15.0, "ymin": 3.0, "ymax": 13.0}
+        assert mdata["a"].uns["spatial_bounds"] == pytest.approx(expected)
+        assert mdata["b"].uns["spatial_bounds"] == pytest.approx(expected)
+
+    def test_modality_without_bounds_stays_absent(self):
+        mdata = _make_mdata_for_apply_affine()
+        M = np.array([[1.0, 0.0, 5.0], [0.0, 1.0, 3.0], [0.0, 0.0, 1.0]])
+        apply_affine(mdata, M, inplace=True)
+        assert "spatial_bounds" not in mdata["a"].uns
+        assert "spatial_bounds" not in mdata["b"].uns

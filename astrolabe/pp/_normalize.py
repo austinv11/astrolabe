@@ -128,15 +128,29 @@ def normalize_by_area(
     layer: str | None = None,
     layer_added: str | None = None,
 ) -> None:
-    """Divide log-transformed expression by cell area to correct for cell size.
+    """Divide expression by cell area (on the linear scale) to correct for cell size.
 
     Large cells capture more transcripts simply because they have more
-    cytoplasm.  This function divides each cell's log-expression vector by
-    its area (in µm²), producing values that remain non-negative:
+    cytoplasm.  This function divides each cell's expression vector by its
+    area (in µm²) *on the linear count scale*, then re-applies ``log1p`` so
+    the output stays on the same log-scale downstream steps (PCA,
+    clustering) expect:
 
     .. math::
 
-        X_{\\text{corr}} = X \\;/\\; \\text{area}
+        X_{\\text{corr}} = \\log_1p\\!\\left(\\frac{\\exp(X) - 1}{\\text{area}}\\right)
+
+    .. note::
+
+        This is not simply ``X / area``. Dividing already-``log1p``-transformed
+        values directly by a raw linear-scale area is not a valid size
+        correction under any generative model of count data (log-scale
+        values and linear-scale area live on incompatible scales) and
+        empirically produces a *stronger* residual area-dependence than no
+        correction at all (a spurious ``1/area`` hyperbola). The division
+        has to happen on the linear (pre-log) scale, where "counts per µm²"
+        is a real density -- ``expm1``/``log1p`` round-trips the input back
+        to that scale and forward again.
 
     .. note::
         Run **after** :func:`normalize_total` and :func:`log1p`.
@@ -183,12 +197,15 @@ def normalize_by_area(
     mat = adata.layers[layer] if layer is not None else adata.X
 
     if sp.issparse(mat):
-        # Divide each row by its scalar — stays sparse (zeros remain zero).
-        # Use a diagonal matrix multiply: D^{-1} @ X.
+        # expm1 -> divide (still sparse: zeros stay zero through both
+        # expm1 and the division) -> log1p, each row divided by its scalar
+        # via a diagonal matrix multiply: D^{-1} @ expm1(X).
         inv_diag = sp.diags(1.0 / scale, format="csr")
-        result = inv_diag @ mat.tocsr()
+        linear = mat.tocsr().expm1()
+        result = (inv_diag @ linear).log1p().astype(np.float32)
     else:
-        result = np.asarray(mat, dtype=np.float32) / scale[:, np.newaxis]
+        linear = np.expm1(np.asarray(mat, dtype=np.float64))
+        result = np.log1p(linear / scale[:, np.newaxis]).astype(np.float32)
 
     target_layer = layer_added if layer_added is not None else layer
     if target_layer is None:

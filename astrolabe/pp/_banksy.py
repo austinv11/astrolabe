@@ -26,29 +26,56 @@ log = logging.getLogger(__name__)
 
 def _build_weight_matrices(
     conn: sp.spmatrix,
-    coords: np.ndarray | None,
+    coords: np.ndarray,
     agf: bool,
 ) -> tuple[sp.csr_matrix, sp.csr_matrix | None, sp.csr_matrix | None]:
-    """Build row-normalized M0 weight matrix and optional AGF weight matrices."""
-    coo = conn.tocoo()
-    rows, cols = coo.row.astype(np.int32), coo.col.astype(np.int32)
-    n = conn.shape[0]
+    """Build a distance-decayed, row-normalized M0 weight matrix and optional AGF weight matrices.
 
-    row_counts = np.bincount(rows, minlength=n).astype(np.float64)
-    row_counts[row_counts == 0] = 1.0
-    w = 1.0 / row_counts[rows]
+    Mirrors published BANKSY's default ``'scaled_gaussian'`` neighbor
+    weighting (Singhal et al. 2024; banksy_py's
+    ``generate_spatial_weights_fixed_nbrs``): within each cell's own
+    k-neighbor set, weight decays with distance rather than being uniform.
+    Each cell's own neighbor distances set a per-cell Gaussian bandwidth
+    (the median neighbor distance), so weighting adapts to local cell
+    density instead of using one global bandwidth; weights are then
+    row-normalized to sum to 1, same as astrolabe's previous uniform
+    ``1/k`` scheme.
+    """
+    csr = conn.tocsr()
+    csr.sort_indices()
+    n = csr.shape[0]
+    indptr = csr.indptr
+    cols = csr.indices.astype(np.int32)
+    rows = np.repeat(np.arange(n, dtype=np.int32), np.diff(indptr))
 
-    W_norm = sp.csr_matrix((w, (rows, cols)), shape=(n, n))
+    dy = coords[cols, 1] - coords[rows, 1]
+    dx = coords[cols, 0] - coords[rows, 0]
+    dist = np.hypot(dx, dy)
+
+    weights = np.ones_like(dist)
+    for i in range(n):
+        start, end = indptr[i], indptr[i + 1]
+        if end <= start:
+            continue
+        nbrs = dist[start:end]
+        median_r = np.median(nbrs)
+        if median_r > 0:
+            weights[start:end] = np.exp(-((nbrs / median_r) ** 2))
+        # else: all neighbors coincide with the cell itself -- fall back
+        # to the uniform weight already set above.
+
+    row_totals = np.bincount(rows, weights=weights, minlength=n)
+    row_totals[row_totals == 0] = 1.0
+    w = weights / row_totals[rows]
+
+    W_norm = sp.csr_matrix((w, cols, indptr), shape=(n, n))
 
     if not agf:
         return W_norm, None, None
 
-    dy = coords[cols, 1] - coords[rows, 1]
-    dx = coords[cols, 0] - coords[rows, 0]
     theta = np.arctan2(dy, dx)
-
-    W_cos = sp.csr_matrix((w * np.cos(theta), (rows, cols)), shape=(n, n))
-    W_sin = sp.csr_matrix((w * np.sin(theta), (rows, cols)), shape=(n, n))
+    W_cos = sp.csr_matrix((w * np.cos(theta), cols, indptr), shape=(n, n))
+    W_sin = sp.csr_matrix((w * np.sin(theta), cols, indptr), shape=(n, n))
     return W_norm, W_cos, W_sin
 
 
@@ -72,14 +99,24 @@ def banksy_matrix(
     for spatially-coherent cell typing (low λ) or tissue-domain segmentation
     (high λ).
 
+    Neighbor contributions are weighted by distance rather than uniformly,
+    matching published BANKSY's default ``'scaled_gaussian'`` scheme
+    (Singhal et al. 2024): within each cell's own k-neighbor set, weight
+    decays with distance from a per-cell Gaussian bandwidth set by that
+    cell's median neighbor distance, then is row-normalized to sum to 1 —
+    so closer neighbors within the set contribute more than distant ones,
+    rather than every neighbor counting equally.
+
     Two neighborhood features are supported:
 
     **M0 — neighborhood mean** (always included):
-        ``M0ᵢ = (1/k) Σ_{j∈N(i)} xⱼ``
+        ``M0ᵢ = Σ_{j∈N(i)} wᵢⱼ·xⱼ``,  weights ``wᵢⱼ`` distance-decayed and
+        summing to 1 over ``j∈N(i)`` (see above).
 
     **|M1| — azimuthal Gabor magnitude** (``agf=True``):
-        ``M1ᵢ = (1/k) Σ_{j∈N(i)} xⱼ · exp(i·θᵢⱼ)``
-        where θᵢⱼ is the angle from cell i to neighbor j.  The magnitude
+        ``M1ᵢ = Σ_{j∈N(i)} wᵢⱼ·xⱼ · exp(i·θᵢⱼ)``
+        where θᵢⱼ is the angle from cell i to neighbor j, and ``wᵢⱼ`` are
+        the same distance-decayed weights used for M0.  The magnitude
         |M1| captures directional expression gradients and improves tissue
         domain segmentation in structured tissues.
 
@@ -110,7 +147,8 @@ def banksy_matrix(
         (``{neighbors_key}_connectivities``).
     spatial_key
         ``obsm`` key containing ``(n_cells, 2)`` micron coordinates.
-        Required only when ``agf=True``.
+        Always required — used to compute the distance-decayed neighbor
+        weights for M0 (and |M1| when ``agf=True``).
     layer
         Expression layer to use.  ``None`` uses ``adata.X``.
     key_added
@@ -121,11 +159,13 @@ def banksy_matrix(
     >>> # cell typing
     >>> ab.pp.banksy_matrix(mdata, lambda_param=0.2)
     >>> ab.tl.pca(mdata, use_rep="X_banksy")
+    >>> ab.tl.transcriptional_neighbors(mdata)  # graph over the BANKSY-PCA embedding
     >>> ab.tl.cluster(mdata)
 
     >>> # tissue domain segmentation with AGF
     >>> ab.pp.banksy_matrix(mdata, lambda_param=0.8, agf=True)
     >>> ab.tl.pca(mdata, use_rep="X_banksy")
+    >>> ab.tl.transcriptional_neighbors(mdata)
     >>> ab.tl.cluster(mdata, key_added="spatial_domains")
 
     References
@@ -137,9 +177,10 @@ def banksy_matrix(
         raise KeyError(
             f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors first."
         )
-    if agf and spatial_key not in adata.obsm:
+    if spatial_key not in adata.obsm:
         raise KeyError(
-            f"obsm['{spatial_key}'] not found; required for AGF computation."
+            f"obsm['{spatial_key}'] not found; required for distance-decayed "
+            f"neighbor weighting."
         )
     if not 0.0 <= lambda_param <= 1.0:
         raise ValueError(f"lambda_param must be in [0, 1]; got {lambda_param}")
@@ -158,7 +199,7 @@ def banksy_matrix(
         X = X.toarray()
     X = np.asarray(X, dtype=np.float32)
 
-    coords = adata.obsm[spatial_key].astype(np.float64) if agf else None
+    coords = adata.obsm[spatial_key].astype(np.float64)
     W_norm, W_cos, W_sin = _build_weight_matrices(
         adata.obsp[conn_key], coords, agf
     )

@@ -147,7 +147,7 @@ def _open_multiscale_zarr(spec: ImageSpec) -> tuple[Any, Any, list[Any]]:
     store = tif.aszarr()
     z = zarr.open(store, mode="r")
     if isinstance(z, zarr.Group):
-        levels = [z[i] for i in range(spec.n_levels)]
+        levels = [z[str(i)] for i in range(spec.n_levels)]
     else:
         levels = [z]
     return tif, store, levels

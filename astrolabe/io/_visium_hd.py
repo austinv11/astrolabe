@@ -45,9 +45,16 @@ mdata['visium_hd_bins']
                 bin_matrix      : BinMatrixSpec
 
 mdata['he'] (optional, when load_he=True and an image is found)
-    Same schema as :func:`~astrolabe.io.read_he` — registered into the same
-    pixel frame as the bins (a pure ``pixel_size_um`` scale, no separate
-    alignment matrix needed: Space Ranger already places both in one frame).
+    Same schema as :func:`~astrolabe.io.read_he`. When the fullres tissue
+    image is found, it's registered into the same pixel frame as the bins
+    (a pure ``pixel_size_um`` scale, no separate alignment matrix needed:
+    Space Ranger already places both in one frame). When only the CytAssist
+    registration-target image is present (no fullres tissue image shipped
+    with the run), it's registered with its own, different pixel scale from
+    ``scalefactors_json.json``'s ``regist_target_img_scalef_microns_per_pixel``
+    instead — never with the bin-space ``pixel_size_um``, which describes a
+    different scanner's pixel resolution. If that scale factor isn't present,
+    the image is skipped (logged) rather than silently mis-registered.
 
 mdata['visium_hd_cells'] (optional, only when segmented_outputs/ is found)
     X                    : (n_cells, n_genes)  sparse float32
@@ -242,7 +249,7 @@ def read_visium_hd(
     # 2. Paired H&E image (loaded by default — Visium HD ships one)       #
     # ------------------------------------------------------------------ #
     if load_he:
-        _attach_he_image(mdata, path, he_path, pixel_size_um=pixel_size_um)
+        _attach_he_image(mdata, path, he_path, pixel_size_um=pixel_size_um, spatial_dir=spatial_dir)
 
     # ------------------------------------------------------------------ #
     # 3. Native on-board segmentation (Space Ranger v4.0+)                 #
@@ -319,23 +326,54 @@ def _read_tissue_positions(spatial_dir: Path) -> pd.DataFrame:
     return df
 
 
+def _read_scalefactors(spatial_dir: Path) -> dict:
+    """Read scalefactors_json.json, or {} if absent."""
+    sf_path = spatial_dir / "scalefactors_json.json"
+    if not sf_path.exists():
+        return {}
+    with sf_path.open() as fh:
+        return json.load(fh)
+
+
 def _resolve_pixel_size(
     spatial_dir: Path, tissue_positions_df: pd.DataFrame, bin_size_um: float
 ) -> float:
-    """Resolve microns-per-pixel: prefer scalefactors_json.json, else derive empirically."""
-    sf_path = spatial_dir / "scalefactors_json.json"
-    if sf_path.exists():
-        with sf_path.open() as fh:
-            scalefactors = json.load(fh)
-        for key in ("microns_per_pixel", "regist_target_img_scalef_microns_per_pixel"):
-            if key in scalefactors and scalefactors[key]:
-                return float(scalefactors[key])
+    """Resolve microns-per-pixel for the **fullres tissue image** frame that
+    bin centroids (``pxl_row/col_in_fullres``) are already expressed in.
+
+    Prefers scalefactors_json.json's own ``microns_per_pixel``, else derives
+    it empirically from the bin grid spacing. Deliberately does **not** fall
+    back to ``regist_target_img_scalef_microns_per_pixel`` — that key
+    describes the CytAssist registration-target image's *own*, different
+    pixel scale (see :func:`_resolve_cytassist_pixel_size`), not the fullres
+    image bins are already placed in; conflating the two silently
+    mis-registers whichever image ends up using this value.
+    """
+    scalefactors = _read_scalefactors(spatial_dir)
+    if scalefactors.get("microns_per_pixel"):
+        return float(scalefactors["microns_per_pixel"])
 
     log.info(
         "scalefactors_json.json has no microns_per_pixel field; deriving pixel_size_um "
         "empirically from the bin grid spacing."
     )
     return _empirical_pixel_size(tissue_positions_df, bin_size_um)
+
+
+def _resolve_cytassist_pixel_size(spatial_dir: Path) -> float | None:
+    """Resolve microns-per-pixel for the CytAssist registration-target image.
+
+    ``None`` if ``scalefactors_json.json`` has no
+    ``regist_target_img_scalef_microns_per_pixel`` entry — the caller must
+    not silently substitute the fullres image's pixel size instead (that is
+    exactly the bug this helper exists to avoid: the CytAssist image is
+    captured by a different scanner at a different pixel resolution, so
+    registering it with the fullres scale places it in a coordinate frame
+    disjoint from the actual bin/cell data).
+    """
+    scalefactors = _read_scalefactors(spatial_dir)
+    value = scalefactors.get("regist_target_img_scalef_microns_per_pixel")
+    return float(value) if value else None
 
 
 def _empirical_pixel_size(df: pd.DataFrame, bin_size_um: float) -> float:
@@ -368,22 +406,32 @@ def _empirical_pixel_size(df: pd.DataFrame, bin_size_um: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _find_he_image(path: Path) -> Path | None:
+def _find_he_image(path: Path) -> tuple[Path, bool] | None:
+    """Return ``(image_path, is_cytassist)``, or ``None`` if nothing is found."""
     for pattern in _HE_PATTERNS:
         matches = sorted(path.glob(pattern))
         if matches:
-            return matches[0]
+            return matches[0], False
     # Fall back to the CytAssist stain image (present in a full `outs/` run).
+    # This image is captured by a different scanner at a different pixel
+    # resolution than the fullres tissue image -- callers must register it
+    # with its own scale (_resolve_cytassist_pixel_size), not pixel_size_um.
     for candidate in (path / "spatial" / "cytassist_image.tiff",
                       path / "binned_outputs" / "square_002um" / "spatial" / "cytassist_image.tiff"):
         if candidate.exists():
-            return candidate
+            return candidate, True
     return None
 
 
 def _attach_he_image(
-    mdata: md.MuData, path: Path, he_path: str | Path | None, *, pixel_size_um: float
+    mdata: md.MuData,
+    path: Path,
+    he_path: str | Path | None,
+    *,
+    pixel_size_um: float,
+    spatial_dir: Path,
 ) -> None:
+    is_cytassist = False
     if he_path is not None:
         img_path = Path(he_path)
         if not img_path.is_absolute():
@@ -391,23 +439,54 @@ def _attach_he_image(
         if not img_path.exists():
             raise FileNotFoundError(f"he_path: specified file not found: {img_path}")
     else:
-        img_path = _find_he_image(path)
-        if img_path is None:
+        found = _find_he_image(path)
+        if found is None:
             log.warning(
                 "No H&E image found under %s (checked %s and spatial/cytassist_image.tiff); "
                 "skipping. Pass he_path= to point at it explicitly.",
                 path, _HE_PATTERNS,
             )
             return
+        img_path, is_cytassist = found
 
-    # Visium HD's fullres image is already pixel-aligned to pxl_row/col_in_fullres
-    # by Space Ranger — the same frame bin centroids were placed in above — so
-    # registration is a pure pixel_size_um scale, no separate alignment matrix.
+    if is_cytassist:
+        # The CytAssist registration-target image is captured by a different
+        # scanner at a different pixel resolution than the fullres tissue
+        # image bin centroids are already placed in -- registering it with
+        # the bin-space pixel_size_um silently places it in a coordinate
+        # frame disjoint from the actual bin/cell data. Its own scale
+        # (regist_target_img_scalef_microns_per_pixel) must be used instead;
+        # if that field isn't present there is no reliable way to register
+        # it, so skip attaching rather than silently mis-registering.
+        cytassist_pixel_size_um = _resolve_cytassist_pixel_size(spatial_dir)
+        if cytassist_pixel_size_um is None:
+            log.warning(
+                "Found only a CytAssist image (%s) and scalefactors_json.json has "
+                "no regist_target_img_scalef_microns_per_pixel entry -- cannot "
+                "reliably register it against the bin coordinate frame. Skipping. "
+                "Pass he_path= to an already-registered image, or supply the scale "
+                "factor manually via ab.io.read_he(..., affine=...).",
+                img_path,
+            )
+            return
+        image_pixel_size_um = cytassist_pixel_size_um
+        log.info(
+            "Registering CytAssist fallback image with its own scale (%.4f µm/px) "
+            "from regist_target_img_scalef_microns_per_pixel -- best-effort, no "
+            "fullres tissue image was found.",
+            image_pixel_size_um,
+        )
+    else:
+        # Visium HD's fullres image is already pixel-aligned to pxl_row/col_in_fullres
+        # by Space Ranger — the same frame bin centroids were placed in above — so
+        # registration is a pure pixel_size_um scale, no separate alignment matrix.
+        image_pixel_size_um = pixel_size_um
+
     affine = np.array(
-        [[pixel_size_um, 0.0, 0.0], [0.0, pixel_size_um, 0.0], [0.0, 0.0, 1.0]]
+        [[image_pixel_size_um, 0.0, 0.0], [0.0, image_pixel_size_um, 0.0], [0.0, 0.0, 1.0]]
     )
 
-    read_he(img_path, affine=affine, pixel_size_um=pixel_size_um, mdata=mdata, mdata_key="he")
+    read_he(img_path, affine=affine, pixel_size_um=image_pixel_size_um, mdata=mdata, mdata_key="he")
     log.info("Attached H&E image from %s (pixel-aligned to bins)", img_path)
 
 

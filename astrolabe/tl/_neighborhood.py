@@ -24,7 +24,7 @@ import scipy.sparse as sp
 from joblib import Parallel, delayed
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
+from astrolabe._utils import _check_single_library, _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _get_conn_matrix
 
 __all__ = [
@@ -185,16 +185,23 @@ def co_occurrence(
     .. math::
 
         \\text{ratio}(A, B, d) =
-        \\frac{P(\\text{type B within }d\\text{ of type A cell})}
-             {P(\\text{type B globally})}
+        \\frac{P(\\text{type B in the annulus ending at }d\\text{ from a type A cell})}
+             {P(\\text{type B among all neighbor-pairs found in that same annulus})}
 
     A ratio > 1 indicates enriched co-occurrence at that scale; < 1 indicates
-    avoidance. ``P(type B within d of type A cell)`` is a probability over
-    the neighbors actually present within *d* (of any type) — not a raw
-    neighbor count — so under no real spatial structure the ratio hovers
-    near 1 at every *d*, and it should trend toward 1 as *d* grows large
-    enough to approach the tissue's global type mixture, rather than
-    growing without bound.
+    avoidance. Distance thresholds are **annular, not cumulative**: the ring
+    for threshold ``interval[k]`` is ``(interval[k-1], interval[k]]``
+    (``[0, interval[0]]`` for the first) — each bin reflects only pairs at
+    that specific distance scale, not every closer pair re-included at every
+    larger threshold too. The within-ring probability is over the neighbors
+    actually present in that ring (of any type) — not a raw neighbor count —
+    so under no real spatial structure the ratio hovers near 1 at every *d*.
+    Both the numerator and the marginal denominator are **ring-local**
+    (recomputed at each distance bin from that bin's own neighbor counts,
+    not the whole-tissue type frequencies) — matching
+    ``squidpy.gr.co_occurrence``'s convention, the standard one for this
+    statistic. This also makes the ratio symmetric: ``ratio(A, B, d) ==
+    ratio(B, A, d)``.
 
     Parameters
     ----------
@@ -228,6 +235,8 @@ def co_occurrence(
     >>> ab.tl.co_occurrence(mdata, 'leiden', interval=(10, 300, 30))
     >>> ab.pl.co_occurrence_plot(mdata, 'leiden', source_groups=['0'])
     """
+    _check_single_library(adata)
+
     if gpu_enabled():
         rsc = _require_rapids()
         # Convert astrolabe interval format to ndarray for rsc
@@ -266,8 +275,6 @@ def co_occurrence(
         thresholds = np.asarray(interval, dtype=np.float64)
 
     n_cells = len(coords)
-    type_counts = np.bincount(codes, minlength=n_types).astype(np.float64)
-    marginal = type_counts / n_cells  # P(type B globally)
 
     # Query all unique pairs within the maximum threshold
     tree = KDTree(coords)
@@ -281,7 +288,15 @@ def co_occurrence(
         dst_codes = codes[pairs[:, 1]]
 
         for k, d in enumerate(thresholds):
-            mask = dists <= d
+            # Annular, not cumulative: each threshold's ring is
+            # (thresholds[k-1], thresholds[k]] (or [0, thresholds[0]] for the
+            # first), not everything from 0 out to d. `dists <= d` at every k
+            # re-included every closer pair at every larger threshold, so a
+            # genuine, tightly-localized co-localization signal at the first
+            # bin got diluted almost to invisibility by the second bin
+            # onward -- defeating the point of a *distance-resolved* curve.
+            lo = thresholds[k - 1] if k > 0 else 0.0
+            mask = (dists > lo) & (dists <= d)
             s = src_codes[mask]
             t = dst_codes[mask]
 
@@ -300,14 +315,29 @@ def co_occurrence(
             # P(B) diverges with d instead of converging to ~1 far from any
             # real spatial structure.
             row_totals = count_mat.sum(axis=1)
+            # Marginal P(B) is ring-local (computed from row_totals at this
+            # distance bin), not the whole-tissue global type fraction --
+            # matching squidpy.gr.co_occurrence's own convention (the
+            # standard, expected one for this statistic in the spatial
+            # ecosystem). A global marginal answers "is B enriched near A
+            # relative to how common B is anywhere in the tissue"; the
+            # ring-local marginal answers "is the A/B pairing enriched
+            # relative to how common each type already is at this specific
+            # distance scale" -- the latter is what users coming from
+            # squidpy/the published co-occurrence literature expect, and
+            # it's also what makes the ratio symmetric in (A, B) by
+            # construction, since both count_mat and the row-total-derived
+            # marginal are themselves symmetric quantities here.
+            ring_total = row_totals.sum()
             with np.errstate(divide="ignore", invalid="ignore"):
+                marginal_local = np.where(ring_total > 0, row_totals / ring_total, 0.0)
                 cond = np.where(
                     row_totals[:, None] > 0,
                     count_mat / row_totals[:, None],
                     0.0,
                 )
                 occ[:, :, k] = np.where(
-                    marginal[None, :] > 0, cond / marginal[None, :], 0.0
+                    marginal_local[None, :] > 0, cond / marginal_local[None, :], 0.0
                 )
 
     adata.uns[key_added] = {
@@ -330,35 +360,40 @@ def centrality_scores(
     force_closeness: bool = False,
     key_added: str = "centrality_scores",
 ) -> None:
-    """Spatial graph centrality metrics aggregated per cell type.
+    """Spatial graph *group* centrality metrics per cell type, matching squidpy.
 
-    Computes three per-cell centrality metrics from the spatial graph and
-    averages them within each cell type:
+    Computes three **group-level** centrality metrics from the spatial
+    graph — the same `networkx` group-centrality algorithms
+    ``squidpy.gr.centrality_scores`` itself calls, treating each cell type
+    as a single group rather than averaging individual cells' scores:
 
-    - **degree_centrality** — fraction of *all* cells (``degree / (n-1)``,
-      the standard networkx/squidpy convention) the cell is directly
-      connected to. On a KNN or distance-pruned Delaunay spatial graph, raw
-      degree is bounded by a small, roughly constant local neighborhood
-      size regardless of cell type (it mostly reflects local tissue packing
-      density, which is often fairly uniform across a section) — so this
-      metric commonly comes out both tiny (dividing a small bounded degree
-      by a large *n*) and nearly flat across cell types. That is expected,
-      not a bug; :func:`centrality_scores` still reports it for consistency
-      with squidpy, but ``closeness_centrality`` below is usually more
-      informative for this graph type since it reflects position in the
-      *whole* tissue, not just the immediate neighborhood.
-    - **clustering** — fraction of a cell's neighbors that are also neighbors
-      of each other; high = tightly clustered local neighborhood. Also
-      dominated by local graph geometry (Delaunay triangulations have a
-      characteristic clustering coefficient largely independent of cell
-      type) more than by biology.
-    - **closeness_centrality** — inverse mean shortest-path to all other cells;
-      high = spatially central cell. Skipped by default for datasets larger
-      than ``max_closeness_n`` because the underlying networkx computation
-      is O(n²) and becomes impractically slow; pass ``force_closeness=True``
-      to compute it anyway (expect this to take minutes-to-hours well past
-      10⁵ cells — it's a genuinely expensive computation, not just an
-      arbitrary cutoff).
+    - **degree_centrality** — :func:`networkx.group_degree_centrality`: the
+      fraction of cells *outside* the group that are directly connected to
+      *at least one* member of the group. A property of the group as a
+      whole ("how much of the rest of the tissue does this cell type
+      touch"), not a per-cell average.
+    - **clustering** — :func:`networkx.average_clustering` restricted to
+      the group's own cells: the mean individual clustering coefficient
+      (fraction of a cell's neighbors that are also neighbors of each
+      other) over the group's members. This one *is* equivalent to
+      averaging a per-cell metric — group and per-cell clustering coincide
+      by definition — so it's the one column here directly comparable to a
+      naive "average this per-cell metric within groups" implementation.
+    - **closeness_centrality** — :func:`networkx.group_closeness_centrality`:
+      how close the group is, collectively, to every cell outside it
+      (``|V-S| / sum_{v not in S} min_{u in S} d(u, v)``) — the group's
+      *best* reach to each outside cell, not the average individual
+      cell's reach. Skipped by default for datasets larger than
+      ``max_closeness_n`` since the underlying shortest-path computation
+      can still be expensive for many groups on a large graph; pass
+      ``force_closeness=True`` to compute it anyway.
+
+    An earlier version of this function computed the mean of each cell's
+    *individual* `networkx.degree_centrality`/`closeness_centrality` within
+    its group instead — a legitimate but different question ("how central
+    is a typical cell of this type") from squidpy's own group-as-a-block
+    definition. This version answers squidpy's question, so results are
+    now directly comparable to ``squidpy.gr.centrality_scores``.
 
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
 
@@ -401,44 +436,36 @@ def centrality_scores(
     n = adata.n_obs
 
     adj = _get_conn_matrix(adata, neighbors_key).astype(bool)
-
-    # Degree centrality: fast from sparse matrix
-    degrees = np.asarray(adj.sum(axis=1)).ravel().astype(np.float64)
-    degree_centrality = degrees / max(n - 1, 1)
-
-    # Clustering coefficient via networkx (O(n * k²), fast for small k)
     G = nx.from_scipy_sparse_array(adj)
-    clustering = np.fromiter(nx.clustering(G).values(), dtype=np.float64, count=n)
 
-    # Closeness centrality: O(n²) — skip for large graphs unless overridden
-    if force_closeness or n <= max_closeness_n:
-        closeness = np.fromiter(
-            nx.closeness_centrality(G).values(), dtype=np.float64, count=n
-        )
-    else:
+    do_closeness = force_closeness or n <= max_closeness_n
+    if not do_closeness:
         log.warning(
             "centrality_scores: skipping closeness_centrality (n=%d > %d). "
             "Pass force_closeness=True to compute it anyway.",
             n,
             max_closeness_n,
         )
-        closeness = np.full(n, np.nan)
 
-    cell_df = pd.DataFrame(
-        {
-            "degree_centrality": degree_centrality,
-            "clustering": clustering,
-            "closeness_centrality": closeness,
-            groupby: adata.obs[groupby].to_numpy(),
-        }
-    )
-    result = (
-        cell_df.groupby(groupby)[
-            ["degree_centrality", "clustering", "closeness_centrality"]
-        ]
-        .mean()
-        .loc[categories]
-    )
+    rows = []
+    for i, _cat in enumerate(categories):
+        group_nodes = np.where(codes == i)[0].tolist()
+        if not group_nodes:
+            rows.append(
+                {"degree_centrality": np.nan, "clustering": np.nan, "closeness_centrality": np.nan}
+            )
+            continue
+        rows.append(
+            {
+                "degree_centrality": nx.group_degree_centrality(G, group_nodes),
+                "clustering": nx.average_clustering(G, nodes=group_nodes),
+                "closeness_centrality": (
+                    nx.group_closeness_centrality(G, group_nodes) if do_closeness else np.nan
+                ),
+            }
+        )
+
+    result = pd.DataFrame(rows, index=pd.Index(categories, name=groupby))
 
     adata.uns[key_added] = result
     log.info("centrality_scores: %d cell types.", len(categories))
@@ -510,6 +537,8 @@ def expression_by_distance(
     """
     from scipy.spatial import KDTree
 
+    _check_single_library(adata)
+
     if isinstance(anchor_groups, str):
         anchor_groups = [anchor_groups]
     if anchor_key not in adata.obs.columns:
@@ -554,6 +583,14 @@ def expression_by_distance(
         max_dist_um = float(np.percentile(dists, 95))
     bin_edges = np.linspace(0.0, max_dist_um, n_bins + 1)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    # in_range gates out cells beyond max_dist_um entirely -- np.digitize
+    # maps them past the last edge (index n_bins after the -1 below), which
+    # np.clip(..., 0, n_bins-1) used to silently fold back into the
+    # *terminal* bin instead of excluding them. With the default
+    # max_dist_um (95th percentile), that dumped the farthest 5% of cells
+    # into the last bin alongside genuinely-in-range cells, systematically
+    # distorting the tail of every expression-vs-distance curve.
+    in_range = dists <= max_dist_um
     bin_idx = np.clip(np.digitize(dists, bin_edges) - 1, 0, n_bins - 1)
 
     n_genes = len(gene_names)
@@ -562,7 +599,7 @@ def expression_by_distance(
     n_cells_arr = np.zeros(n_bins, dtype=np.int64)
 
     for k in range(n_bins):
-        mask = bin_idx == k
+        mask = in_range & (bin_idx == k)
         n_cells_arr[k] = int(mask.sum())
         if n_cells_arr[k] > 0:
             vals = mat[mask]
@@ -605,14 +642,28 @@ def ligrec(
     """Spatially-contextualized ligand-receptor permutation test.
 
     For each LR pair (L, R) and each directed cell-type pair (sender A →
-    receiver B), computes the mean of ``expression_L × expression_R`` over
-    all spatial graph edges where the source is of type A and the target is
-    of type B.  Cell-type labels are permuted ``n_perms`` times to produce
-    a null distribution and an empirical p-value.
+    receiver B), computes ``(mean(expression_L) + mean(expression_R)) / 2``
+    over all spatial graph edges where the source is of type A and the
+    target is of type B — the CellPhoneDB (Efremova et al. 2020) scoring
+    convention, restricted here to spatial-graph edges rather than the full
+    cross product of every cell of each type. Cell-type labels are permuted
+    ``n_perms`` times to produce a null distribution and an empirical
+    p-value.
 
     By restricting to actual spatial neighbors the test identifies LR
     interactions that are plausible given the spatial architecture of the
     tissue — a more stringent criterion than bulk cell-type-level analysis.
+
+    .. warning::
+
+        The GPU path (``ab.use_gpu(True)``) delegates to ``rsc.gr.ligrec``,
+        which has no spatial-graph-restriction parameter at all — it
+        computes a CellPhoneDB-style cluster-mean statistic across *every*
+        cell of each type, completely ignoring ``neighbors_key`` and
+        ``layer``. This is a genuinely different, non-spatial test from the
+        CPU path described above, not just a faster version of the same
+        thing. Check ``uns[key_added]['metadata']['spatial_restricted']``
+        (``True`` on CPU, ``False`` on GPU) if a result's provenance matters.
 
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
 
@@ -654,8 +705,9 @@ def ligrec(
 
     ``means``
         :class:`pandas.DataFrame` — rows = (ligand, receptor) MultiIndex,
-        columns = (sender, receiver) MultiIndex.  Values are mean LR
-        product scores over spatial edges.
+        columns = (sender, receiver) MultiIndex.  Values are the
+        CellPhoneDB-style ``(mean(L) + mean(R)) / 2`` score over spatial
+        edges.
     ``pvalues``
         Same shape as ``means``; empirical p-values.
     ``metadata``
@@ -672,6 +724,26 @@ def ligrec(
         raise ValueError("lr_pairs must have 'ligand' and 'receptor' columns")
 
     if gpu_enabled():
+        # rsc.gr.ligrec has no spatial-graph-restriction parameter at all --
+        # it computes CellPhoneDB-style cluster-mean expression across every
+        # cell of each type, completely ignoring `neighbors_key` and
+        # `layer`. This is a genuinely different, non-spatial statistic from
+        # the CPU path above (which restricts every product to actual
+        # spatial-graph edges) -- toggling ab.use_gpu(True) silently swapped
+        # one test for the other with no indication in the result. Since
+        # there is no way to make rsc.gr.ligrec spatially-restricted, the
+        # divergence is made loud instead of silent: a warning on every
+        # call, and `spatial_restricted: False` recorded in the metadata so
+        # a result can be checked programmatically, not just via a log line
+        # a caller may not see.
+        log.warning(
+            "ligrec: GPU path (rsc.gr.ligrec) computes a non-spatial, "
+            "cluster-mean statistic across ALL cells of each type -- "
+            "neighbors_key=%r and layer=%r are ignored entirely. This is "
+            "NOT equivalent to the CPU path's spatial-graph-edge-restricted "
+            "test. Use ab.use_gpu(False) for a spatially-restricted result.",
+            neighbors_key, layer,
+        )
         rsc = _require_rapids()
         # rsc.gr.ligrec expects 'source'/'target' column names
         interactions_df = lr_pairs.rename(columns={"ligand": "source", "receptor": "target"})
@@ -690,7 +762,14 @@ def ligrec(
         adata.uns[key_added] = {
             "means": result["means"],
             "pvalues": result["pvalues"],
-            "metadata": {"groupby": groupby, "n_perms": n_perms, "threshold": threshold},
+            "metadata": {
+                "groupby": groupby, "n_perms": n_perms, "threshold": threshold,
+                "spatial_restricted": False,
+                "note": (
+                    "GPU path: non-spatial cluster-mean statistic, not "
+                    "restricted to spatial-graph edges. See ab.tl.ligrec docs."
+                ),
+            },
         }
         return
 
@@ -718,15 +797,14 @@ def ligrec(
     rec_idx = np.array([adata.var_names.get_loc(g) for g in valid["receptor"]])
     n_lr = len(valid)
 
-    # Precompute ligand × receptor products for every edge (n_edges × n_lr)
+    # Precompute per-edge ligand and receptor expression (n_edges × n_lr each)
     mat = adata.layers[layer] if layer is not None else adata.X
     if sp.issparse(mat):
         mat = mat.toarray()
     mat = np.asarray(mat, dtype=np.float32)
 
-    lig_expr = mat[np.ix_(edge_src, lig_idx)]   # (n_edges, n_lr)
-    rec_expr = mat[np.ix_(edge_dst, rec_idx)]    # (n_edges, n_lr)
-    products = lig_expr * rec_expr               # (n_edges, n_lr)
+    lig_expr = mat[np.ix_(edge_src, lig_idx)].astype(np.float64)   # (n_edges, n_lr)
+    rec_expr = mat[np.ix_(edge_dst, rec_idx)].astype(np.float64)    # (n_edges, n_lr)
 
     # Cell-type pair flat index for each edge
     src_codes = codes[edge_src]
@@ -734,14 +812,20 @@ def ligrec(
     n_ct = n_types * n_types
     ct_idx = src_codes * n_types + dst_codes     # (n_edges,)
 
-    def _mean_by_ct(ct_indices: np.ndarray) -> np.ndarray:
-        """Compute (n_ct, n_lr) mean product matrix from edge ct assignments."""
+    def _mean_component_by_ct(values: np.ndarray, ct_indices: np.ndarray) -> np.ndarray:
+        """Compute (n_ct, n_lr) mean of one component (L or R) by ct group."""
         scores = np.zeros((n_ct, n_lr), dtype=np.float64)
         counts = np.zeros(n_ct, dtype=np.float64)
-        np.add.at(scores, ct_indices, products.astype(np.float64))
+        np.add.at(scores, ct_indices, values)
         np.add.at(counts, ct_indices, 1.0)
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(counts[:, None] > 0, scores / counts[:, None], 0.0)
+
+    def _mean_by_ct(ct_indices: np.ndarray) -> np.ndarray:
+        """CellPhoneDB-style score: (mean(L) + mean(R)) / 2 within each ct group."""
+        mean_l = _mean_component_by_ct(lig_expr, ct_indices)
+        mean_r = _mean_component_by_ct(rec_expr, ct_indices)
+        return (mean_l + mean_r) / 2.0
 
     obs_scores = _mean_by_ct(ct_idx)  # (n_ct, n_lr)
 
@@ -760,7 +844,9 @@ def ligrec(
     )
     perm_ge = np.sum(perm_ge_list, axis=0) if perm_ge_list else np.zeros((n_ct, n_lr), dtype=np.float64)
 
-    pvalues = perm_ge / n_perms  # (n_ct, n_lr)
+    # (k+1)/(n+1) floor -- an exact 0 isn't a valid Monte Carlo p-value
+    # estimate and breaks downstream -log10(p)/FDR steps.
+    pvalues = (perm_ge + 1.0) / (n_perms + 1.0)  # (n_ct, n_lr)
 
     # Build DataFrames
     lr_index = pd.MultiIndex.from_arrays(
@@ -778,7 +864,11 @@ def ligrec(
     adata.uns[key_added] = {
         "means": means_df,
         "pvalues": pval_df,
-        "metadata": {"groupby": groupby, "n_perms": n_perms, "threshold": threshold},
+        "metadata": {
+            "groupby": groupby, "n_perms": n_perms, "threshold": threshold,
+            "spatial_restricted": True,
+            "neighbors_key": neighbors_key,
+        },
     }
     log.info(
         "ligrec: %d LR pairs × %d cell-type pairs; %d significant at p < %.2f.",
@@ -833,7 +923,7 @@ def composition(
 
     Examples
     --------
-    >>> ab.tl.cluster(mdata, resolution=0.5)
+    >>> ab.tl.cluster(mdata, resolution=0.5, neighbors_key="spatial_neighbors")
     >>> ab.tl.annotate_clusters(mdata, {"0": "Epithelial", "1": "T cell"})
     >>> df = ab.tl.composition(mdata, groupby="leiden_annotation", region_by="leiden")
     >>> df  # rows = spatial clusters, columns = cell types, values = fraction

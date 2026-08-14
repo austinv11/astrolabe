@@ -31,11 +31,16 @@ Typical workflow
 >>> ab.pp.normalize_total(mdata)
 >>> ab.pp.log1p(mdata)
 >>>
->>> # 4. Build spatial graph + cluster
->>> ab.tl.spatial_neighbors(mdata)
+>>> # 4. Expression-based clustering (cluster() defaults to the transcriptomic graph)
+>>> ab.pp.highly_variable_genes(mdata)
+>>> ab.tl.pca(mdata)
+>>> ab.tl.transcriptional_neighbors(mdata)
 >>> ab.tl.cluster(mdata, resolution=0.5)
 >>>
->>> # 5. Visualize
+>>> # 5. Spatial graph, for tl.moran/nhood_enrichment/etc.
+>>> ab.tl.spatial_neighbors(mdata)
+>>>
+>>> # 6. Visualize
 >>> ab.pl.points(mdata, color="leiden")
 """
 

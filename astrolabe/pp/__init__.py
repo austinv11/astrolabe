@@ -34,6 +34,8 @@ load_bin_counts
     Materialize (all or part of) a lazily-referenced Visium HD bin x gene matrix.
 crop
     Crop the spatial extent of an AnnData to a bounding box.
+auto_crop
+    Crop to a robust, percentile-trimmed bounding box around the cells themselves -- no manual region needed.
 rotate
     Rotate spatial coordinates and image registration affines.
 flip
@@ -63,7 +65,7 @@ from astrolabe.pp._qc import (
 from astrolabe.pp._normalize import normalize_total, log1p, normalize_by_area, highly_variable_genes
 from astrolabe.pp._if import extract_if_intensities
 from astrolabe.pp._visium_hd import load_bin_counts
-from astrolabe.pp._transform import crop, rotate, flip, apply_affine, add_image_filter, estimate_stain_matrix
+from astrolabe.pp._transform import crop, auto_crop, rotate, flip, apply_affine, add_image_filter, estimate_stain_matrix
 from astrolabe.pp._banksy import banksy_matrix
 from astrolabe.pp._harmony import harmony
 
@@ -82,6 +84,7 @@ __all__ = [
     "extract_if_intensities",
     "load_bin_counts",
     "crop",
+    "auto_crop",
     "rotate",
     "flip",
     "apply_affine",

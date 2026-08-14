@@ -226,12 +226,22 @@ def _extract_intensities_from_spec(
     n_cells = len(boundaries)
     if channel_axis is None:
         channel_axis = _resolve_channel_axis(spec.dimension_order, len(spec.full_shape))
-    n_channels = spec.full_shape[channel_axis]
+    # channel_axis may still be None here: _resolve_channel_axis returns
+    # None when there's no true channel axis at all (e.g. a real Xenium
+    # morphology.ome.tif is 'ZYX' -- 11 DAPI z-planes, no antibody panel).
+    # Every axis is then "spatial" for tile-cropping purposes; the
+    # non-Y/X axes (Z here) get max-projected away inside _read_tile,
+    # collapsing to a single implicit channel -- matching
+    # pl/_spatial.py's renderer, which already max-projects Z the same way.
+    ndim = len(spec.full_shape)
+    if channel_axis is None:
+        n_channels = 1
+        spatial_axes = list(range(ndim))
+    else:
+        n_channels = spec.full_shape[channel_axis]
+        spatial_axes = [i for i in range(ndim) if i != channel_axis]
     M = _resolve_affine(affine, spec)
     reduction_fn = _get_reduction(reduction)
-
-    ndim = len(spec.full_shape)
-    spatial_axes = [i for i in range(ndim) if i != channel_axis]
     img_height = spec.full_shape[spatial_axes[-2]] if len(spatial_axes) >= 2 else spec.full_shape[spatial_axes[-1]]
     img_width = spec.full_shape[spatial_axes[-1]]
 
@@ -309,15 +319,26 @@ def _extract_intensities_from_spec(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_channel_axis(dimension_order: str, ndim: int) -> int:
+def _resolve_channel_axis(dimension_order: str, ndim: int) -> int | None:
     """Return the channel axis index given a numpy-order dimension order string.
 
     ``dimension_order`` is in numpy-axis order (e.g. ``'CYX'``, ``'TCYX'``),
     as stored in :attr:`~astrolabe._utils.ImageSpec.dimension_order`.
+
+    Returns ``None`` when there is no true channel axis at all -- e.g. a
+    real Xenium ``morphology.ome.tif`` is ``'ZYX'`` (multiple DAPI z-planes,
+    no antibody panel). Silently treating that Z axis as if it were a
+    channel axis (the previous fallback here) reported each z-plane as its
+    own spurious "channel", disagreeing with ``pl/_spatial.py``'s renderer,
+    which correctly max-projects Z. The caller collapses every non-spatial
+    axis (Z included) down to a single implicit channel when this is
+    ``None``, the same way the renderer already does.
     """
     order = dimension_order.upper()
     if "C" in order:
         return order.index("C")
+    if "Z" in order or "T" in order:
+        return None
     if ndim == 3:
         return 0
     if ndim == 4:
@@ -365,16 +386,23 @@ def _resolve_affine(
 
 def _read_tile(
     image,
-    channel_axis: int,
+    channel_axis: int | None,
     row_min: int,
     row_max: int,
     col_min: int,
     col_max: int,
 ) -> np.ndarray:
-    """Extract a spatial tile from a zarr/numpy array and return (n_channels, H, W)."""
+    """Extract a spatial tile from a zarr/numpy array and return (n_channels, H, W).
+
+    ``channel_axis=None`` means there is no true channel axis (e.g. a
+    'ZYX' z-stack) -- every axis is treated as spatial for cropping, and a
+    size-1 channel axis is inserted afterward so the existing extra-axis
+    collapse below (max-projection) folds Z away the same way it already
+    folds away any other non-channel, non-spatial axis.
+    """
     ndim = image.ndim
     slices = [slice(None)] * ndim
-    spatial_axes = [i for i in range(ndim) if i != channel_axis]
+    spatial_axes = list(range(ndim)) if channel_axis is None else [i for i in range(ndim) if i != channel_axis]
     y_axis = spatial_axes[-2] if len(spatial_axes) >= 2 else spatial_axes[-1]
     x_axis = spatial_axes[-1]
 
@@ -384,6 +412,8 @@ def _read_tile(
     tile = np.asarray(image[tuple(slices)])
 
     if tile.ndim == 2:
+        tile = tile[np.newaxis]
+    elif channel_axis is None:
         tile = tile[np.newaxis]
     else:
         tile = np.moveaxis(tile, channel_axis if channel_axis < tile.ndim else 0, 0)

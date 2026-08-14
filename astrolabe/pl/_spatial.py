@@ -47,7 +47,15 @@ import pandas as pd
 import scipy.sparse as sp
 
 from astrolabe._shapes import arrow, circle, rectangle
-from astrolabe._utils import ImageSpec, _od_deconvolve, _resolve_adata, _resolve_field, _transform_coords, with_adata
+from astrolabe._utils import (
+    ImageSpec,
+    _check_single_library,
+    _od_deconvolve,
+    _resolve_adata,
+    _resolve_field,
+    _transform_coords,
+    with_adata,
+)
 from astrolabe.pl._theme import (
     _extended_cat_colors,
     _legend_handles,
@@ -86,6 +94,20 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_CONTINUOUS_CMAP = "astrolabe_seq"
 _DEFAULT_DIVERGING_CMAP = "astrolabe_div"
+
+# Floor on dynamic-sizing COLUMN WIDTH (PlotGrid.to_figure, nrows==1 branch,
+# i.e. a '|' row of panels) below which chrome -- a title, one colorbar, a
+# legend, y-axis tick labels -- no longer fits without overlapping. Pure
+# data-aspect-ratio sizing has no such floor built in: a very tall/narrow
+# crop (e.g. a small, elongated tissue region) can otherwise compute a
+# column a fraction of an inch wide, which title text and colorbars then
+# collide across regardless of how narrow the underlying data really is.
+# Deliberately not applied to row HEIGHT (ncols==1, a '/' column of panels):
+# a short row's chrome is small and roughly fixed (one title line, one
+# x-axis label line), and vstacking a wide panel short next to a square
+# panel is an existing, intentional, tested compression (see
+# test_points_layer_markers_shrink_in_a_vstack_next_to_a_figure_panel).
+_MIN_DYNAMIC_PANEL_IN = 4.0
 
 # Core-palette slot 1 (orange) / slot 2 (aqua) -- replaces the old raw CSS
 # color names ('lightsalmon'/'cyan') so default boundary tints stay part of
@@ -411,6 +433,8 @@ class SpatialPanel(_Renderable):
         # stable once converged, so nothing moves out from under it after.
         fig, ax = plt.subplots(1, 1, figsize=figsize or self.figsize, layout="constrained")
         _render_panel(ax, self)
+        if any(lay.kind == "image" and lay.dark_bg for lay in self.layers):
+            _add_dark_panel_backgrounds(fig, [ax])
         return fig
 
     def __repr__(self) -> str:
@@ -702,10 +726,30 @@ class PlotGrid(_Renderable):
                 # compete with for row height, so the figure's total WIDTH
                 # grows/shrinks to fit instead of squeezing/stretching any
                 # panel to hit a pre-decided total.
+                #
+                # If the narrowest column would fall under the chrome floor,
+                # scale the shared row height up (not just that column's
+                # width) so every column's box aspect stays exactly equal to
+                # its true µm-space data aspect. Flooring width alone (an
+                # earlier version of this fix) left the box wider than its
+                # data needs, which matplotlib's own equal-aspect enforcement
+                # then "corrects" by padding the y-limits with a lot of
+                # empty space -- trading a chrome collision for a squashed,
+                # mostly-blank plot.
+                min_aspect = min(col_aspect) if col_aspect else 1.0
+                if min_aspect * per_h < _MIN_DYNAMIC_PANEL_IN:
+                    per_h = _MIN_DYNAMIC_PANEL_IN / min_aspect
                 widths = [a * per_h for a in col_aspect]
                 width_ratios = widths
                 explicit_total = (sum(widths), per_h)
             elif ncols == 1:
+                # No analogous floor here: a short row's chrome (title, one
+                # x-axis label line) is small and roughly fixed, unlike a
+                # narrow column's (colorbar, legend, y-axis label, and
+                # unbounded title-string width) -- and vstacking a wide
+                # panel short next to a square panel is an existing,
+                # intentional, tested compression (marker size shrinks to
+                # match), not a bug to guard against.
                 heights = [per_w / a for a in row_aspect]
                 height_ratios = heights
                 explicit_total = (per_w, sum(heights))
@@ -745,6 +789,7 @@ class PlotGrid(_Renderable):
         # aspect used for padding is read from the actual final axes box,
         # not an estimate of it.
         pending_figure_panels: list[tuple[matplotlib.axes.Axes, "FigurePanel"]] = []
+        dark_axes: list[matplotlib.axes.Axes] = []
         for i, row in enumerate(self.rows):
             for j in range(ncols):
                 panel = row[j] if j < len(row) else None
@@ -753,6 +798,8 @@ class PlotGrid(_Renderable):
                     ax.set_visible(False)
                 elif isinstance(panel, SpatialPanel):
                     _render_panel(ax, panel)
+                    if any(lay.kind == "image" and lay.dark_bg for lay in panel.layers):
+                        dark_axes.append(ax)
                 else:
                     ax.axis("off")
                     pending_figure_panels.append((ax, panel))
@@ -764,6 +811,11 @@ class PlotGrid(_Renderable):
                 pos = ax.get_position()
                 target_aspect = (pos.width * fig_w) / (pos.height * fig_h)
                 _render_figure_panel(ax, panel.to_figure(), target_aspect=target_aspect)
+
+        # Computed last, after any FigurePanel content above is in its final
+        # place, so each dark axes' tight bbox reflects the fully-settled
+        # layout rather than an intermediate one.
+        _add_dark_panel_backgrounds(fig, dark_axes)
 
         return fig
 
@@ -1643,43 +1695,6 @@ def annotation(
 # ---------------------------------------------------------------------------
 
 
-_LIBRARY_ID_KEY = "library_id"
-
-
-def _check_single_library(adata: ad.AnnData) -> None:
-    """Raise a clear error when cells from multiple libraries are present.
-
-    Spatial coordinates are independent per Xenium run — each run starts its
-    own µm coordinate frame from (0, 0).  Plotting cells from different runs
-    on the same axes overlays unrelated tissue sections without any warning,
-    which is almost never the desired behavior.
-
-    This check fires for ``'points'``, ``'boundaries'``, and ``'raster'``
-    layers.  It is skipped for ``'image'`` (which already requires an explicit
-    ``library_id=``) and ``'annotation'`` (no cell data).
-    """
-    if _LIBRARY_ID_KEY not in adata.obs.columns:
-        return
-    libs = adata.obs[_LIBRARY_ID_KEY].unique()
-    if len(libs) <= 1:
-        return
-    lib_list = sorted(str(l) for l in libs)
-    first = lib_list[0]
-    panels_example = " | \\\n    ".join(
-        f'ab.pl.points(adata[adata.obs["{_LIBRARY_ID_KEY}"] == "{lid}"], color)'
-        for lid in lib_list
-    )
-    raise ValueError(
-        f"This AnnData contains cells from {len(libs)} libraries: {lib_list}.\n"
-        f"Each Xenium run has its own independent µm coordinate frame — plotting "
-        f"them together overlays unrelated tissue sections on the same axes.\n\n"
-        f"Filter to a single sample first:\n"
-        f'    adata_sub = adata[adata.obs["{_LIBRARY_ID_KEY}"] == "{first}"]\n\n'
-        f"or display each sample as a separate panel:\n"
-        f"    {panels_example}"
-    )
-
-
 def _render_panel(ax: matplotlib.axes.Axes, panel: SpatialPanel) -> None:
     """Draw all layers of *panel* onto *ax*, then apply title and frame."""
     # Shared legend entry list — image channel entries and default-color boundary
@@ -1895,6 +1910,22 @@ def _draw_points_layer(
             if lay.vcenter is not None
             else None
         )
+        vmin, vmax = lay.vmin, lay.vmax
+        if norm is None and color_values is not None:
+            # 1st/99.8th percentile stretch, matching pl.image()'s
+            # _normalize_image_channel -- a plain continuous scatter left to
+            # matplotlib's raw min/max washes out on a handful of outlier
+            # cells (total_counts, cell_area, top SVGs all show this).
+            # Skipped for the vcenter/diverging path: a signed statistic's
+            # symmetric range is deliberate, not an outlier artifact.
+            finite = color_values[np.isfinite(color_values)]
+            if finite.size > 0:
+                if vmin is None:
+                    vmin = float(np.percentile(finite, 1.0))
+                if vmax is None:
+                    vmax = float(np.percentile(finite, 99.8))
+                if vmax is not None and vmin is not None and vmax <= vmin:
+                    vmax = vmin + 1.0
         sc = ax.scatter(
             coords[:, 0],
             coords[:, 1],
@@ -1902,8 +1933,8 @@ def _draw_points_layer(
             s=size,
             alpha=lay.alpha,
             cmap=lay.cmap or _DEFAULT_CONTINUOUS_CMAP,
-            vmin=lay.vmin if norm is None else None,
-            vmax=lay.vmax if norm is None else None,
+            vmin=vmin if norm is None else None,
+            vmax=vmax if norm is None else None,
             norm=norm,
             rasterized=n_cells > 100_000,
             **lay.extra_kwargs,
@@ -2163,11 +2194,20 @@ def _normalize_image_channel(
 
 
 def _apply_dark_theme(ax: matplotlib.axes.Axes) -> None:
-    """Black axes and figure background with white text — matches IF presentation style."""
+    """Black axes background with white text — matches IF presentation style.
+
+    Only styles *this* axes' own facecolor and chrome colors. The
+    black background behind this axes' full chrome (title, tick labels,
+    legend -- everything that renders *outside* the axes' own plot
+    rectangle, in shared figure-level space) is a separate, later step:
+    see :func:`_add_dark_panel_backgrounds`, called once per figure after
+    layout is resolved. Composed panels (``|``/``hstack``, e.g. an
+    IF/morphology image next to an H&E panel) share one figure across
+    multiple axes, so this function must not touch ``fig.patch`` or assume
+    it owns the whole figure -- a light-themed sibling panel's own chrome
+    needs to stay legible regardless of what this axes does.
+    """
     ax.set_facecolor("black")
-    fig = ax.get_figure()
-    if fig is not None:
-        fig.patch.set_facecolor("black")
     ax.xaxis.label.set_color("white")
     ax.yaxis.label.set_color("white")
     ax.title.set_color("white")
@@ -2181,6 +2221,41 @@ def _apply_dark_theme(ax: matplotlib.axes.Axes) -> None:
             artist.get_frame().set_edgecolor("none")
             for text in artist.get_texts():
                 text.set_color("white")
+
+
+def _add_dark_panel_backgrounds(
+    fig: matplotlib.figure.Figure, dark_axes: list[matplotlib.axes.Axes]
+) -> None:
+    """Draw one opaque black rectangle behind each dark-themed axes' full chrome.
+
+    ``_apply_dark_theme`` colors an axes' own title/tick/label/legend text
+    white and its plot area black, but title/tick-label/legend text all
+    render *outside* that axes' own plot rectangle, in shared figure-level
+    space. On a light ``fig.patch`` (deliberately left light so any
+    light-themed sibling panel's own chrome stays legible -- see
+    ``_apply_dark_theme``), that white text would otherwise strand itself
+    the same way a light sibling's text used to. Rather than patching every
+    chrome element with its own tiny bbox (fragile -- easy to miss one,
+    e.g. a boundaries-layer legend), draw one black rectangle sized to each
+    dark axes' own *tight* bounding box (title + ticks + labels + legend,
+    everything matplotlib considers part of that axes) and place it behind
+    that axes in the shared figure, computed once layout is fully resolved
+    so the rectangle lands exactly where that chrome actually ends up.
+    """
+    if not dark_axes:
+        return
+    fig.canvas.draw()  # resolve constrained_layout with all final content in place
+    renderer = fig.canvas.get_renderer()
+    inv = fig.transFigure.inverted()
+    for ax in dark_axes:
+        bbox = ax.get_tightbbox(renderer).padded(3)
+        fig_bbox = bbox.transformed(inv)
+        rect = matplotlib.patches.Rectangle(
+            (fig_bbox.x0, fig_bbox.y0), fig_bbox.width, fig_bbox.height,
+            transform=fig.transFigure, facecolor="black", edgecolor="none",
+            zorder=-10,
+        )
+        fig.add_artist(rect)
 
 
 _SCALE_BAR_CANDIDATES = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
@@ -3033,6 +3108,19 @@ def _plot_categorical(
     legend_entries: list | None = None,
     **scatter_kwargs: Any,
 ) -> None:
+    # NOTE on cross-figure color persistence: an earlier version of this fix
+    # tried deriving a stable draw order from the column's declared
+    # `.cat.categories` so a label (e.g. Leiden cluster "7") would keep the
+    # same color across two figures showing different subsets. That doesn't
+    # work: AnnData recodes/prunes obs categoricals to only the observed
+    # values on every `[]` subset (confirmed -- even a plain boolean-mask
+    # view), so by the time a subset reaches this function the "full"
+    # category list is already gone, and no caller here has an independent
+    # copy of it to supply. Genuine persistence across subsets would need a
+    # stateful global label->color registry, which is a larger design
+    # decision (thread-safety under `n_jobs`, cache invalidation on theme
+    # switch, etc.) deliberately left out of this fix -- see the astrolabe
+    # bugfix-pass memory/plan for this note.
     resolved_na = na_color if na_color is not None else get_theme().muted
     unique_cats = sorted(set(categories))
     cat_colors = _build_cat_colors(unique_cats, palette, resolved_na)

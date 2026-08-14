@@ -151,7 +151,14 @@ def assign_transcripts(
         if result.shape[1] == 0:
             continue
 
-        pt_idx_chunk, poly_idx = result[0], result[1]
+        # A transcript within >1 overlapping cell polygon otherwise appears
+        # once per overlapping cell here, double-counting it into every
+        # overlapping cell's totals instead of exactly one. Deduplicate to
+        # the first (arbitrary but deterministic) matching cell per point --
+        # see the identical fix/comment in create_compartment_layers above.
+        pt_idx_raw, poly_idx_raw = result[0], result[1]
+        _, first_idx = np.unique(pt_idx_raw, return_index=True)
+        pt_idx_chunk, poly_idx = pt_idx_raw[first_idx], poly_idx_raw[first_idx]
         global_pt_idx = start + pt_idx_chunk
         assigned[global_pt_idx] = True
 
@@ -386,7 +393,17 @@ def create_compartment_layers(
         if cell_result.shape[1] == 0:
             continue
 
-        pt_local, cell_row = cell_result[0], cell_result[1]
+        # A transcript that lies within >1 overlapping cell polygon
+        # otherwise appears once per overlapping cell in cell_result (one
+        # row per (point, polygon) match) -- summed into *every* overlapping
+        # cell's totals downstream instead of exactly one, double-counting
+        # it and breaking the documented nucleus/cytoplasm/ambient partition
+        # contract (measured excess on real data: 592 of 10.55M
+        # transcripts). Deduplicate to the first (arbitrary but
+        # deterministic) matching cell per transcript point.
+        pt_local_raw, cell_row_raw = cell_result[0], cell_result[1]
+        _, first_idx = np.unique(pt_local_raw, return_index=True)
+        pt_local, cell_row = pt_local_raw[first_idx], cell_row_raw[first_idx]
         global_pt = chunk_start + pt_local
         assigned[global_pt] = True
 

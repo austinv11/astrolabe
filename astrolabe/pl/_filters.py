@@ -156,14 +156,24 @@ class FFTFilter:
         # Notch filter at tile harmonics
         if self.fov_size_px is not None:
             f_tile = 1.0 / self.fov_size_px
-            # Convert notch_width from FFT bins to cycles/pixel
-            nw = self.notch_width / max(h, w)
+            # Convert notch_width from FFT bins to cycles/pixel -- separately
+            # per axis, since fy's bin spacing is 1/h and fx's is 1/w. Using
+            # a single width against max(h,w) for both (the previous
+            # behavior) is only correct for whichever axis happens to be the
+            # larger dimension; on a non-square image the other axis's
+            # notch width is wrong by a factor of max(h,w)/min(h,w), in
+            # either direction depending on which axis is smaller --
+            # observed to destroy nearly the entire frequency domain
+            # (36,738 of 36,740 bins zeroed) at documented/demonstrated
+            # parameters rather than flat-fielding the image.
+            nw_y = self.notch_width / h
+            nw_x = self.notch_width / w
             k = 1
             while (f0 := k * f_tile) <= 0.5:
                 # Horizontal harmonics (rows): target rows where |fy| ≈ f0
-                mask[np.abs(np.abs(fy[:, 0]) - f0) < nw, :] = 0.0
+                mask[np.abs(np.abs(fy[:, 0]) - f0) < nw_y, :] = 0.0
                 # Vertical harmonics (cols): target cols where |fx| ≈ f0
-                mask[:, np.abs(np.abs(fx[0, :]) - f0) < nw] = 0.0
+                mask[:, np.abs(np.abs(fx[0, :]) - f0) < nw_x] = 0.0
                 k += 1
 
         result = np.fft.irfft2(F * mask, s=(h, w))

@@ -433,6 +433,9 @@ def _register_colorbar(ax, cbar):
     return cbar
 
 
+_MAX_LEGEND_ENTRIES = 50  # above this, a legend is almost certainly a mis-chosen high-cardinality column, not a usable key
+
+
 def _place_legend(ax, handles, labels):
     """Build the single legend for *ax*, dodged past any registered colorbar.
 
@@ -469,6 +472,14 @@ def _place_legend(ax, handles, labels):
     ``_repr_mimebundle_`` in ``_spatial.py``).
     """
     if not handles:
+        return None
+    if len(handles) > _MAX_LEGEND_ENTRIES:
+        log.warning(
+            "Skipping legend with %d entries (> %d) "
+            "Pass a coarser grouping, or build a custom legend, "
+            "if you need one here.",
+            len(handles), _MAX_LEGEND_ENTRIES,
+        )
         return None
     state = getattr(ax, "_ab_layout_state", {})
     colorbars = state.get("colorbars") or []

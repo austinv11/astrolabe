@@ -11,12 +11,57 @@ import anndata as ad
 import mudata as md
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
 
 __all__ = ["concat_samples"]
 
 log = logging.getLogger(__name__)
+
+
+def _prefix_transcripts_table(table: pa.Table, lib_id: str, index_unique: str, library_id_key: str) -> pa.Table:
+    """Add a library_id column and prefix cell_id to match the concatenated obs_names convention."""
+    if "cell_id" in table.schema.names:
+        prefixed_ids = pa.array(
+            f"{lib_id}{index_unique}" + table.column("cell_id").to_pandas().astype(str),
+            type=pa.string(),
+        )
+        table = table.set_column(table.schema.get_field_index("cell_id"), "cell_id", prefixed_ids)
+    lib_col = pa.array([lib_id] * table.num_rows, type=pa.string())
+    return table.append_column(library_id_key, lib_col)
+
+
+def _drop_dangling_graph_uns(adata: ad.AnnData) -> None:
+    """Drop uns graph-metadata entries whose obsp arrays didn't survive ad.concat.
+
+    ``ad.concat`` has no default merge strategy for combining same-key sparse
+    matrices across the concatenation axis, so any ``obsp`` entry (e.g. a
+    ``tl.spatial_neighbors``/``sc.pp.neighbors``/``tl.blend_neighbors`` graph
+    computed before concatenation) is dropped entirely. If the matching
+    ``uns`` metadata dict (the scanpy/squidpy
+    ``{'connectivities_key': ..., 'distances_key': ...}`` convention) happened
+    to be identical across all input samples, ``uns_merge='unique'`` keeps it
+    — now dangling, pointing at ``obsp`` keys that no longer exist.
+    """
+    stale_keys = [
+        uns_key
+        for uns_key, val in adata.uns.items()
+        if isinstance(val, dict)
+        and any(
+            val[k] not in adata.obsp
+            for k in ("connectivities_key", "distances_key")
+            if k in val
+        )
+    ]
+    for uns_key in stale_keys:
+        log.warning(
+            "concat_samples: dropping dangling graph metadata uns['%s'] — its obsp "
+            "arrays did not survive concatenation. Recompute the graph (e.g. "
+            "tl.spatial_neighbors) on the concatenated object.",
+            uns_key,
+        )
+        del adata.uns[uns_key]
 
 
 def concat_samples(
@@ -143,6 +188,7 @@ def concat_samples(
     # ------------------------------------------------------------------
     adatas_prepared: list[ad.AnnData] = []
     spatial_uns_merged: dict = {}
+    transcripts_by_lib: dict[str, pa.Table] = {}
     resolved_modality: str | None = None
 
     for lib_id, mdata in id_to_mdata.items():
@@ -183,9 +229,20 @@ def concat_samples(
                 )
             spatial_uns_merged[key] = val
 
+        # uns['transcripts'] is a per-sample pyarrow.Table (raw parquet rows) --
+        # ad.concat's uns_merge='unique' would silently drop it the moment any
+        # two samples' tables differ (virtually always). Pull it out here and
+        # merge it explicitly below instead.
+        transcripts = adata.uns.get("transcripts")
+        if transcripts is not None:
+            transcripts_by_lib[lib_id] = _prefix_transcripts_table(
+                transcripts, lib_id, index_unique, library_id_key
+            )
+
         # Strip uns keys that will conflict during ad.concat
         adata.uns.pop("spatial", None)
         adata.uns.pop(UNS_SCHEMA_VERSION_KEY, None)
+        adata.uns.pop("transcripts", None)
 
         adatas_prepared.append(adata)
 
@@ -222,6 +279,28 @@ def concat_samples(
     # ------------------------------------------------------------------
     concat_adata.uns["spatial"] = spatial_uns_merged
     concat_adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
+
+    # Neighbor-graph uns metadata (e.g. 'spatial_neighbors', 'joint_neighbors')
+    # that survived uns_merge='unique' but whose obsp arrays were dropped by
+    # ad.concat is now dangling -- drop it rather than leave a landmine.
+    _drop_dangling_graph_uns(concat_adata)
+
+    # Merge per-sample transcript tables only when every sample had one loaded
+    # -- a partial merge would look complete while silently missing samples.
+    if transcripts_by_lib:
+        if len(transcripts_by_lib) == len(id_to_mdata):
+            concat_adata.uns["transcripts"] = pa.concat_tables(
+                list(transcripts_by_lib.values()), promote_options="default"
+            )
+        else:
+            log.warning(
+                "concat_samples: uns['transcripts'] was present on only %d/%d "
+                "samples; skipping merged transcripts table. Call "
+                "read_xenium_transcripts() per sample first if you need it "
+                "on every input, or merge it in yourself afterward.",
+                len(transcripts_by_lib),
+                len(id_to_mdata),
+            )
 
     # ------------------------------------------------------------------
     # Wrap in MuData

@@ -384,28 +384,26 @@ class TestReadXeniumTranscripts:
         mdata.uns["spatial"] = {"lib": {"source_path": str(tmp_path)}}
         return mdata
 
-    def test_default_excludes_control_transcripts(self, tmp_path):
-        # Regression: include_controls's actual parameter default was True,
-        # contradicting its own docstring ("If False (default), control-probe
-        # transcripts are excluded") and every other place in the codebase
-        # that assumes read_xenium's auto-loaded uns['transcripts'] already
-        # excludes controls by default (pp.calculate_xenium_qc_metrics's
-        # control_probe_summary stash exists specifically to compensate for
-        # var['mean_qv'] being NaN on controls for exactly this reason; see
-        # pl.gene_qv_scatter's docstring, which documents the same
-        # assumption). With the buggy True default, a fresh
-        # ab.datasets.xenium() + pipeline.filter_xenium() left the cell x
-        # gene matrix control-free but uns['transcripts'] still full of
-        # control-probe rows -- any downstream analysis consuming
-        # uns['transcripts'] directly (e.g. tl.colocation_quotient in
-        # pixel mode) silently reintroduced controls.
+    def test_default_includes_control_transcripts(self, tmp_path):
+        # include_controls defaults to True: X always retains control-probe
+        # genes (flagged via var['is_control_probe'], never removed on load),
+        # so read_xenium's default auto-loaded uns['transcripts'] matches
+        # that convention rather than silently disagreeing with var about
+        # which features are present. pp.filter_genes (and therefore
+        # pipeline.filter_xenium's remove_controls=True default) keeps
+        # uns['transcripts'] in sync going forward -- it drops the
+        # corresponding feature_name rows from uns['transcripts'] whenever
+        # it removes genes from var, controls or otherwise (see
+        # test_qc.py's transcript-sync tests) -- so a QC plot run before
+        # filtering sees real control-probe data, and one run after
+        # correctly sees none, without either state going stale.
         mdata = self._mdata_pointing_at(tmp_path)
         ab.io.read_xenium_transcripts(mdata)
         names = set(mdata["xenium"].uns["transcripts"].column("feature_name").to_pylist())
-        assert names == {"EPCAM", "CD3D"}
-
-    def test_include_controls_true_keeps_them(self, tmp_path):
-        mdata = self._mdata_pointing_at(tmp_path)
-        ab.io.read_xenium_transcripts(mdata, include_controls=True)
-        names = set(mdata["xenium"].uns["transcripts"].column("feature_name").to_pylist())
         assert names == {"EPCAM", "CD3D", "NegControlProbe_00", "UnassignedCodeword_01"}
+
+    def test_include_controls_false_excludes_them(self, tmp_path):
+        mdata = self._mdata_pointing_at(tmp_path)
+        ab.io.read_xenium_transcripts(mdata, include_controls=False)
+        names = set(mdata["xenium"].uns["transcripts"].column("feature_name").to_pylist())
+        assert names == {"EPCAM", "CD3D"}

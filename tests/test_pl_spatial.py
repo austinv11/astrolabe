@@ -6,6 +6,7 @@ matplotlib.use("Agg")  # headless backend: avoid Tk backend flakiness in CI/sand
 
 import awkward as ak
 import matplotlib.legend
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import anndata as ad
@@ -755,6 +756,103 @@ def test_non_brightfield_image_keeps_dark_background_default():
     assert panel.layers[0].dark_bg is True
 
 
+def _non_brightfield_adata(tmp_path, name="ch"):
+    path = tmp_path / f"{name}.tif"
+    rng = np.random.default_rng(0)
+    tifffile.imwrite(str(path), rng.integers(0, 255, size=(64, 64), dtype=np.uint8))
+    spec = ImageSpec(
+        path=str(path),
+        pixel_size_um=0.5,
+        dimension_order="YX",
+        full_shape=(64, 64),
+        level_shapes=[(64, 64)],
+        level_scales=[(1.0, 1.0)],
+    )
+    return ad.AnnData(
+        obs=pd.DataFrame(index=pd.Index([], name="cell_id", dtype=str)),
+        uns={"spatial": {"sample": {"images": {"full": spec}}}},
+    )
+
+
+def _dark_background_rects(fig):
+    """Black Rectangle artists added by _add_dark_panel_backgrounds."""
+    import matplotlib.patches
+
+    return [
+        a for a in fig.artists
+        if isinstance(a, matplotlib.patches.Rectangle) and a.get_facecolor()[:3] == (0.0, 0.0, 0.0)
+    ]
+
+
+class TestDarkThemeDoesNotLeakBetweenComposedPanels:
+    # Regression: _apply_dark_theme used to set fig.patch.set_facecolor("black")
+    # unconditionally -- correct for a single dark-themed image panel, but a
+    # composed `|` figure shares one fig across multiple axes, so this leaked
+    # a black figure background onto every sibling panel too, stranding a
+    # light-themed sibling's title/tick/label text (styled for a light
+    # surface) on a black background. A first fix (stop touching fig.patch
+    # in the composed case) then exposed a second problem: the dark panel's
+    # *own* title/tick/legend text sits outside its axes' own black plot
+    # rectangle, in shared figure-level space, so it stranded itself on the
+    # now-light gutter the same way. Per-element text bboxes (a second,
+    # since-reverted fix) covered title/ticks but not the legend, and looked
+    # like literal black boxes floating on a light background rather than
+    # one coherent dark panel. The real fix: one black rectangle behind each
+    # dark axes' full *tight* bbox (title + ticks + labels + legend), added
+    # to the figure after layout is resolved -- each panel renders with its
+    # own complete, correct style, independent of what any sibling panel does.
+    def test_light_panel_keeps_light_background_and_dark_text_next_to_dark_panel(self, tmp_path):
+        dark_adata = _non_brightfield_adata(tmp_path, "morph")
+        light_adata = _brightfield_adata(tmp_path)
+
+        panel = ab.pl.image(dark_adata) | ab.pl.image(light_adata)
+        fig = panel.to_figure()
+
+        dark_ax, light_ax = fig.axes
+        assert dark_ax.get_facecolor()[:3] == (0.0, 0.0, 0.0)
+        assert light_ax.get_facecolor()[:3] != (0.0, 0.0, 0.0)
+        # Light panel's own chrome must stay dark-on-light (legible), not
+        # inherit the dark panel's white-on-black styling.
+        assert light_ax.title.get_color() != "white"
+        assert fig.get_facecolor()[:3] != (0.0, 0.0, 0.0)
+
+    def test_dark_panel_gets_a_background_rectangle_covering_its_full_chrome(self, tmp_path):
+        dark_adata = _non_brightfield_adata(tmp_path, "morph")
+        light_adata = _brightfield_adata(tmp_path)
+
+        panel = ab.pl.image(dark_adata) | ab.pl.image(light_adata)
+        fig = panel.to_figure()
+        dark_ax, light_ax = fig.axes
+
+        rects = _dark_background_rects(fig)
+        assert len(rects) == 1, "expected exactly one dark-panel background rectangle"
+        rect = rects[0]
+
+        # The rectangle (in figure-fraction coords) must fully contain the
+        # dark axes' own title -- i.e. its chrome, not just its plot area --
+        # and must not extend into the light panel's own position.
+        renderer = fig.canvas.get_renderer()
+        inv = fig.transFigure.inverted()
+        title_bbox = dark_ax.title.get_window_extent(renderer).transformed(inv)
+        rx0, ry0 = rect.get_xy()
+        rx1, ry1 = rx0 + rect.get_width(), ry0 + rect.get_height()
+        assert rx0 <= title_bbox.x0 and title_bbox.x1 <= rx1
+        assert ry0 <= title_bbox.y0 and title_bbox.y1 <= ry1
+
+        light_pos = light_ax.get_position()
+        assert rx1 <= light_pos.x0 + 1e-6
+
+    def test_single_dark_panel_gets_a_background_rectangle_too(self, tmp_path):
+        dark_adata = _non_brightfield_adata(tmp_path, "morph")
+        fig = ab.pl.image(dark_adata).to_figure()
+        assert len(_dark_background_rects(fig)) == 1
+
+    def test_no_dark_panel_means_no_background_rectangle(self, tmp_path):
+        light_adata = _brightfield_adata(tmp_path)
+        fig = ab.pl.image(light_adata).to_figure()
+        assert _dark_background_rects(fig) == []
+
+
 # ---------------------------------------------------------------------------
 # pl.annotation() categorical/continuous coloring
 # ---------------------------------------------------------------------------
@@ -894,3 +992,46 @@ def test_default_title_uses_channel_name_not_ch_prefix_for_string_channel(tmp_pa
 
     panel_int = ab.pl.image(adata, channel=0)
     assert panel_int.title == "sample/full/ch0"
+
+
+def test_points_legend_skipped_above_cardinality_guard(caplog):
+    # Regression: a categorical column with very high cardinality (e.g. SOM
+    # node labels) used to get a legend with one entry per category and no
+    # size cap at all -- a real run produced an unusable 526x6155px figure
+    # from a 400-entry legend. Above the guard threshold, no legend should be
+    # built at all (better than an unreadable one).
+    n = 400
+    rng = np.random.default_rng(4)
+    xy = rng.uniform(0, 500, (n, 2)).astype(np.float32)
+    obs = pd.DataFrame({"node": [f"node_{i}" for i in range(n)]})
+    adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
+    adata.obsm["spatial"] = xy
+
+    fig = ab.pl.points(adata, color="node").to_figure()
+    ax = fig.axes[0]
+    legends = [a for a in ax.get_children() if isinstance(a, matplotlib.legend.Legend)]
+    assert len(legends) == 0
+    plt.close(fig)
+
+
+def test_points_continuous_color_is_percentile_clipped():
+    # Regression: pl.points had no outlier-robust color-scale clipping, unlike
+    # pl.image's 1st/99.8th percentile stretch -- a handful of outlier cells
+    # setting vmax washed out the whole figure (total_counts, cell_area, etc.
+    # in several tutorial notebooks). A small minority of extreme outliers
+    # (well under the 0.2% the percentile clip is designed to exclude) among
+    # otherwise small values should no longer set vmax to their raw value.
+    n = 2000
+    rng = np.random.default_rng(5)
+    xy = rng.uniform(0, 500, (n, 2)).astype(np.float32)
+    values = rng.uniform(1, 10, n).astype(np.float32)
+    values[:2] = 10_000.0  # 0.1% extreme outliers
+    obs = pd.DataFrame({"val": values})
+    adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32), obs=obs)
+    adata.obsm["spatial"] = xy
+
+    fig = ab.pl.points(adata, color="val").to_figure()
+    ax = fig.axes[0]
+    sc = next(c for c in ax.collections if hasattr(c, "get_offsets") and len(c.get_offsets()) > 0)
+    assert sc.norm.vmax < 100.0  # nowhere near the raw 10_000 outlier
+    plt.close(fig)
