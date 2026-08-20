@@ -39,11 +39,19 @@ import numpy as np
 import pandas as pd
 from skimage.draw import polygon as sk_polygon
 
-from astrolabe._utils import ImageSpec, _od_deconvolve, _transform_coords
+from astrolabe._utils import (
+    ImageSpec,
+    _call_image_filter,
+    _dtype_scale,
+    _od_deconvolve,
+    _transform_coords,
+)
 
 __all__ = ["extract_if_intensities"]
 
 log = logging.getLogger(__name__)
+
+_SORT_GRID_UM = 256.0  # coarse-grid cell size for spatial batch ordering
 
 
 def extract_if_intensities(
@@ -73,7 +81,10 @@ def extract_if_intensities(
     Use ``if_key='he'`` (or whatever key was passed to ``read_he``).
 
     After this call, ``mdata[if_key]`` has the same ``obs_names`` as
-    ``mdata[xenium_key]`` and the two modalities are aligned.
+    ``mdata[xenium_key]`` and the two modalities are aligned; the cell
+    modality's ``obsm['spatial']`` centroids are copied over too (mirroring
+    :func:`~astrolabe.io.extract_morphology_intensities`), so
+    :func:`~astrolabe.pp.crop` can subset this modality alongside the cells.
 
     Parameters
     ----------
@@ -92,7 +103,9 @@ def extract_if_intensities(
         less accurate for small cells.
     reduction
         Aggregation function applied within each cell mask.  One of
-        ``'mean'``, ``'median'``, ``'sum'``, ``'max'``, ``'min'``.
+        ``'mean'``, ``'median'``, ``'sum'``, ``'max'``, ``'min'``.  Also
+        honored for H&E stain concentrations (applied per stain channel
+        after pixel-level deconvolution).
     channel_axis
         Axis in the dask array corresponding to channels.  Inferred
         automatically from the OME dimension order when ``None``.
@@ -176,6 +189,11 @@ def extract_if_intensities(
     )
     for k, v in if_adata.obsm.items():
         if_adata_filled.obsm[k] = v
+    # Rows are aligned 1:1 with the cell modality, so carry its centroids
+    # over too (mirroring io.extract_morphology_intensities) — this is what
+    # lets pp.crop() subset this modality alongside the cells.
+    if "spatial" not in if_adata_filled.obsm and "spatial" in xen_adata.obsm:
+        if_adata_filled.obsm["spatial"] = xen_adata.obsm["spatial"].copy()
 
     mdata.mod[if_key] = if_adata_filled
     mdata.update()
@@ -252,6 +270,20 @@ def _extract_intensities_from_spec(
         n_cells, n_channels, spec.full_shape,
     )
 
+    # Process cells in spatially sorted order (lexsort on a coarse centroid
+    # grid), not obs order: each batch's tile read spans the union bbox of
+    # its cells, and 512 cells in arbitrary obs order can span the whole
+    # slide — forcing a near-full-resolution read per batch. Spatial
+    # ordering keeps every batch's bbox local. Results are written back by
+    # original cell index, so output order is unchanged.
+    centroids = np.zeros((n_cells, 2), dtype=np.float64)
+    for i in range(n_cells):
+        verts = np.asarray(boundaries[i])
+        if len(verts) > 0:
+            centroids[i] = verts.mean(axis=0)
+    grid = np.floor(centroids / _SORT_GRID_UM).astype(np.int64)
+    sorted_order = np.lexsort((grid[:, 0], grid[:, 1]))
+
     with spec.open_zarr() as z:
         if hasattr(z, "keys"):
             level_keys = sorted([k for k in z.keys() if str(k).isdigit()], key=int)
@@ -259,9 +291,15 @@ def _extract_intensities_from_spec(
         else:
             img_arr = z
 
+        # White-point scale for stain deconvolution, derived from the
+        # source dtype (not guessed per-cell from pixel values, which is
+        # inconsistent across cells and wrong for 16-bit brightfield data).
+        dtype_scale = _dtype_scale(getattr(img_arr, "dtype", np.uint8))
+
         for batch_start in range(0, n_cells, batch_size):
             batch_end = min(batch_start + batch_size, n_cells)
-            batch_boundaries = boundaries[batch_start:batch_end]
+            batch_idx = sorted_order[batch_start:batch_end]
+            batch_boundaries = boundaries[batch_idx]
 
             all_verts = []
             for i in range(len(batch_boundaries)):
@@ -284,14 +322,21 @@ def _extract_intensities_from_spec(
             tile = _read_tile(img_arr, channel_axis, row_min, row_max + 1, col_min, col_max + 1)
 
             if spec.filter_chain:
+                # Extraction always reads pyramid level 0 (full resolution),
+                # so the effective µm-per-pixel is the spec's own level-0
+                # pixel size. Passing it lets µm-specified filter bandwidths
+                # (e.g. GaussianFilter(sigma_um=...)) resolve to the same
+                # physical scale here as at render time, where the same
+                # filter_chain runs on a downsampled level.
+                um_per_px = spec.um_per_px
                 for c in range(tile.shape[0]):
                     ch = tile[c].astype(np.float32)
                     for filt in spec.filter_chain:
-                        ch = filt(ch)
+                        ch = _call_image_filter(filt, ch, um_per_px)
                     tile[c] = ch.astype(np.float64)
 
             for i in range(len(batch_boundaries)):
-                cell_idx = batch_start + i
+                cell_idx = int(batch_idx[i])
                 verts_um = np.asarray(batch_boundaries[i])
                 if len(verts_um) < 3:
                     continue
@@ -299,12 +344,18 @@ def _extract_intensities_from_spec(
                 px = _transform_coords(verts_um, M)
                 rows_px = np.clip(px[:, 1] - row_min, 0, row_max - row_min).astype(np.float64)
                 cols_px = np.clip(px[:, 0] - col_min, 0, col_max - col_min).astype(np.float64)
+                # Note: intensity sampling deliberately uses
+                # skimage.draw.polygon (pixel-center-inclusive; dilates by
+                # ~1 px per side), unlike seg._eval's polygon2mask
+                # rasterization — for aggregating intensities over a cell,
+                # slightly over-inclusive coverage of boundary pixels is
+                # harmless, whereas IoU scoring needs exact containment.
                 rr, cc = sk_polygon(rows_px, cols_px, shape=(row_max - row_min + 1, col_max - col_min + 1))
                 if len(rr) == 0:
                     continue
                 if getattr(spec, "stain_matrix", None) is not None:
                     result[cell_idx] = _deconvolve_cell_pixels(
-                        tile[:, rr, cc], spec.stain_matrix
+                        tile[:, rr, cc], spec.stain_matrix, reduction_fn, dtype_scale
                     )
                 else:
                     result[cell_idx] = reduction_fn(tile[:, rr, cc], axis=1).astype(np.float32)
@@ -446,23 +497,32 @@ def _get_reduction(name: str):
 def _deconvolve_cell_pixels(
     rgb_pixels: np.ndarray,
     stain_matrix: np.ndarray,
+    reduction_fn,
+    scale: float,
 ) -> np.ndarray:
-    """Apply H&E stain deconvolution to a cell's pixels and return mean concentrations.
+    """Apply H&E stain deconvolution to a cell's pixels and reduce per stain.
 
     Parameters
     ----------
     rgb_pixels
         ``(3, n_pixels)`` float64 array of RGB values extracted from one cell.
-        Values may be in 0–255 (uint8 origin) or 0–1 range.
     stain_matrix
         ``(3, 3)`` deconvolution matrix: ``conc = od @ M`` where *od* is
         optical-density-space RGB.  Convention matches
         :attr:`~astrolabe._utils.ImageSpec.stain_matrix`.
+    reduction_fn
+        Numpy reduction (mean/median/sum/max/min) applied over pixels for
+        each stain channel — the caller's ``reduction`` choice, which is
+        honored for H&E exactly like for raw IF channels.
+    scale
+        White-point divisor derived from the source image dtype (see
+        :func:`astrolabe._utils._dtype_scale`), passed explicitly so
+        normalization does not depend on each cell's own pixel values.
 
     Returns
     -------
     np.ndarray
-        ``(3,)`` float32 mean stain concentrations [H, E, residual].
+        ``(3,)`` float32 reduced stain concentrations [H, E, residual].
     """
-    stains = _od_deconvolve(rgb_pixels, stain_matrix)  # (n_pixels, 3)
-    return stains.mean(axis=0).astype(np.float32)  # (3,)
+    stains = _od_deconvolve(rgb_pixels, stain_matrix, scale=scale)  # (n_pixels, 3)
+    return reduction_fn(stains, axis=0).astype(np.float32)  # (3,)

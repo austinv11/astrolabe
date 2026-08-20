@@ -1,20 +1,32 @@
 """
 bin2cell-style Visium HD bin-to-cell assignment.
 
-Reimplements the core algorithm of bin2cell natively:
+A polygon-space **variant** of the bin2cell algorithm:
 
     Polański, K. et al. (2024). "Bin2cell reconstructs cells from high
     resolution Visium HD data." Bioinformatics, 40(9), btae546.
     https://doi.org/10.1093/bioinformatics/btae546
 
-— nucleus/cell segmentation (StarDist/Cellpose, reused unmodified from
-:mod:`astrolabe.seg`), polygon expansion (the polygon-space analog of
-bin2cell's raster ``expand_labels`` step), and a PCA-transcriptional-
-similarity tie-break for bins ambiguously placed within more than one
-candidate cell's expanded footprint — matching the published method's
-approach rather than a plain nearest-centroid fallback.
+The published method works entirely in raster space: segmentation labels
+are grown with ``skimage.segmentation.expand_labels``, which assigns every
+bin within the expansion distance to the **nearest un-expanded label** —
+that is bin2cell's only assignment rule; it has no transcriptional
+tie-break of any kind. astrolabe's differences, explicitly:
 
-Segmentation is decoupled from bin assignment, mirroring
+* **Polygon-space expansion** — cell polygons are buffered by ``expand_um``
+  instead of growing a label raster. Equivalent in intent; boundary
+  effects can differ by a pixel.
+* **Contested-bin tie-breaks** — bins inside more than one expanded
+  footprint are resolved by a chosen rule. ``tie_break='nearest_label'``
+  reproduces ``expand_labels`` semantics (nearest un-expanded polygon
+  boundary). ``tie_break='pca'`` (the default) is a **novel astrolabe
+  extension with no analog in the published method**: it assigns the bin
+  to the transcriptionally most similar candidate in PCA space.
+  ``tie_break='nearest'`` (nearest centroid) is a simpler geometric
+  alternative and the fallback when PCA cannot be fit.
+
+Segmentation itself (StarDist/Cellpose) is reused unmodified from
+:mod:`astrolabe.seg` and is decoupled from bin assignment, mirroring
 :func:`~astrolabe.seg.assign_transcripts`: :func:`assign_bins` takes ANY
 pre-existing segmentation (:func:`~astrolabe.seg.segment_stardist`,
 :func:`~astrolabe.seg.segment_cellpose`, :func:`~astrolabe.seg.voronoi_resegment`,
@@ -40,7 +52,7 @@ import pandas as pd
 import scipy.sparse as sp
 import tifffile
 from shapely import points as shapely_points
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 from shapely.strtree import STRtree
 
 from astrolabe._utils import ImageSpec, _aggregate_sparse_by_group
@@ -78,7 +90,9 @@ def _classify_matches(tree, xs: np.ndarray, ys: np.ndarray):
     built with a small Python loop restricted to genuinely contested points.
     """
     pts = shapely_points(xs, ys)
-    result = tree.query(pts, predicate="within")
+    # covered_by, not within: "within" is boundary-exclusive, so a bin
+    # centroid landing exactly on a polygon edge matched nothing.
+    result = tree.query(pts, predicate="covered_by")
     if result.shape[1] == 0:
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64), {}
 
@@ -148,26 +162,40 @@ def assign_bins(
     :func:`~astrolabe.seg.voronoi_resegment`, native Space Ranger segmentation
     (``mdata['visium_hd_cells']``), or any custom source — anything with
     ``obsm[boundaries_key]`` cell boundary polygons in µm — and populates its
-    ``X`` by summing the 2µm bins assigned to each cell, following the
-    published bin2cell algorithm (see module docstring for citation):
+    ``X`` by summing the 2µm bins assigned to each cell. This is a
+    **polygon-space variant** of the published bin2cell algorithm (see the
+    module docstring for the citation and an explicit list of divergences):
 
     1. **Core bins** — bins whose centroid falls inside a cell's own
        (un-expanded) boundary polygon are assigned directly; real segmented
-       cells don't overlap, so this is unambiguous by construction.
+       cells don't overlap, so this is unambiguous by construction. (Rare
+       overlapping-input ties go to the smallest-area candidate.)
     2. **Expansion** — every cell polygon is buffered by *expand_um* (the
        polygon-space analog of bin2cell's raster ``expand_labels`` step).
        Remaining bins falling in exactly one cell's expansion ring are
        assigned directly ("unambiguous expansion").
     3. **Contested bins** — bins falling in more than one cell's expansion
-       ring are resolved by ``tie_break``: ``'pca'`` (default) fits a PCA on
-       each candidate cell's *provisional* transcriptional profile (built
-       only from its core + unambiguous-expansion bins) and assigns the bin
-       to whichever of its own candidates is nearest in PCA space —
-       matching bin2cell's "transcriptional similarity" tie-break.
-       ``'nearest'`` assigns to the geometrically nearest candidate
-       centroid instead. Bins whose candidates all lack a usable profile
-       (or when PCA cannot be fit) silently fall back to ``'nearest'``.
+       ring are resolved by ``tie_break``:
+
+       * ``'nearest_label'`` reproduces the published method's
+         ``expand_labels`` semantics: the bin goes to the candidate whose
+         **un-expanded polygon boundary** is nearest.
+       * ``'pca'`` (default) is a **novel astrolabe extension, not part of
+         the published bin2cell method**: it fits a PCA on each candidate
+         cell's *provisional* transcriptional profile (built only from its
+         core + unambiguous-expansion bins) and assigns the bin to
+         whichever of its own candidates is nearest in PCA space.
+       * ``'nearest'`` assigns to the geometrically nearest candidate
+         **centroid**. Bins whose candidates lack a usable profile (or
+         when PCA cannot be fit) fall back to this rule, with a warning.
     4. Cells with fewer than *min_bin_counts* total assigned bins are dropped.
+
+    The final per-bin assignment is exposed as ``bin_data.obs['cell_of_bin']``
+    (a categorical of *cell_seg* ``obs_names``; ``NaN`` = unassigned) —
+    written onto *bin_data* regardless of *inplace*, which governs only
+    *cell_seg*. Each bin is assigned to at most one cell, so
+    ``result.X.sum()`` equals the summed counts of the assigned bins (for
+    cells surviving *min_bin_counts*).
 
     Parameters
     ----------
@@ -189,7 +217,9 @@ def assign_bins(
         expansion-tier bins. Default ``4.0`` matches bin2cell's own default
         (``max_bin_distance=2`` bins × 2µm).
     tie_break
-        ``'pca'`` (default) or ``'nearest'``.
+        ``'pca'`` (default; novel astrolabe extension), ``'nearest_label'``
+        (published bin2cell / ``expand_labels`` semantics), or ``'nearest'``
+        (nearest centroid). See the algorithm description above.
     n_pcs
         Number of PCA components for the ``'pca'`` tie-break.
     min_bin_counts
@@ -208,8 +238,10 @@ def assign_bins(
     >>> ab.seg.assign_bins(mdata['visium_hd_bins'], cell_seg)
     >>> ab.io.attach_modality(mdata, cell_seg, 'visium_hd_cells', set_default=True)
     """
-    if tie_break not in ("pca", "nearest"):
-        raise ValueError(f"tie_break must be 'pca' or 'nearest', got {tie_break!r}")
+    if tie_break not in ("pca", "nearest", "nearest_label"):
+        raise ValueError(
+            f"tie_break must be 'pca', 'nearest', or 'nearest_label', got {tie_break!r}"
+        )
     if boundaries_key not in cell_seg.obsm:
         raise KeyError(f"obsm['{boundaries_key}'] not found on cell_seg.")
     if spatial_key not in cell_seg.obsm or spatial_key not in bin_data.obsm:
@@ -230,6 +262,7 @@ def assign_bins(
 
     orig_polys = _build_polygons(cell_seg.obsm[boundaries_key])
     orig_tree = STRtree(orig_polys)
+    orig_areas = np.array([p.area for p in orig_polys], dtype=np.float64)
     expanded_polys = [p.buffer(expand_um) if not p.is_empty else p for p in orig_polys]
     exp_tree = STRtree(expanded_polys)
 
@@ -246,7 +279,10 @@ def assign_bins(
         )
         cell_of_bin[start + single_idx] = single_poly
         for local_i, cands in multi.items():
-            cell_of_bin[start + local_i] = cands[0]  # arbitrary but rare (overlapping input segmentation)
+            # Rare (overlapping input segmentation): break the tie to the
+            # smallest-area candidate — deterministic under any polygon
+            # ordering, unlike STRtree insertion order.
+            cell_of_bin[start + local_i] = min(cands, key=lambda c: orig_areas[c])
     is_core = cell_of_bin >= 0
     log.info("assign_bins: %d core bins assigned", int(is_core.sum()))
 
@@ -302,6 +338,16 @@ def assign_bins(
     used_fallback = False
     for bin_idx, candidates in contested_candidates.items():
         candidates = sorted(set(candidates))
+        if tie_break == "nearest_label":
+            # Published bin2cell / expand_labels semantics: assign to the
+            # candidate whose *un-expanded* polygon boundary is nearest.
+            pt = Point(bin_coords[bin_idx])
+            dists = [
+                orig_polys[c].distance(pt) if not orig_polys[c].is_empty else np.inf
+                for c in candidates
+            ]
+            cell_of_bin[bin_idx] = candidates[int(np.argmin(dists))]
+            continue
         # PCA-based comparison is only fair when *every* candidate has a
         # provisional profile to embed -- restricting to just the eligible
         # subset (the previous behavior) doesn't just disadvantage a
@@ -329,7 +375,7 @@ def assign_bins(
             dists = np.linalg.norm(eligible_pca[cand_rows] - bin_pca, axis=1)
             winner = eligible_candidates[int(np.argmin(dists))]
         else:
-            used_fallback = True
+            used_fallback = used_fallback or tie_break == "pca"
             cand_centroids = cell_centroids[candidates]
             dists = np.linalg.norm(cand_centroids - bin_coords[bin_idx], axis=1)
             winner = candidates[int(np.argmin(dists))]
@@ -339,7 +385,7 @@ def assign_bins(
         log.warning(
             "assign_bins: some contested bins fell back to nearest-centroid tie-break "
             "(PCA unavailable — too few candidates with a usable transcriptional "
-            "profile, or tie_break='nearest' was requested)."
+            "profile)."
         )
 
     # ── Final aggregation ───────────────────────────────────────────────────
@@ -355,24 +401,50 @@ def assign_bins(
             "Lower min_bin_counts or increase expand_um."
         )
 
-    cell_seg = cell_seg if inplace else cell_seg.copy()
-    cell_seg._var = bin_data.var.copy()
-    cell_seg.obs["n_bins"] = n_bins_per_cell
-    cell_seg.obsm[f"{boundaries_key}_expanded"] = ak.Array(
+    # Expose the per-bin assignment on the bin AnnData: which cell each bin
+    # was summed into (NaN = unassigned). Uses cell_seg's original obs_names,
+    # so labels stay valid regardless of the min_bin_counts subsetting below.
+    cell_names = cell_seg.obs_names.to_numpy()
+    bin_labels = np.full(n_bins, None, dtype=object)
+    bin_labels[final_mask] = cell_names[cell_of_bin[final_mask]]
+    bin_data.obs["cell_of_bin"] = pd.Categorical(bin_labels)
+
+    # Build the result through the public, fully-validated AnnData
+    # constructor (never by assigning private attributes like `_var`,
+    # which bypasses every dimension check), then subset via public slicing.
+    obs = cell_seg.obs.copy()
+    obs["n_bins"] = n_bins_per_cell
+    obsm = dict(cell_seg.obsm)
+    obsm[f"{boundaries_key}_expanded"] = ak.Array(
         [
             np.asarray(p.exterior.coords, dtype=np.float32) if not p.is_empty else np.zeros((0, 2), dtype=np.float32)
             for p in expanded_polys
         ]
     )
-    cell_seg.X = final_X
-    cell_seg._inplace_subset_obs(keep_mask)
+    new = ad.AnnData(
+        X=final_X,
+        obs=obs,
+        var=bin_data.var.copy(),
+        uns=dict(cell_seg.uns),
+        obsm=obsm,
+    )
+    new = new[keep_mask].copy()
 
     log.info(
         "assign_bins: %d / %d cells retained (min_bin_counts=%d); %d total bins assigned (%.1f%%)",
         n_kept, n_cells, min_bin_counts, int(final_mask.sum()), 100.0 * final_mask.sum() / n_bins,
     )
 
-    return None if inplace else cell_seg
+    if inplace:
+        # In-place var-dimension changes have no public AnnData API;
+        # _init_as_actual is the exact code path AnnData.__init__ delegates
+        # to, so the caller's object is rebuilt through the same validated
+        # construction as `new` above.
+        cell_seg._init_as_actual(
+            X=new.X, obs=new.obs, var=new.var, uns=new.uns, obsm=dict(new.obsm),
+        )
+        return None
+    return new
 
 
 # ---------------------------------------------------------------------------
@@ -405,13 +477,45 @@ def _rasterize_bin_expression(bins_adata: ad.AnnData) -> tuple[np.ndarray, np.nd
     img = np.zeros((h, w), dtype=np.float32)
     img[array_row - min_row, array_col - min_col] = totals.astype(np.float32)
 
+    # Fit the full 6-parameter affine [col, row, 1] -> [x_um, y_um] by least
+    # squares instead of assuming an axis-aligned scale with median offsets:
+    # a mirrored or rotated spatial frame (array_col decreasing with x, or a
+    # transposed grid) is then *fitted correctly* rather than silently
+    # producing a raster registered into the wrong frame. The max residual
+    # is asserted below — an affine-inconsistent grid is a hard error, not a
+    # silent misregistration.
     coords = np.asarray(bins_adata.obsm["spatial"], dtype=np.float64)
-    rng = np.random.default_rng(0)
-    sample = rng.choice(len(array_row), min(1000, len(array_row)), replace=False)
-    origin_x = float(np.median(coords[sample, 0] - (array_col[sample] - min_col) * bin_size_um))
-    origin_y = float(np.median(coords[sample, 1] - (array_row[sample] - min_row) * bin_size_um))
+    n = len(array_row)
+    if n > 250_000:
+        rng = np.random.default_rng(0)
+        sample = rng.choice(n, 250_000, replace=False)
+    else:
+        sample = np.arange(n)
+    design = np.column_stack(
+        [
+            (array_col[sample] - min_col).astype(np.float64),
+            (array_row[sample] - min_row).astype(np.float64),
+            np.ones(len(sample), dtype=np.float64),
+        ]
+    )
+    coef, *_ = np.linalg.lstsq(design, coords[sample], rcond=None)  # (3, 2)
+    residuals = design @ coef - coords[sample]
+    max_resid = float(np.abs(residuals).max()) if len(sample) else 0.0
+    if max_resid >= 0.5 * bin_size_um:
+        raise ValueError(
+            "segment_bin2cell: the bin grid (array_row/array_col) is not "
+            f"affine-consistent with obsm['spatial'] (max residual "
+            f"{max_resid:.3g} µm ≥ half a bin, {0.5 * bin_size_um:.3g} µm). "
+            "The synthetic expression raster cannot be registered reliably — "
+            "check that the bin coordinates and grid indices belong to the "
+            "same run and have not been partially transformed."
+        )
     affine = np.array(
-        [[bin_size_um, 0.0, origin_x], [0.0, bin_size_um, origin_y], [0.0, 0.0, 1.0]]
+        [
+            [coef[0, 0], coef[1, 0], coef[2, 0]],
+            [coef[0, 1], coef[1, 1], coef[2, 1]],
+            [0.0, 0.0, 1.0],
+        ]
     )
     return img, affine
 

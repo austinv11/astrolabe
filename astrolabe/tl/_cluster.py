@@ -71,7 +71,20 @@ def cluster(
         Random seed for reproducibility.
     **kwargs
         Additional keyword arguments forwarded to the underlying scanpy
-        function.
+        function.  On the CPU Leiden path, ``flavor='igraph'`` and
+        ``n_iterations=2`` are injected as defaults (scanpy's announced
+        future defaults; markedly faster than legacy ``leidenalg``) unless
+        explicitly overridden.
+
+    Notes
+    -----
+    With ``flavor='igraph'`` (the default here), scanpy routes to igraph's
+    ``community_leiden`` (``objective_function='modularity'``), whereas the
+    legacy ``flavor='leidenalg'`` uses ``RBConfigurationVertexPartition``.
+    Both optimize resolution-scaled modularity, but the implementations
+    differ (directedness handling, tie-breaking, RNG), so the same numeric
+    *resolution* can yield slightly different clusters between flavors.
+    Pass ``flavor='leidenalg'`` to reproduce legacy scanpy behavior exactly.
 
     Examples
     --------
@@ -83,16 +96,12 @@ def cluster(
     >>> ab.tl.spatial_neighbors(mdata["xenium"])
     >>> ab.tl.cluster(mdata["xenium"], neighbors_key="spatial_neighbors", key_added="spatial_leiden")
     """
-    # FIXME: TEMP: Use future default args for speed with leiden, should eventually be removed
-    if method == 'leiden':
-        # flavor='igraph'` and `n_iterations=2
-        if 'flavor' not in kwargs:
-            kwargs['flavor'] = 'igraph'
-        if 'n_iterations' not in kwargs:
-            kwargs['n_iterations'] = 2
     key_added = key_added or method
 
     if gpu_enabled() and method in ("leiden", "louvain"):
+        # rsc.tl.leiden/louvain do not accept scanpy-only params like
+        # flavor= / n_iterations= — forward only what the user explicitly
+        # passed, on their own responsibility.
         rsc = _require_rapids()
         fn = rsc.tl.leiden if method == "leiden" else rsc.tl.louvain
         fn(
@@ -108,6 +117,10 @@ def cluster(
         return
 
     if method == "leiden":
+        # scanpy's announced future defaults (much faster than legacy
+        # leidenalg); see the resolution-semantics note in the docstring.
+        kwargs.setdefault("flavor", "igraph")
+        kwargs.setdefault("n_iterations", 2)
         sc.tl.leiden(
             adata,
             resolution=resolution,

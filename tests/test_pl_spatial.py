@@ -594,9 +594,10 @@ def test_load_tiff_level_normalizes_channels_last_to_channel_first(tmp_path):
     path = tmp_path / "rgb.tif"
     _write_rgb_tiff(path, shape=(48, 32, 3))
 
-    raw, ch_ax = _load_tiff_level(str(path), "YXC", level_idx=0)
+    raw, ch_ax, step = _load_tiff_level(str(path), "YXC", level_idx=0)
 
     assert ch_ax == 0
+    assert step == 1
     assert raw.shape == (3, 48, 32)
 
 
@@ -608,9 +609,10 @@ def test_load_tiff_level_channel_first_input_unaffected(tmp_path):
     arr = rng.integers(0, 255, size=(4, 48, 32), dtype=np.uint8)
     tifffile.imwrite(str(path), arr, photometric="minisblack")
 
-    raw, ch_ax = _load_tiff_level(str(path), "CYX", level_idx=0)
+    raw, ch_ax, step = _load_tiff_level(str(path), "CYX", level_idx=0)
 
     assert ch_ax == 0
+    assert step == 1
     assert raw.shape == (4, 48, 32)
 
 
@@ -654,8 +656,9 @@ def test_registration_rotation_places_marker_at_correct_real_world_position():
     A = spec.registration_affine
     gt_um = _transform_coords(np.array([[float(marker_col), float(marker_row)]]), A)[0]
 
-    rotated, extent = _apply_registration_rotation(raw, spec, level_idx=0, crop_pixels=None)
+    rotated, extent, valid_mask = _apply_registration_rotation(raw, spec, level_idx=0, crop_pixels=None)
     assert extent is not None
+    assert valid_mask is not None and valid_mask.shape == rotated.shape[1:]
 
     idx = np.unravel_index(np.argmax(rotated[0]), rotated[0].shape)
     rh, rw = rotated.shape[1], rotated.shape[2]
@@ -679,7 +682,7 @@ def test_registration_rotation_no_crop_extent_matches_full_image_footprint():
     expected_extent = _compute_extent(spec, h_full, w_full)
 
     raw = np.zeros((1, 40, 30), dtype=np.float64)
-    _, extent = _apply_registration_rotation(raw, spec, level_idx=0, crop_pixels=None)
+    _, extent, _ = _apply_registration_rotation(raw, spec, level_idx=0, crop_pixels=None)
 
     for got, want in zip(extent, expected_extent):
         assert got == pytest.approx(want, abs=1e-6)
@@ -1034,4 +1037,248 @@ def test_points_continuous_color_is_percentile_clipped():
     ax = fig.axes[0]
     sc = next(c for c in ax.collections if hasattr(c, "get_offsets") and len(c.get_offsets()) > 0)
     assert sc.norm.vmax < 100.0  # nowhere near the raw 10_000 outlier
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Natural-sort categorical ordering (shared _sorted_categories helper)
+# ---------------------------------------------------------------------------
+
+
+def test_sorted_categories_numeric_strings_order_numerically():
+    from astrolabe.pl._spatial import _sorted_categories
+    assert _sorted_categories({"10", "9", "2", "1", "0"}) == ["0", "1", "2", "9", "10"]
+
+
+def test_sorted_categories_natural_key_for_mixed_labels():
+    from astrolabe.pl._spatial import _sorted_categories
+    assert _sorted_categories(["domain_10", "domain_9", "domain_2"]) == [
+        "domain_2", "domain_9", "domain_10",
+    ]
+    # Pure text still sorts lexicographically.
+    assert _sorted_categories(["b", "a", "c"]) == ["a", "b", "c"]
+
+
+def test_points_legend_orders_cluster_ten_after_nine():
+    # Regression: 11 Leiden-style string labels used to legend-sort as
+    # "0, 1, 10, 2, ..." — and colors were assigned in that wrong order too.
+    n = 110
+    rng = np.random.default_rng(7)
+    xy = rng.uniform(0, 500, (n, 2)).astype(np.float32)
+    labels = np.repeat([str(i) for i in range(11)], 10)
+    adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32),
+                       obs=pd.DataFrame({"leiden": labels}))
+    adata.obsm["spatial"] = xy
+
+    fig = ab.pl.points(adata, color="leiden").to_figure()
+    ax = fig.axes[0]
+    legends = [a for a in ax.get_children() if isinstance(a, matplotlib.legend.Legend)]
+    assert len(legends) == 1
+    texts = [t.get_text() for t in legends[0].get_texts()]
+    assert texts == [str(i) for i in range(11)]
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Blank-figure leak on guard exceptions
+# ---------------------------------------------------------------------------
+
+
+def test_points_on_multi_library_object_does_not_leak_blank_figure():
+    n = 8
+    adata = ad.AnnData(
+        X=np.zeros((n, 1), dtype=np.float32),
+        obs=pd.DataFrame({"library_id": ["a"] * 4 + ["b"] * 4},
+                         index=[f"c{i}" for i in range(n)]),
+    )
+    adata.obsm["spatial"] = np.random.default_rng(0).uniform(0, 100, (n, 2)).astype(np.float32)
+
+    n_before = len(plt.get_fignums())
+    with pytest.raises(ValueError, match="libraries"):
+        ab.pl.points(adata).to_figure()
+    assert len(plt.get_fignums()) == n_before, "guard exception leaked a blank figure"
+
+    # Same guard through the PlotGrid ('|') path.
+    with pytest.raises(ValueError, match="libraries"):
+        (ab.pl.points(adata) | ab.pl.points(adata)).to_figure()
+    assert len(plt.get_fignums()) == n_before
+
+
+# ---------------------------------------------------------------------------
+# Robust auto-extent (outliers must not blow up the extent / point size)
+# ---------------------------------------------------------------------------
+
+
+def _outlier_adata(n=5000, outlier_xy=(50_000.0, 50_000.0)):
+    rng = np.random.default_rng(3)
+    xy = rng.uniform(0, 500, (n, 2)).astype(np.float32)
+    xy[0] = outlier_xy
+    adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32))
+    adata.obsm["spatial"] = xy
+    return adata
+
+
+def test_layer_extent_ignores_single_outlier():
+    adata = _outlier_adata()
+    lay = ab.pl.points(adata).layers[0]
+    xmin, xmax, ymin, ymax = _layer_extent(lay)
+    assert xmax < 1_000.0 and ymax < 1_000.0
+
+
+def test_layer_extent_keeps_exact_minmax_for_clean_data(square_adata):
+    coords = square_adata.obsm["spatial"]
+    lay = ab.pl.points(square_adata).layers[0]
+    assert _layer_extent(lay) == (
+        float(coords[:, 0].min()), float(coords[:, 0].max()),
+        float(coords[:, 1].min()), float(coords[:, 1].max()),
+    )
+
+
+def test_points_axis_limits_clip_single_outlier():
+    adata = _outlier_adata()
+    fig = ab.pl.points(adata).to_figure()
+    ax = fig.axes[0]
+    assert ax.get_xlim()[1] < 1_000.0
+    assert ax.get_ylim()[1] < 1_000.0
+    plt.close(fig)
+
+
+def test_auto_point_size_not_deflated_by_outlier():
+    # One far-away centroid inflates the raw extent ~100x, which used to
+    # inflate the implied cell spacing (and marker size) with it.
+    fig, ax = plt.subplots(figsize=(5, 5))
+    rng = np.random.default_rng(3)
+    coords = rng.uniform(0, 500, (5000, 2))
+    size_clean = _auto_point_size(ax, coords, len(coords))
+    coords_out = coords.copy()
+    coords_out[0] = (50_000.0, 50_000.0)
+    size_outlier = _auto_point_size(ax, coords_out, len(coords_out))
+    assert size_outlier == pytest.approx(size_clean, rel=0.15)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# boundaries() max_boundaries warning
+# ---------------------------------------------------------------------------
+
+
+def test_boundaries_warns_above_max_boundaries(square_adata, caplog):
+    import logging as _logging
+    _add_boundaries(square_adata)
+    with caplog.at_level(_logging.WARNING, logger="astrolabe.pl._spatial"):
+        ab.pl.boundaries(square_adata, max_boundaries=10)
+    assert any("polygons" in rec.message for rec in caplog.records)
+    caplog.clear()
+    with caplog.at_level(_logging.WARNING, logger="astrolabe.pl._spatial"):
+        ab.pl.boundaries(square_adata, max_boundaries=None)
+    assert not any("polygons" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# gradient_quiver robust color scale
+# ---------------------------------------------------------------------------
+
+
+def test_gradient_quiver_robust_color_percentiles():
+    from astrolabe.pl._spatial import _draw_quiver_layer
+
+    rng = np.random.default_rng(0)
+    n = 400
+    coords = rng.uniform(0, 1000, (n, 2)).astype(np.float32)
+    adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32))
+    adata.var_names = ["g"]
+    adata.obsm["spatial"] = coords
+    grad = rng.normal(0, 0.01, (n, 2))
+    grad[0] = (50.0, 50.0)  # one absurd outlier bin
+    adata.obsm["gradient_g"] = grad.astype(np.float32)
+
+    panel = ab.pl.gradient_quiver(adata, "g", bin_size_um=100.0)
+    lay = panel.layers[0]
+    assert lay.precomputed["color_percentiles"] == (2.0, 98.0)
+
+    fig, ax = plt.subplots()
+    _draw_quiver_layer(ax, lay)
+    qv = [c for c in ax.collections if hasattr(c, "norm")][0]
+    mags = lay.precomputed["magnitude"]
+    # robust vmax must sit far below the outlier-driven global max
+    assert qv.norm.vmax < np.nanmax(mags) * 0.5
+    plt.close(fig)
+
+    # escape hatch: (0, 100) reproduces the raw range
+    panel_raw = ab.pl.gradient_quiver(
+        adata, "g", bin_size_um=100.0, color_percentiles=(0.0, 100.0)
+    )
+    fig, ax = plt.subplots()
+    _draw_quiver_layer(ax, panel_raw.layers[0])
+    qv = [c for c in ax.collections if hasattr(c, "norm")][0]
+    assert qv.norm.vmax == pytest.approx(np.nanmax(mags))
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Dense-mark rasterization in the SVG mimebundle
+# ---------------------------------------------------------------------------
+
+
+def _dense_points_adata(n):
+    rng = np.random.default_rng(0)
+    adata = ad.AnnData(X=rng.poisson(1.0, (n, 1)).astype(np.float32))
+    adata.var_names = ["g"]
+    adata.obsm["spatial"] = rng.uniform(0, 1000, (n, 2)).astype(np.float32)
+    adata.obs["total_counts"] = np.asarray(adata.X).sum(axis=1)
+    return adata
+
+
+def test_dense_scatter_is_rasterized_in_the_svg_mimebundle():
+    """A panel with many marks must embed a raster, not one <use> per mark.
+
+    matplotlib writes a scatter point as a <g><use/></g> pair, so a
+    whole-section panel is ~160k elements and tens of MB of SVG -- past
+    GitHub's 100 MB file limit once a few land in one .ipynb.
+    """
+    from astrolabe.pl._spatial import _RASTERIZE_MIN_MARKS, _svg_mimebundle_for
+
+    n = _RASTERIZE_MIN_MARKS * 4
+    panel = ab.pl.points(_dense_points_adata(n), color="total_counts", title="counts")
+    svg = _svg_mimebundle_for(panel.to_figure())["image/svg+xml"]
+
+    assert "data:image/png;base64," in svg          # marks became a raster layer
+    # ~90 <use> remain: text glyphs, which are references into the font <defs>
+    assert svg.count("<use") < 500                  # not one element per cell
+    # ... and the chrome is still real vector text (glyph <path> defs), not
+    # baked into the raster -- the whole reason SVG is the display format.
+    assert "<defs" in svg and "<path" in svg
+    plt.close("all")
+
+
+def test_sparse_scatter_stays_fully_vector():
+    from astrolabe.pl._spatial import _RASTERIZE_MIN_MARKS, _svg_mimebundle_for
+
+    n = _RASTERIZE_MIN_MARKS // 4
+    panel = ab.pl.points(_dense_points_adata(n), color="total_counts")
+    svg = _svg_mimebundle_for(panel.to_figure())["image/svg+xml"]
+
+    assert svg.count("<use") > n  # one per cell, plus text glyphs
+    plt.close("all")
+
+
+def test_rasterization_flag_is_not_left_on_the_returned_figure():
+    """Displaying a Figure must not permanently alter it.
+
+    ``to_figure()`` hands the caller a live Figure; a second render (at
+    another size, or to a raster format) has to see it exactly as drawn.
+    """
+    from astrolabe.pl._spatial import _RASTERIZE_MIN_MARKS, _svg_mimebundle_for
+
+    # A bare matplotlib scatter, so the flag comes from _svg_mimebundle_for
+    # rather than from the draw-time threshold in _draw_points_layer.
+    rng = np.random.default_rng(0)
+    n = _RASTERIZE_MIN_MARKS * 4
+    fig, ax = plt.subplots()
+    coll = ax.scatter(rng.uniform(size=n), rng.uniform(size=n), s=1)
+    assert not coll.get_rasterized()
+
+    svg = _svg_mimebundle_for(fig)["image/svg+xml"]
+    assert "data:image/png;base64," in svg  # it *was* rasterized for the render
+    assert not coll.get_rasterized()        # ... and the figure is unchanged
     plt.close(fig)

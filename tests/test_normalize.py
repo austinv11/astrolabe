@@ -1,4 +1,5 @@
-"""Tests for pp.normalize_by_area (batch-5 bugfix: linear-scale correction)."""
+"""Tests for pp.normalize_by_area — area-density normalization of RAW counts,
+an alternative to normalize_total (never a step after it)."""
 import numpy as np
 import anndata as ad
 import pytest
@@ -7,56 +8,73 @@ import scipy.sparse as sp
 from astrolabe.pp._normalize import normalize_by_area
 
 
-def _adata_with_area(n=200, n_genes=20, seed=0):
+def _adata_with_area(n=400, n_genes=20, seed=0):
     rng = np.random.default_rng(seed)
-    # Simulate log1p-normalized expression whose *linear*-scale mean
-    # genuinely does grow with cell area (bigger cells really do capture
-    # more transcripts) -- the scenario normalize_by_area is meant to
-    # correct for.
+    # Raw counts whose expected value grows linearly with cell area (bigger
+    # cells capture proportionally more transcripts) — so counts/area is the
+    # size-independent quantity the normalization should recover.
     area = rng.uniform(50, 500, n).astype(np.float64)
-    base_rate = area / 200.0  # bigger cells -> higher linear-scale counts
-    counts = rng.poisson(base_rate[:, None] * rng.uniform(0.5, 2.0, n_genes)[None, :])
-    X = np.log1p(counts).astype(np.float32)
-    adata = ad.AnnData(X=X)
+    gene_rates = rng.uniform(0.5, 2.0, n_genes)
+    counts = rng.poisson(area[:, None] / 100.0 * gene_rates[None, :])
+    adata = ad.AnnData(X=counts.astype(np.float32))
     adata.var_names = [f"g{i}" for i in range(n_genes)]
     adata.obs["cell_area"] = area
     return adata, area
 
 
-def _residual_area_dependence(values: np.ndarray, area: np.ndarray) -> float:
-    """abs(Pearson correlation) between per-cell total expression and area."""
-    totals = values.sum(axis=1)
+def _area_dependence(values: np.ndarray, area: np.ndarray) -> float:
+    """abs(Pearson correlation) between per-cell total and area."""
+    totals = np.asarray(values).sum(axis=1)
     return abs(np.corrcoef(totals, area)[0, 1])
 
 
 class TestNormalizeByArea:
-    def test_reduces_area_dependence_not_worsens_it(self):
-        # Regression: dividing already-log1p-transformed values directly by
-        # raw linear-scale area (the old behavior) is not a valid size
-        # correction under any generative model -- it empirically produced
-        # a *stronger* residual area-dependence (a spurious 1/area
-        # hyperbola) than no correction at all. The fix does the division on
-        # the linear (expm1'd) scale, where "counts per um^2" is a real
-        # density, then re-applies log1p.
+    def test_removes_area_dependence_of_proportional_counts(self):
+        # Counts ∝ area: raw totals correlate strongly with area; after
+        # counts/area normalization the dependence must essentially vanish
+        # (not merely shrink, and above all not INVERT into a 1/area
+        # artifact — which is exactly what stacking area normalization on
+        # library-size-normalized data produces).
         adata, area = _adata_with_area()
-        before_corr = _residual_area_dependence(adata.X, area)
+        assert _area_dependence(adata.X, area) > 0.9
 
-        normalize_by_area(adata)
-        after_corr = _residual_area_dependence(adata.X, area)
+        normalize_by_area(adata, log1p=False)
+        after = np.corrcoef(np.asarray(adata.X).sum(axis=1), area)[0, 1]
+        assert abs(after) < 0.2, f"residual/inverted area dependence: r={after:.3f}"
 
-        assert after_corr < before_corr
+    def test_raises_on_log_transformed_x(self):
+        # normalize_by_area REPLACES library-size normalization; applying it
+        # after normalize_total forces every gene's value to scale as 1/area
+        # (per-cell linear totals are constant after normalize_total). The
+        # log1p marker is the detectable half of that misuse.
+        import scanpy as sc
+        adata, _ = _adata_with_area(n=50, n_genes=5)
+        sc.pp.normalize_total(adata)
+        sc.pp.log1p(adata)
+        with pytest.raises(ValueError, match="raw counts"):
+            normalize_by_area(adata)
 
-    def test_output_stays_non_negative_and_log_scale(self):
-        adata, area = _adata_with_area(n=50, n_genes=5)
-        original_max = adata.X.max()
-        normalize_by_area(adata)
-        assert (adata.X >= 0).all()
-        # Dividing linear-scale counts by area (>=50 here) then log1p'ing
-        # again should not *inflate* values past the original log1p scale.
-        assert adata.X.max() <= original_max + 1e-3
+    def test_explicit_raw_layer_is_allowed_after_normalization(self):
+        import scanpy as sc
+        adata, _ = _adata_with_area(n=50, n_genes=5)
+        adata.layers["counts"] = adata.X.copy()
+        sc.pp.normalize_total(adata)
+        sc.pp.log1p(adata)
+        normalize_by_area(adata, layer="counts", layer_added="area_norm")
+        assert "area_norm" in adata.layers
+        assert (np.asarray(adata.layers["area_norm"]) >= 0).all()
+
+    def test_median_area_cell_unchanged_when_linear(self):
+        # scale = area / median(area): the median-area cell's counts pass
+        # through unchanged (log1p=False), anchoring the output range.
+        adata, area = _adata_with_area(n=51, n_genes=4, seed=2)
+        raw = np.asarray(adata.X).copy()
+        normalize_by_area(adata, log1p=False)
+        med_idx = int(np.argsort(area)[len(area) // 2])
+        np.testing.assert_allclose(np.asarray(adata.X)[med_idx], raw[med_idx], rtol=1e-5)
 
     def test_sparse_and_dense_agree(self):
-        adata_dense, area = _adata_with_area(n=60, n_genes=8, seed=3)
+        adata_dense, _ = _adata_with_area(n=60, n_genes=8, seed=3)
         adata_sparse = adata_dense.copy()
         adata_sparse.X = sp.csr_matrix(adata_sparse.X)
 

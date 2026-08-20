@@ -611,6 +611,68 @@ class TestAssignBins:
         result = ab.seg.assign_bins(bin_data, cell_seg, expand_um=6.0, inplace=False)
         assert "cell_boundaries_expanded" in result.obsm
 
+    def test_nearest_label_matches_expand_labels_semantics(self):
+        # Cell A: large square [0,8]x[0,8] (centroid (4,4)); cell B: small
+        # square [10,12]x[3,5] (centroid (11,4)). Contested bin at (8.6, 4):
+        # distance to A's *boundary* = 0.6 < to B's boundary = 1.4, but
+        # distance to B's *centroid* = 2.4 < to A's centroid = 4.6 — so
+        # 'nearest_label' (published expand_labels semantics) and 'nearest'
+        # (centroid) must disagree on this bin.
+        poly_a = np.array([[0, 0], [8, 0], [8, 8], [0, 8], [0, 0]], dtype=np.float32)
+        poly_b = np.array([[10, 3], [12, 3], [12, 5], [10, 5], [10, 3]], dtype=np.float32)
+        cell_seg = ad.AnnData(
+            obs=pd.DataFrame({"cell_area": [64.0, 4.0]}, index=["cellA", "cellB"])
+        )
+        cell_seg.obsm["spatial"] = np.array([[4.0, 4.0], [11.0, 4.0]], dtype=np.float32)
+        cell_seg.obsm["cell_boundaries"] = ak.Array([poly_a, poly_b])
+
+        coords = np.array([[2, 4], [4, 4], [11, 4], [8.6, 4]], dtype=np.float32)
+        X = np.ones((4, 2), dtype=np.float32)  # identical everywhere
+        bin_data = ad.AnnData(
+            X=sp.csr_matrix(X),
+            obs=pd.DataFrame(index=[f"bin{i}" for i in range(4)]),
+            var=pd.DataFrame(index=pd.Index(["GeneA", "GeneB"], name="gene_name")),
+        )
+        bin_data.obsm["spatial"] = coords
+
+        res_label = ab.seg.assign_bins(
+            bin_data, cell_seg, expand_um=3.0, tie_break="nearest_label",
+            min_bin_counts=1, inplace=False,
+        )
+        assert res_label.obs["n_bins"]["cellA"] == 3  # contested bin -> A
+        assert res_label.obs["n_bins"]["cellB"] == 1
+
+        res_centroid = ab.seg.assign_bins(
+            bin_data, cell_seg, expand_um=3.0, tie_break="nearest",
+            min_bin_counts=1, inplace=False,
+        )
+        assert res_centroid.obs["n_bins"]["cellA"] == 2
+        assert res_centroid.obs["n_bins"]["cellB"] == 2  # contested bin -> B
+
+    def test_invalid_tie_break_raises(self):
+        bin_data, cell_seg = _make_bin2cell_fixture()
+        with pytest.raises(ValueError, match="tie_break"):
+            ab.seg.assign_bins(bin_data, cell_seg, tie_break="bogus")
+
+    def test_cell_of_bin_exposed_and_conserved(self):
+        bin_data, cell_seg = _make_bin2cell_fixture()
+        result = ab.seg.assign_bins(
+            bin_data, cell_seg, expand_um=6.0, tie_break="pca", min_bin_counts=1, inplace=False,
+        )
+        # Per-bin assignment exposed on the bin AnnData.
+        assert "cell_of_bin" in bin_data.obs
+        labels = bin_data.obs["cell_of_bin"]
+        assigned = labels.notna()
+        # Each bin assigned at most once (a single label per bin), and the
+        # per-cell n_bins bookkeeping agrees with the exposed labels.
+        assert int(assigned.sum()) == int(result.obs["n_bins"].sum())
+        counts_by_cell = labels.value_counts()
+        for cell, n in result.obs["n_bins"].items():
+            assert counts_by_cell.get(cell, 0) == n
+        # Count conservation: result.X sums exactly the assigned bins' counts.
+        X_bins = np.asarray(bin_data.X.todense())
+        assert result.X.sum() == X_bins[assigned.to_numpy()].sum()
+
     def test_no_core_bin_cell_can_still_win_a_contested_bin(self):
         # Regression: a cell with zero core/unambiguous-expansion bins of
         # its own was structurally excluded from `eligible_candidates` for
@@ -651,6 +713,73 @@ class TestAssignBins:
         # contested bin -- not automatically lose it to cellA.
         assert result.obs["n_bins"]["cellB"] == 1
         assert result.obs["n_bins"]["cellA"] == 3
+
+
+# ---------------------------------------------------------------------------
+# seg._bin2cell._rasterize_bin_expression — LSQ affine fit
+# ---------------------------------------------------------------------------
+
+
+def _make_grid_bins(spatial_fn, n_row=4, n_col=4, bin_size_um=2.0):
+    """Bins AnnData on an (n_row x n_col) grid; spatial = spatial_fn(row, col)."""
+    from astrolabe._utils import BinMatrixSpec
+
+    rows, cols = np.meshgrid(np.arange(n_row), np.arange(n_col), indexing="ij")
+    array_row, array_col = rows.ravel(), cols.ravel()
+    n = n_row * n_col
+    xy = np.array([spatial_fn(r, c) for r, c in zip(array_row, array_col)], dtype=np.float64)
+    bins = ad.AnnData(
+        X=sp.csr_matrix(np.ones((n, 2), dtype=np.float32)),
+        obs=pd.DataFrame(
+            {"array_row": array_row, "array_col": array_col},
+            index=[f"b{i}" for i in range(n)],
+        ),
+        var=pd.DataFrame(index=pd.Index(["GeneA", "GeneB"], name="gene_name")),
+    )
+    bins.obsm["spatial"] = xy.astype(np.float32)
+    bins.uns["spatial"] = {
+        "lib": {"bin_matrix": BinMatrixSpec(path="unused.h5", bin_size_um=bin_size_um, n_obs=n, n_vars=2)}
+    }
+    return bins
+
+
+class TestRasterizeBinExpressionAffine:
+    def test_recovers_mirrored_frame(self):
+        # x DECREASES with array_col (a mirrored frame): the old
+        # median-offset fit assumed +bin_size scaling on both axes and would
+        # have silently mis-registered this; the LSQ fit must recover it.
+        from astrolabe.seg._bin2cell import _rasterize_bin_expression
+
+        bins = _make_grid_bins(lambda r, c: (100.0 - 2.0 * c, 50.0 + 2.0 * r))
+        img, affine = _rasterize_bin_expression(bins)
+
+        # Round-trip a few raster pixels (col, row) -> µm.
+        array_row = bins.obs["array_row"].to_numpy()
+        array_col = bins.obs["array_col"].to_numpy()
+        xy = np.asarray(bins.obsm["spatial"], dtype=np.float64)
+        for i in [0, 5, 15]:
+            px = np.array([array_col[i], array_row[i], 1.0])
+            mapped = affine @ px
+            np.testing.assert_allclose(mapped[:2], xy[i], atol=1e-6)
+
+    def test_recovers_transposed_frame(self):
+        # x follows array_row, y follows array_col (a 90-degree transpose).
+        from astrolabe.seg._bin2cell import _rasterize_bin_expression
+
+        bins = _make_grid_bins(lambda r, c: (10.0 + 2.0 * r, 20.0 + 2.0 * c))
+        _, affine = _rasterize_bin_expression(bins)
+        mapped = affine @ np.array([3.0, 1.0, 1.0])  # col=3, row=1
+        np.testing.assert_allclose(mapped[:2], [10.0 + 2.0, 20.0 + 6.0], atol=1e-6)
+
+    def test_non_affine_grid_raises(self):
+        from astrolabe.seg._bin2cell import _rasterize_bin_expression
+
+        rng = np.random.default_rng(0)
+        bins = _make_grid_bins(lambda r, c: (2.0 * c, 2.0 * r))
+        # Corrupt the coordinates beyond any affine's reach.
+        bins.obsm["spatial"] = rng.uniform(0, 100, bins.obsm["spatial"].shape).astype(np.float32)
+        with pytest.raises(ValueError, match="affine-consistent"):
+            _rasterize_bin_expression(bins)
 
 
 # ---------------------------------------------------------------------------

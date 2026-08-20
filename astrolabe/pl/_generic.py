@@ -5,6 +5,7 @@ obs/var/gene-expression fields, passed as plain strings or raw arrays.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
 import anndata as ad
@@ -15,7 +16,12 @@ import numpy as np
 import pandas as pd
 
 from astrolabe._utils import _coerce_field, with_adata
-from astrolabe.pl._spatial import _DEFAULT_CONTINUOUS_CMAP, FigurePanel, _build_cat_colors
+from astrolabe.pl._spatial import (
+    _DEFAULT_CONTINUOUS_CMAP,
+    FigurePanel,
+    _build_cat_colors,
+    _sorted_categories,
+)
 from astrolabe.pl._theme import (
     _legend_handles,
     _style_axes,
@@ -25,6 +31,8 @@ from astrolabe.pl._theme import (
 )
 
 __all__ = ["scatter", "histogram", "heatmap"]
+
+_logger = logging.getLogger(__name__)
 
 
 def _density_values(xv: np.ndarray, yv: np.ndarray, bins: int) -> np.ndarray:
@@ -47,6 +55,7 @@ def scatter(
     palette: "dict[str, str] | list[str] | None" = None,
     category_order: "list[str] | None" = None,
     cmap: str = _DEFAULT_CONTINUOUS_CMAP,
+    vcenter: float | None = None,
     na_color: str | None = None,
     size: float = 4.0,
     alpha: float = 0.5,
@@ -91,9 +100,13 @@ def scatter(
         Color mapping (dict) or cycle (list) for categorical *color*.
     category_order
         Explicit draw/legend order for categorical *color*. Defaults to
-        sorted unique values.
+        numerically-aware natural sort of the unique values. Categories with
+        no drawable points are dropped from the legend (with a warning).
     cmap
         Colormap for continuous *color* or density coloring.
+    vcenter
+        Midpoint for a diverging colormap when *color* is continuous
+        (e.g. ``0`` for a signed statistic). ``None`` = plain linear scale.
     na_color
         Fallback color for categories missing from *palette*.
     size, alpha
@@ -149,12 +162,28 @@ def scatter(
     resolved_na = na_color if na_color is not None else t.muted
 
     if cf is not None and c_is_cat:
-        unique_cats = category_order if category_order is not None else sorted(set(cf))
+        # The legend must advertise only categories that actually have drawn
+        # points: an explicit category_order built from unfiltered metadata
+        # (e.g. every Xenium control type) can name categories whose values
+        # were all dropped by the finite/log filter above.
+        drawn_cats = set(cf)
+        if category_order is not None:
+            unique_cats = [c for c in category_order if c in drawn_cats]
+            dropped = [c for c in category_order if c not in drawn_cats]
+            if dropped:
+                _logger.warning(
+                    "scatter: %d categor%s in category_order have no drawable "
+                    "points on the current axes and were dropped from the "
+                    "legend: %s",
+                    len(dropped),
+                    "y" if len(dropped) == 1 else "ies",
+                    ", ".join(str(c) for c in dropped),
+                )
+        else:
+            unique_cats = _sorted_categories(drawn_cats)
         cat_colors = _build_cat_colors(unique_cats, palette, resolved_na)
         for cat in unique_cats:
             mask = cf == cat
-            if not mask.any():
-                continue
             ax.scatter(
                 xf[mask], yf[mask],
                 c=cat_colors.get(str(cat), resolved_na),
@@ -170,7 +199,13 @@ def scatter(
         )
         _style_legend(leg)
     elif cf is not None:
-        norm = mcolors.Normalize(vmin=float(np.nanmin(cf)), vmax=float(np.nanmax(cf)))
+        norm = (
+            mcolors.TwoSlopeNorm(
+                vcenter, vmin=float(np.nanmin(cf)), vmax=float(np.nanmax(cf))
+            )
+            if vcenter is not None
+            else mcolors.Normalize(vmin=float(np.nanmin(cf)), vmax=float(np.nanmax(cf)))
+        )
         sc = ax.scatter(
             xf, yf, c=cf, cmap=cmap, norm=norm, s=size, alpha=alpha,
             linewidths=0, rasterized=len(xf) > 5_000, **scatter_kwargs,
@@ -293,7 +328,16 @@ def histogram(
     >>> ab.pl.histogram(mdata, x="cell_area")
     >>> ab.pl.histogram(mdata, x="total_counts", axis="var")
     """
-    values, _ = _coerce_field(adata, x, axis=axis, layer=layer)
+    values, v_is_cat = _coerce_field(adata, x, axis=axis, layer=layer)
+    if not v_is_cat:
+        values = np.asarray(values, dtype=np.float64)
+        finite_mask = np.isfinite(values)
+        if not finite_mask.all():
+            _logger.warning(
+                "histogram: dropping %d non-finite value(s) of %d.",
+                int((~finite_mask).sum()), len(values),
+            )
+            values = values[finite_mask]
     t = get_theme()
     color = color if color is not None else t.cat_core[0]
     vline_color = vline_color if vline_color is not None else t.muted
@@ -335,8 +379,8 @@ def histogram(
 @with_adata
 def heatmap(
     adata: ad.AnnData,
-    x: "str | np.ndarray",
-    y: "str | np.ndarray",
+    x: "str | np.ndarray | list[str]",
+    y: "str | np.ndarray | list[str]",
     *,
     values: "str | np.ndarray | None" = None,
     agg: str = "mean",
@@ -351,13 +395,20 @@ def heatmap(
     figsize: tuple[float, float] = (6, 5),
     **kwargs: Any,
 ) -> FigurePanel:
-    """Binned or crosstab heatmap of two arbitrary fields.
+    """Binned, crosstab, or fields-by-group heatmap of arbitrary fields.
 
-    When both *x* and *y* resolve to continuous values, cells are binned
-    with :func:`scipy.stats.binned_statistic_2d` (aggregating *values* by
-    *agg*, or counting occurrences when *values* is ``None``). When either
-    field is categorical, a :func:`pandas.crosstab` is drawn instead
-    (one row/column per category).
+    Three modes, chosen from what *x* and *y* resolve to:
+
+    * both continuous — cells are binned with
+      :func:`scipy.stats.binned_statistic_2d` (aggregating *values* by
+      *agg*, or counting occurrences when *values* is ``None``);
+    * either categorical — a :func:`pandas.crosstab` is drawn instead
+      (one row/column per category);
+    * **one of them a list of field names** — each listed field becomes its
+      own row (*y* a list) or column (*x* a list), aggregated by *agg*
+      within each category of the other, categorical, axis. This is the
+      direct way to draw "mean of several scores per cluster" without
+      building long-form arrays by hand.
 
     Parameters
     ----------
@@ -366,13 +417,15 @@ def heatmap(
     modality
         Modality key when *data* is a MuData.
     x, y
-        Field name or array for each axis.
+        Field name or array for each axis — or a list of numeric field
+        names for one of them (the other must then resolve to a categorical
+        field to group by; *values* must be ``None``).
     values
         Field name or array to aggregate per bin/cell. ``None`` counts
         occurrences instead.
     agg
         Aggregation statistic (``"mean"``, ``"sum"``, ``"median"``, ...)
-        used when *values* is given.
+        used when *values* is given, and always in the list-of-fields mode.
     axis
         ``"obs"`` (default) resolves string fields per-cell; ``"var"``
         resolves them per-gene.
@@ -401,10 +454,74 @@ def heatmap(
     --------
     >>> ab.pl.heatmap(mdata, x="cell_area", y="EPCAM", values="total_counts", agg="mean")
     >>> ab.pl.heatmap(mdata, x="leiden", y="cell_type", agg="count")
+    >>> ab.pl.heatmap(mdata, x="leiden", y=["module_0_score", "module_1_score"])
     """
-    xv, x_cat = _coerce_field(adata, x, axis=axis, layer=layer)
-    yv, y_cat = _coerce_field(adata, y, axis=axis, layer=layer)
-    vv, _ = _coerce_field(adata, values, axis=axis, layer=layer)
+    x_multi = isinstance(x, (list, tuple))
+    y_multi = isinstance(y, (list, tuple))
+    if x_multi and y_multi:
+        raise ValueError("Only one of x and y may be a list of field names.")
+
+    t = get_theme()
+    resolved_cmap = cmap or t.seq_cmap
+
+    table = None  # (n_rows, n_cols) DataFrame: index → y-axis, columns → x-axis
+    if x_multi or y_multi:
+        fields = list(x) if x_multi else list(y)
+        if not all(isinstance(f, str) for f in fields):
+            raise TypeError(
+                "A list passed as x/y must contain field-name strings; pass "
+                "raw per-cell values as a numpy array instead."
+            )
+        if values is not None:
+            raise ValueError(
+                "values= cannot be combined with a list of fields — each "
+                "listed field is aggregated as its own row/column."
+            )
+        group_arg = y if x_multi else x
+        gv, g_cat = _coerce_field(adata, group_arg, axis=axis, layer=layer)
+        if not g_cat:
+            raise ValueError(
+                "When x/y is a list of fields, the other axis must resolve "
+                "to a categorical field to group by."
+            )
+        col_data = {}
+        for f in fields:
+            fv, f_cat = _coerce_field(adata, f, axis=axis, layer=layer)
+            if f_cat:
+                raise ValueError(
+                    f"Listed field {f!r} is categorical; only numeric fields "
+                    "can be aggregated."
+                )
+            col_data[f] = np.asarray(fv, dtype=np.float64)
+        groups = pd.Series(np.asarray(gv).astype(str))
+        cats = _sorted_categories(set(groups))
+        agg_tbl = (
+            pd.DataFrame(col_data)
+            .groupby(groups, observed=True)
+            .agg(agg)
+            .reindex(cats)
+        )  # (categories × fields)
+        table = agg_tbl if x_multi else agg_tbl.T
+        cbar_label = f"{agg}(value)"
+    else:
+        xv, x_cat = _coerce_field(adata, x, axis=axis, layer=layer)
+        yv, y_cat = _coerce_field(adata, y, axis=axis, layer=layer)
+        vv, _ = _coerce_field(adata, values, axis=axis, layer=layer)
+        if values is not None:
+            value_name = values if isinstance(values, str) else "value"
+            cbar_label = f"{agg}({value_name})"
+        else:
+            cbar_label = "count"
+        if x_cat or y_cat:
+            xs = pd.Series(xv, name=str(x) if isinstance(x, str) else "x")
+            ys = pd.Series(yv, name=str(y) if isinstance(y, str) else "y")
+            # crosstab(ys, xs): index = y categories → imshow rows → y-axis,
+            # columns = x categories → x-axis, matching the axis labels.
+            table = (
+                pd.crosstab(ys, xs, values=vv, aggfunc=agg)
+                if vv is not None
+                else pd.crosstab(ys, xs)
+            )
 
     own_fig = ax is None
     if own_fig:
@@ -412,10 +529,7 @@ def heatmap(
     else:
         fig = ax.get_figure()
 
-    t = get_theme()
-    resolved_cmap = cmap or t.seq_cmap
-
-    if not x_cat and not y_cat:
+    if table is None:
         from scipy.stats import binned_statistic_2d
         stat_values = vv if vv is not None else xv
         statistic = agg if vv is not None else "count"
@@ -428,19 +542,16 @@ def heatmap(
             cmap=resolved_cmap, **kwargs,
         )
     else:
-        xs = pd.Series(xv, name=str(x) if isinstance(x, str) else "x")
-        ys = pd.Series(yv, name=str(y) if isinstance(y, str) else "y")
-        table = pd.crosstab(xs, ys, values=vv, aggfunc=agg) if vv is not None else pd.crosstab(xs, ys)
         im = ax.imshow(table.to_numpy(), aspect="auto", cmap=resolved_cmap, **kwargs)
         ax.set_xticks(range(len(table.columns)))
         ax.set_xticklabels(table.columns, rotation=45, ha="right")
         ax.set_yticks(range(len(table.index)))
         ax.set_yticklabels(table.index)
 
-    _style_colorbar(fig.colorbar(im, ax=ax))
+    _style_colorbar(fig.colorbar(im, ax=ax, label=cbar_label))
 
-    ax.set_xlabel(xlabel or (x if isinstance(x, str) else "x"))
-    ax.set_ylabel(ylabel or (y if isinstance(y, str) else "y"))
+    ax.set_xlabel(xlabel or (x if isinstance(x, str) else "" if x_multi else "x"))
+    ax.set_ylabel(ylabel or (y if isinstance(y, str) else "" if y_multi else "y"))
     if title:
         ax.set_title(title)
 

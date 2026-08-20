@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 def spatial_neighbors(
     adata: ad.AnnData,
     *,
-    n_neighbors: int = 15,
+    n_neighbors: int | None = None,
     radius: float | None = None,
     coord_type: Literal["generic", "grid", "delaunay"] = "generic",
     delaunay_max_dist: float | None = None,
@@ -54,7 +54,9 @@ def spatial_neighbors(
     Results are stored in:
 
     - ``adata.obsp[key_added + '_connectivities']`` — binary sparse adjacency
-    - ``adata.obsp[key_added + '_distances']`` — Euclidean distances in µm
+    - ``adata.obsp[key_added + '_distances']`` — edge distances in µm, with
+      the **same sparsity structure** as the connectivities (zero-distance
+      edges between coincident centroids are kept as explicit stored zeros)
     - ``adata.uns[key_added]`` — graph construction parameters
 
     Parameters
@@ -65,14 +67,19 @@ def spatial_neighbors(
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     n_neighbors
-        Number of nearest neighbors per cell.  Ignored for
-        ``coord_type='delaunay'``; only used with ``'generic'`` and
-        ``'grid'``
+        Number of nearest neighbors per cell.  ``None`` (default) resolves
+        to **6** for ``'generic'`` and ``'grid'`` KNN graphs — the spatial
+        convention used by squidpy, deliberately smaller than scanpy's
+        expression-space default of 15, which over-smooths spatial
+        statistics.  Ignored for ``coord_type='delaunay'``.  When *radius*
+        is also set, ``None`` means a pure radius graph, while an explicit
+        integer truncates each cell's radius neighborhood to its
+        *n_neighbors* nearest cells (top-k **and** within-radius
+        intersection).
     radius
         Connect cells within this radius (µm) instead of a fixed-k graph.
-        Ignored for ``coord_type='delaunay'``.  When both *n_neighbors*
-        and *radius* are set, cells are connected if within the top-k
-        **and** within the radius
+        Ignored for ``coord_type='delaunay'``.  See *n_neighbors* for the
+        interaction when both are given.
     coord_type
         Graph construction method:
 
@@ -85,7 +92,10 @@ def spatial_neighbors(
             radius; typically 5–7 neighbors per cell.  Long convex-hull
             edges can be pruned with *delaunay_max_dist*.
         ``'grid'``
-            Chebyshev 8-connected grid (for Visium-style spot arrays).
+            Chebyshev KNN for regular spot/bin arrays.  The default
+            ``n_neighbors=6`` matches hexagonal Visium spot lattices
+            (6 immediate neighbors); pass ``n_neighbors=8`` for square
+            lattices such as Visium HD bins (8-connected).
     delaunay_max_dist
         Maximum edge length in µm for ``coord_type='delaunay'``.  Edges
         longer than this are removed, preventing spurious connections
@@ -95,22 +105,38 @@ def spatial_neighbors(
     spatial_key
         Key in ``obsm`` for spatial coordinates.
     key_added
-        Prefix for keys written to ``obsp`` and ``uns``.
+        Prefix for keys written to ``obsp`` and ``uns``.  Note squidpy
+        stores its graph under fixed ``obsp`` keys
+        (``'spatial_connectivities'``/``'spatial_distances'``); astrolabe
+        namespaces both by *key_added* instead.
     set_diag
-        Set diagonal of connectivity matrix to 1 (self-loops).
+        Include self-loops: the diagonal is part of the stored sparsity
+        structure of **both** the connectivity (value 1) and the distance
+        matrix (explicit zero).
 
     Notes
     -----
     KNN/radius graphs use :func:`sklearn.neighbors.NearestNeighbors`
     (ball-tree), which scales to ~1 M cells.  Delaunay triangulation uses
-    :func:`scipy.spatial.Delaunay`.
+    :func:`scipy.spatial.Delaunay` (2-D coordinates only).
+
+    Directed KNN graphs are symmetrized by **union**: an edge is kept when
+    either endpoint lists the other among its neighbors, so per-cell degree
+    can exceed *n_neighbors*.  Stored distances are recomputed for the final
+    edge set in the construction metric (Euclidean; Chebyshev for
+    ``'grid'``).
 
     Examples
     --------
-    >>> ab.tl.spatial_neighbors(mdata)                       # KNN k=15
+    >>> ab.tl.spatial_neighbors(mdata)                       # KNN k=6
     >>> ab.tl.spatial_neighbors(mdata, coord_type='delaunay',
     ...                         delaunay_max_dist=200)       # Delaunay
     """
+    if coord_type not in ("generic", "grid", "delaunay"):
+        raise ValueError(
+            "coord_type must be one of 'generic', 'grid', or 'delaunay'; "
+            f"got {coord_type!r}"
+        )
     if spatial_key not in adata.obsm:
         raise KeyError(
             f"obsm['{spatial_key}'] not found.  "
@@ -119,9 +145,29 @@ def spatial_neighbors(
 
     coords = adata.obsm[spatial_key].astype(np.float64)  # (n_cells, 2)
     n_cells = coords.shape[0]
+    metric = "chebyshev" if coord_type == "grid" else "euclidean"
 
-    # ── Build edge arrays (rows, cols, dists) ────────────────────────────────
+    # Resolve the effective k. None with a radius means a pure radius graph;
+    # otherwise default to 6 — squidpy's spatial convention (hex Visium spots
+    # have 6 immediate neighbors), deliberately not scanpy's expression-space
+    # default of 15.
     if coord_type == "delaunay":
+        k: int | None = None
+        astrolabe_method = "delaunay"
+    elif radius is not None:
+        k = n_neighbors
+        astrolabe_method = "radius" if k is None else "knn_radius_intersection"
+    else:
+        k = 6 if n_neighbors is None else n_neighbors
+        astrolabe_method = "knn"
+
+    # ── Build directed edge arrays (rows, cols) ──────────────────────────────
+    if coord_type == "delaunay":
+        if coords.shape[1] != 2:
+            raise ValueError(
+                "coord_type='delaunay' requires 2-D coordinates; "
+                f"obsm['{spatial_key}'] has {coords.shape[1]} columns"
+            )
         from scipy.spatial import Delaunay as _Delaunay
 
         tri = _Delaunay(coords)
@@ -135,68 +181,92 @@ def spatial_neighbors(
         ], axis=0)
         edges = np.sort(edges, axis=1)  # canonical order: i < j
         edge_arr = np.unique(edges, axis=0).astype(np.int32)  # (n_edges, 2)
-        dists = np.linalg.norm(
-            coords[edge_arr[:, 0]] - coords[edge_arr[:, 1]], axis=1
-        ).astype(np.float32)
 
         if delaunay_max_dist is not None:
-            mask = dists <= delaunay_max_dist
-            edge_arr = edge_arr[mask]
-            dists = dists[mask]
+            edge_d = np.linalg.norm(
+                coords[edge_arr[:, 0]] - coords[edge_arr[:, 1]], axis=1
+            )
+            edge_arr = edge_arr[edge_d <= delaunay_max_dist]
 
         # Symmetrise: store both (i→j) and (j→i)
         rows = np.concatenate([edge_arr[:, 0], edge_arr[:, 1]])
         cols = np.concatenate([edge_arr[:, 1], edge_arr[:, 0]])
-        dists = np.concatenate([dists, dists])
+
+    elif radius is not None:
+        nn = NearestNeighbors(metric=metric, algorithm="ball_tree")
+        nn.fit(coords)
+        _, indices = nn.radius_neighbors(coords, radius=radius, sort_results=True)
+
+        # Radius returns variable-length index arrays per cell, sorted by
+        # distance.  Remove each cell's own index (exact self only —
+        # coincident *other* cells are kept), then optionally truncate to the
+        # k nearest so an explicit n_neighbors acts as a top-k ∧ within-radius
+        # intersection.
+        row_parts: list[np.ndarray] = []
+        col_parts: list[np.ndarray] = []
+        for i, idx in enumerate(indices):
+            keep = idx[idx != i]
+            if k is not None:
+                keep = keep[:k]
+            row_parts.append(np.full(len(keep), i, dtype=np.int32))
+            col_parts.append(keep.astype(np.int32))
+        rows = np.concatenate(row_parts) if row_parts else np.empty(0, np.int32)
+        cols = np.concatenate(col_parts) if col_parts else np.empty(0, np.int32)
 
     else:
-        if coord_type == "grid":
-            nn = NearestNeighbors(
-                n_neighbors=min(9, n_cells), metric="chebyshev", algorithm="ball_tree"
-            )
+        k_eff = min(k, n_cells - 1)
+        if k_eff < 1:
+            rows = np.empty(0, np.int32)
+            cols = np.empty(0, np.int32)
         else:
             nn = NearestNeighbors(
-                n_neighbors=min(n_neighbors + 1, n_cells),
-                metric="euclidean",
-                algorithm="ball_tree",
+                n_neighbors=k_eff, metric=metric, algorithm="ball_tree"
             )
+            nn.fit(coords)
+            # No-X kneighbors() queries the training set with each point
+            # excluded from its own result *structurally* — robust to
+            # duplicate coordinates, where filtering by index after a
+            # kneighbors(coords) call can leave the wrong entry out.
+            _, indices = nn.kneighbors()
+            rows = np.repeat(np.arange(n_cells, dtype=np.int32), indices.shape[1])
+            cols = indices.ravel().astype(np.int32)
 
-        nn.fit(coords)
-
-        if radius is not None:
-            distances, indices = nn.radius_neighbors(coords, radius=radius, sort_results=True)
-        else:
-            distances, indices = nn.kneighbors(coords)
-
-        if radius is not None:
-            # Radius returns variable-length arrays per cell; filter self-edges after concat
-            rows = np.concatenate([np.full(len(idx), i, dtype=np.int32)
-                                    for i, idx in enumerate(indices)])
-            cols = np.concatenate([idx.astype(np.int32) for idx in indices])
-            dists = np.concatenate([d.astype(np.float32) for d in distances])
-            not_self = cols != rows
-            rows, cols, dists = rows[not_self], cols[not_self], dists[not_self]
-        else:
-            # kneighbors returns a regular (n_cells, k) matrix — fully vectorized
-            flat_rows = np.repeat(np.arange(n_cells, dtype=np.int32), indices.shape[1])
-            flat_cols = indices.ravel().astype(np.int32)
-            flat_dists = distances.ravel().astype(np.float32)
-            not_self = flat_cols != flat_rows
-            rows = flat_rows[not_self]
-            cols = flat_cols[not_self]
-            dists = flat_dists[not_self]
+    if set_diag:
+        diag = np.arange(n_cells, dtype=np.int32)
+        rows = np.concatenate([rows, diag])
+        cols = np.concatenate([cols, diag])
 
     # ── Build sparse matrices ─────────────────────────────────────────────────
-    dist_matrix = sp.csr_matrix(
-        (dists, (rows, cols)), shape=(n_cells, n_cells), dtype=np.float32
+    # Connectivities come from the sparsity STRUCTURE of the edge list, not
+    # from thresholding distances — a `dist > 0` mask silently deletes edges
+    # between coincident centroids (e.g. Visium HD bin centers, merged FOVs),
+    # whose true distance is exactly 0.
+    conn_matrix = sp.csr_matrix(
+        (np.ones(len(rows), dtype=np.float32), (rows, cols)),
+        shape=(n_cells, n_cells),
     )
     if coord_type != "delaunay":
-        # KNN is not always symmetric; symmetrise by taking the minimum distance
-        dist_matrix = dist_matrix.maximum(dist_matrix.T)
+        # Directed KNN is not symmetric; symmetrise by union — keep an edge
+        # when either endpoint lists the other among its neighbors.
+        conn_matrix = conn_matrix.maximum(conn_matrix.T)
+    conn_matrix.data[:] = 1.0  # duplicates were summed on COO→CSR; re-binarize
+    conn_matrix.sort_indices()
 
-    conn_matrix = (dist_matrix > 0).astype(np.float32)
-    if set_diag:
-        conn_matrix.setdiag(1)
+    # Distances share the connectivity matrix's exact sparsity structure
+    # (indices/indptr), so zero-distance edges survive as explicit stored
+    # zeros instead of vanishing into the implicit sparse background.
+    row_idx = np.repeat(np.arange(n_cells), np.diff(conn_matrix.indptr))
+    diffs = coords[row_idx] - coords[conn_matrix.indices]
+    if coord_type == "grid":
+        edge_d = np.abs(diffs).max(axis=1).astype(np.float32)
+    else:
+        edge_d = np.linalg.norm(diffs, axis=1).astype(np.float32)
+    dist_matrix = sp.csr_matrix(
+        (edge_d, conn_matrix.indices.copy(), conn_matrix.indptr.copy()),
+        shape=(n_cells, n_cells),
+    )
+
+    mean_degree = conn_matrix.nnz / max(n_cells, 1)
 
     adata.obsp[key_added + "_connectivities"] = conn_matrix
     adata.obsp[key_added + "_distances"] = dist_matrix
@@ -204,12 +274,17 @@ def spatial_neighbors(
         "connectivities_key": key_added + "_connectivities",
         "distances_key": key_added + "_distances",
         "params": {
-            "n_neighbors": n_neighbors,
+            # scanpy's Neighbors machinery reads params['n_neighbors'] as an
+            # int; for graphs without a fixed k (radius, delaunay) record the
+            # rounded mean degree instead.
+            "n_neighbors": int(k) if k is not None else int(round(mean_degree)),
             "radius": radius,
             "coord_type": coord_type,
             "delaunay_max_dist": delaunay_max_dist,
             "spatial_key": spatial_key,
-            "metric": "euclidean",
+            "metric": metric,
+            # Honest provenance: how this graph was actually constructed.
+            "astrolabe_method": astrolabe_method,
             # scanpy's own sc.tl.umap reads uns[neighbors_key]['params']['method']
             # unconditionally (KeyError, not a soft check, if absent) whenever
             # neighbors_key points here -- e.g. tl.umap/tl.cluster's default
@@ -218,6 +293,7 @@ def spatial_neighbors(
             # warning; it is a label of convenience (this graph is built via
             # KNN/Delaunay + symmetrization, not literally UMAP's fuzzy
             # simplicial set), not a claim of exact algorithmic equivalence.
+            # The honest construction record lives in 'astrolabe_method'.
             "method": "umap",
         },
     }
@@ -278,7 +354,9 @@ def transcriptional_neighbors(
         ``'umap'`` (fuzzy simplicial set, default) or ``'gauss'`` (Gaussian
         kernel) connectivity model.
     metric
-        Distance metric.
+        Distance metric.  Not forwarded when a ``transformer=`` instance is
+        passed via *kwargs* (scanpy computes neighbors inside the
+        transformer in that case, and an explicit metric would conflict).
     random_state
         Random seed.
     key_added
@@ -293,13 +371,16 @@ def transcriptional_neighbors(
     >>> ab.tl.transcriptional_neighbors(mdata)
     >>> ab.tl.cluster(mdata, neighbors_key='neighbors')
     """
+    if "transformer" not in kwargs:
+        # only forward metric when scanpy computes neighbors itself — a
+        # transformer instance owns its own metric and would conflict.
+        kwargs["metric"] = metric
     sc.pp.neighbors(
         adata,
         n_neighbors=n_neighbors,
         n_pcs=n_pcs,
         use_rep=use_rep,
         method=method,
-        metric=metric,
         random_state=random_state,
         key_added=key_added,
         **kwargs,
@@ -327,15 +408,41 @@ def blend_neighbors(
     (from :func:`spatial_neighbors`) into a single connectivity graph that
     captures both cell-type identity and tissue organization. The result is
     persisted in ``obsp``/``uns`` exactly like any other neighbors graph, so
-    it is a drop-in ``neighbors_key`` for both :func:`~astrolabe.tl.umap`
-    (a cospatial embedding) and :func:`~astrolabe.tl.cluster` (cospatial
-    cluster labels — cells of the same type that are also spatially
-    co-localised cluster together more readily than cells that share
-    identity but are scattered across the tissue).
+    it is a drop-in ``neighbors_key`` for :func:`~astrolabe.tl.umap`
+    (a cospatial embedding), :func:`~astrolabe.tl.cluster` (cospatial
+    cluster labels), and the trajectory functions
+    :func:`~astrolabe.tl.paga` / :func:`~astrolabe.tl.dpt`.
 
     Both source graphs must exist in ``obsp`` before calling this function.
     Run :func:`spatial_neighbors` and ``sc.pp.neighbors`` (after
     :func:`~astrolabe.tl.pca`) first.
+
+    How the blend works
+    -------------------
+    The two connectivity matrices live on different scales (UMAP fuzzy
+    weights vs. binary spatial adjacency), so each is first row-normalized
+    to a row-stochastic transition matrix. *alpha* then mixes **transition
+    mass**, not raw connectivity: each cell distributes a fraction *alpha*
+    of its outgoing weight across its spatial neighbors and ``1 - alpha``
+    across its expression neighbors. Because row normalization breaks
+    symmetry, the blended matrix is finally symmetrized as
+    ``(C + Cᵀ) / 2`` — Leiden implicitly symmetrizes asymmetric input
+    anyway, and UMAP/PAGA/DPT expect a symmetric connectivity matrix, so
+    doing it explicitly keeps every consumer on the same graph.
+
+    The blended graph has **no metric distance matrix**: the two source
+    graphs' distances are incommensurable (µm vs. PCA-space euclidean), so
+    no meaningful blended distance exists.  Because scanpy's machinery
+    requires a ``distances_key`` (and PAGA reads the distances matrix for
+    its edge *structure*, binarizing the values), astrolabe stores a
+    **unit-weight structural matrix** (every stored edge = 1.0) under
+    ``obsp[key_added + '_distances']`` — do not interpret its values as
+    distances.  Connectivity-consuming functions (leiden/umap/paga/diffmap/
+    dpt) are unaffected.
+
+    This is a lighter-weight, graph-level alternative to BANKSY's
+    feature-level fusion (:func:`~astrolabe.pp.banksy_matrix`); the two are
+    complementary, not redundant.
 
     Parameters
     ----------
@@ -345,9 +452,10 @@ def blend_neighbors(
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     alpha
-        Spatial weight in [0, 1].  ``alpha=0`` reduces to the (row-normalized)
-        expression graph; ``alpha=1`` reduces to the (row-normalized) spatial
-        graph; ``alpha=0.5`` (default) gives equal weight to both.
+        Spatial weight in [0, 1].  ``alpha=0`` reduces to the (row-normalized,
+        symmetrized) expression graph; ``alpha=1`` to the (row-normalized,
+        symmetrized) spatial graph; ``alpha=0.5`` (default) gives equal
+        weight to both.
     expr_neighbors_key
         Key in ``uns`` for the transcriptomic neighborhood graph written
         by ``sc.pp.neighbors`` / :func:`transcriptional_neighbors`. Default
@@ -367,6 +475,9 @@ def blend_neighbors(
     >>> ab.tl.umap(mdata, neighbors_key="joint_neighbors",
     ...            key_added="X_spatial_umap")          # cospatial embedding
     """
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError(f"alpha must be in [0, 1]; got {alpha!r}")
+
     # ── Resolve connectivity matrices ─────────────────────────────────────────
     def _get_conn(key: str) -> sp.spmatrix:
         meta = adata.uns.get(key)
@@ -403,6 +514,12 @@ def blend_neighbors(
 
     conn_joint = alpha * _row_norm(conn_spatial) + (1.0 - alpha) * _row_norm(conn_expr)
 
+    # Row normalization breaks symmetry (cell i may weight j without j
+    # weighting i equally). Symmetrize explicitly so every downstream
+    # consumer (leiden/umap/paga/diffmap/dpt) sees the same graph instead of
+    # each applying its own implicit fix-up.
+    conn_joint = (conn_joint + conn_joint.T) * 0.5
+
     # ── Persist the blended graph like any other named neighbors graph ───────
     conn_joint_key = f"{key_added}_connectivities"
     if key_added in adata.uns:
@@ -411,17 +528,37 @@ def blend_neighbors(
             "Pass a different key_added= to avoid this.",
             key_added,
         )
-    adata.obsp[conn_joint_key] = conn_joint.astype(np.float32)
+    conn_joint = conn_joint.astype(np.float32).tocsr()
+    adata.obsp[conn_joint_key] = conn_joint
+
+    # The blended graph has no METRIC distances: µm and PCA-space distances
+    # are incommensurable, so no meaningful blended distance exists (the old
+    # behavior of pointing at the SPATIAL µm distances silently fed the
+    # wrong scale to anything reading distances).  But scanpy's
+    # NeighborsView hard-requires the 'distances_key' dict entry, and
+    # sc.tl.paga reads the distances matrix for its edge STRUCTURE (it
+    # binarizes the values immediately) — so store a unit-weight structural
+    # matrix: correct for every structural consumer, and obviously
+    # non-metric (all 1.0) rather than subtly wrong.
+    dist_joint_key = f"{key_added}_distances"
+    dist_joint = conn_joint.copy()
+    dist_joint.data = np.ones_like(dist_joint.data)
+    adata.obsp[dist_joint_key] = dist_joint
+
     adata.uns[key_added] = {
         "connectivities_key": conn_joint_key,
-        "distances_key": adata.uns[spatial_neighbors_key].get(
-            "distances_key", f"{spatial_neighbors_key}_distances"
-        ),
+        "distances_key": dist_joint_key,
         "params": {
             # see spatial_neighbors()'s params["method"] comment above: this
             # is a label of convenience so sc.tl.umap/sc.tl.leiden accept the
             # graph, not a claim of exact algorithmic equivalence.
             "method": "umap",
+            # scanpy's Neighbors class requires an int n_neighbors; the
+            # blended graph has no single k, so record the rounded mean
+            # degree of the blended matrix.
+            "n_neighbors": int(round(conn_joint.nnz / max(conn_joint.shape[0], 1))),
+            "metric": "euclidean",
+            "astrolabe_method": "blend_neighbors",
             "alpha": alpha,
             "expr_neighbors_key": expr_neighbors_key,
             "spatial_neighbors_key": spatial_neighbors_key,

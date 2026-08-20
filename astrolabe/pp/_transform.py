@@ -5,7 +5,8 @@ Functions
 ---------
 crop
     Filter cells whose centroids fall inside a polygon region; zoom plots
-    automatically via ``uns['spatial_bounds']``.
+    automatically via ``uns['spatial_bounds']``. On a MuData, every spatial
+    modality is cropped together and the return type mirrors the input type.
 auto_crop
     Crop to a robust bounding box computed from the cells themselves --
     percentile-trimmed to ignore stray outliers, no manual region needed.
@@ -43,7 +44,15 @@ from astrolabe._utils import (
 if TYPE_CHECKING:
     pass
 
-__all__ = ["crop", "rotate", "flip", "apply_affine", "add_image_filter", "estimate_stain_matrix"]
+__all__ = [
+    "crop",
+    "auto_crop",
+    "rotate",
+    "flip",
+    "apply_affine",
+    "add_image_filter",
+    "estimate_stain_matrix",
+]
 
 log = logging.getLogger(__name__)
 
@@ -201,8 +210,8 @@ def _transform_spatial_bounds(adata: ad.AnnData, M: np.ndarray) -> None:
     earlier pp.crop()) untouched -- describing the *pre-transform* window --
     so a rotated/flipped, previously-cropped panel rendered auto-zoomed to
     the wrong region (severely visually clipped or offset), the same class
-    of MuData-consistency gap pp.crop() itself already handles for sibling
-    modalities. The 4 corners of the old bounding box are transformed by the
+    of MuData-consistency gap pp.crop() itself closes by stamping every
+    modality's bounds. The 4 corners of the old bounding box are transformed by the
     same affine and re-enclosed in a new axis-aligned box, since a rotation
     can turn an axis-aligned rectangle into a non-axis-aligned one.
     """
@@ -236,18 +245,17 @@ def crop(
     data: ad.AnnData | md.MuData,
     region: np.ndarray,
     *,
-    modality: str | None = None,
     spatial_key: str = "spatial",
     crop_transcripts: bool = True,
     transcripts_x_col: str = "x_location",
     transcripts_y_col: str = "y_location",
     inplace: bool = False,
-) -> ad.AnnData | None:
+) -> ad.AnnData | md.MuData | None:
     """Filter cells to those whose centroids fall inside *region*.
 
     Cell coordinates are updated eagerly.  Images are **not** modified —
     :func:`~astrolabe.pl._spatial._render_panel` zooms the plot view by
-    reading the bounding box stored in ``adata.uns['spatial_bounds']``.
+    reading the bounding box stored in ``uns['spatial_bounds']``.
 
     When ``uns['transcripts']`` (a :class:`pyarrow.Table`, e.g. from
     :func:`~astrolabe.io.read_xenium_transcripts`) is present, it is cropped
@@ -255,24 +263,22 @@ def crop(
     the cell centroids — so cells and transcripts can never disagree about
     which spatial window a cropped object represents.
 
-    Unlike most ``pp``/``tl`` functions, this does **not** use ``@with_adata``:
-    when *data* is a :class:`~mudata.MuData` **and** ``inplace=True``, every
-    *other* modality sharing the same coordinate frame (e.g. a separate
-    ``'he'``/``'if'`` image modality with no cells of its own to subset) also
-    has its ``uns['spatial_bounds']`` viewport hint updated to match, in
-    place on *data* — so a single ``ab.pp.crop(mdata, region, inplace=True)``
-    keeps every modality's plot viewport in sync automatically, with no
-    manual ``mdata['he'].uns['spatial_bounds'] = ...`` line needed.
-
-    This sibling sync only happens for ``inplace=True``: with
-    ``inplace=False`` *data* is never mutated at all (matching every other
-    ``inplace=False`` function in this library), so cropping one modality out
-    of a shared MuData without disturbing the rest of it (e.g. keeping the
-    full-resolution ``mdata`` around for later cells) does not silently
-    change what an unrelated ``ab.pl.image(mdata, modality=...)`` call
-    renders elsewhere. To get a fully-synced crop *without* touching the
-    original object, crop an explicit copy in place instead — see the second
-    example below.
+    The return type mirrors the input type. Unlike most ``pp``/``tl``
+    functions, this does **not** use ``@with_adata``: like
+    :func:`apply_affine`, a crop is a whole-object operation on a
+    :class:`~mudata.MuData` — every modality shares the same micron
+    coordinate frame, so the same *region* applies to all of them. Every
+    modality with ``obsm[spatial_key]`` (cells, bins, micronuclei,
+    morphology/IF intensity tables) is subset by its **own** centroids, and
+    every modality carrying spatial metadata gets the region's bounding box
+    stamped into ``uns['spatial_bounds']`` — including image-only modalities
+    with no rows of their own (e.g. a bare ``'he'``/``'if'`` image), whose
+    viewport hint is what the image renderer uses to pick the pyramid level
+    and pixel window. A single ``ab.pp.crop(mdata, region)`` therefore
+    returns a fully cropped, fully synced MuData; no manual
+    ``mdata['he'].uns['spatial_bounds'] = ...`` line and no
+    ``mdata.copy()`` + ``inplace=True`` idiom needed. To crop just one
+    modality, pass it explicitly: ``ab.pp.crop(mdata['xenium'], region)``.
 
     Parameters
     ----------
@@ -282,11 +288,8 @@ def crop(
         ``(n_verts, 2)`` polygon in µm.  Use :func:`~astrolabe.pl.rectangle`,
         :func:`~astrolabe.pl.circle`, or :func:`~astrolabe.pl.arrow` to
         generate common shapes.
-    modality
-        Which modality to crop cells/transcripts from, when *data* is a
-        MuData. Falls back to ``uns['default_modality']`` if not given.
     spatial_key
-        Key in ``obsm`` for cell centroids.
+        Key in ``obsm`` for cell centroids, checked on each modality.
     crop_transcripts
         If ``True`` (default) and ``uns['transcripts']`` is present, filter it
         to the same *region* too. Set ``False`` to leave it untouched (e.g.
@@ -295,43 +298,27 @@ def crop(
     transcripts_x_col, transcripts_y_col
         Column names for transcript x/y coordinates in ``uns['transcripts']``.
     inplace
-        If ``False`` (default), return the filtered :class:`~anndata.AnnData`.
-        If ``True``, modify in place and return ``None``.
+        If ``False`` (default), return the cropped copy — an
+        :class:`~anndata.AnnData` for AnnData input, a
+        :class:`~mudata.MuData` for MuData input — leaving *data* untouched.
+        If ``True``, modify *data* in place and return ``None``.
 
     Returns
     -------
-    None or AnnData
+    None or AnnData or MuData
+        Mirrors the input type; ``None`` when ``inplace=True``.
 
     Examples
     --------
     >>> rect = ab.pl.rectangle(center, 600.0, 600.0)
-    >>> morph_crop = ab.pp.crop(mdata, rect, inplace=False)  # mdata itself untouched
-    >>> ab.pl.image(mdata, modality='he')  # still renders the FULL H&E image
-
-    To keep ``'he'`` cropped in sync too, without touching the original
-    ``mdata`` used elsewhere in a notebook, crop an explicit copy in place:
-
-    >>> mdata_crop = mdata.copy()
-    >>> ab.pp.crop(mdata_crop, rect, inplace=True)  # mutates the copy only
-    >>> # mdata_crop['he'].uns['spatial_bounds'] is now set to match too:
+    >>> mdata_crop = ab.pp.crop(mdata, rect)  # cropped MuData; mdata untouched
+    >>> # every modality is cropped and zoomed together:
     >>> (ab.pl.image(mdata_crop, modality='he') + ab.pl.boundaries(mdata_crop)).show()
+    >>> ab.pp.crop(mdata, rect, inplace=True)  # or crop mdata itself, in place
     """
-    adata, resolved_modality = _resolve_adata_and_modality(data, modality)
-
-    if spatial_key not in adata.obsm:
-        raise KeyError(
-            f"obsm['{spatial_key}'] not found. "
-            "Ensure spatial coordinates have been loaded"
-        )
-
-    centroids = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
     region = np.asarray(region, dtype=np.float64)
-    mask = _points_in_polygon(centroids, region)
 
-    n_kept = int(mask.sum())
-    log.info("crop: keeping %d / %d cells inside region.", n_kept, len(mask))
-
-    # Store bounding box for automatic plot zoom
+    # Bounding box stamped into uns['spatial_bounds'] for automatic plot zoom
     bounds = {
         "xmin": float(region[:, 0].min()),
         "xmax": float(region[:, 0].max()),
@@ -339,10 +326,55 @@ def crop(
         "ymax": float(region[:, 1].max()),
     }
 
-    if inplace and isinstance(data, md.MuData):
-        for key, sibling in data.mod.items():
-            if key != resolved_modality and "spatial" in sibling.uns:
-                sibling.uns["spatial_bounds"] = bounds
+    if isinstance(data, md.MuData):
+        target = data if inplace else data.copy()
+        any_spatial = False
+        for key, mod in target.mod.items():
+            if spatial_key in mod.obsm:
+                any_spatial = True
+                centroids = np.asarray(mod.obsm[spatial_key], dtype=np.float64)
+                mask = _points_in_polygon(centroids, region)
+                log.info(
+                    "crop: %s: keeping %d / %d cells inside region.",
+                    key, int(mask.sum()), len(mask),
+                )
+                if crop_transcripts and "transcripts" in mod.uns:
+                    _crop_transcripts_uns(
+                        mod.uns, region, transcripts_x_col, transcripts_y_col
+                    )
+                mod._inplace_subset_obs(mask)
+                mod.uns["spatial_bounds"] = dict(bounds)
+            elif "spatial" in mod.uns:
+                # Image-only modality (no rows to subset): the viewport hint
+                # alone drives the renderer's pyramid-level/pixel-crop choice.
+                mod.uns["spatial_bounds"] = dict(bounds)
+            elif mod.n_obs > 0:
+                log.warning(
+                    "crop: modality %r has no obsm['%s'] and no uns['spatial']; "
+                    "its %d rows were left unsubset.",
+                    key, spatial_key, mod.n_obs,
+                )
+        if not any_spatial:
+            raise KeyError(
+                f"obsm['{spatial_key}'] not found in any modality. "
+                "Ensure spatial coordinates have been loaded"
+            )
+        # Re-sync the MuData's global obs index with the subset modalities
+        # (pull_on_update=False is set globally, so this is index bookkeeping
+        # only — see pipeline.py for the same pattern).
+        target.update()
+        return None if inplace else target
+
+    adata = data
+    if spatial_key not in adata.obsm:
+        raise KeyError(
+            f"obsm['{spatial_key}'] not found. "
+            "Ensure spatial coordinates have been loaded"
+        )
+
+    centroids = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
+    mask = _points_in_polygon(centroids, region)
+    log.info("crop: keeping %d / %d cells inside region.", int(mask.sum()), len(mask))
 
     if inplace:
         adata.uns["spatial_bounds"] = bounds
@@ -369,7 +401,7 @@ def auto_crop(
     transcripts_x_col: str = "x_location",
     transcripts_y_col: str = "y_location",
     inplace: bool = False,
-) -> ad.AnnData | None:
+) -> ad.AnnData | md.MuData | None:
     """Crop to a robust bounding box computed from the cells themselves.
 
     Building a crop region from the true min/max of cell centroids is
@@ -381,17 +413,19 @@ def auto_crop(
     each axis independently before computing bounds, so a handful of
     outliers on either side don't set the frame, then pads the trimmed box
     by *padding* (a fraction of its own width/height) and delegates to
-    :func:`crop` for the actual filtering -- every other parameter here is
-    forwarded to it unchanged, including its sibling-modality-sync and
-    ``inplace`` behavior.
+    :func:`crop` for the actual filtering -- so, like :func:`crop`, a MuData
+    input has **every** spatial modality cropped to the computed box and the
+    return type mirrors the input type.
 
     Parameters
     ----------
     data
         :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
     modality
-        Which modality's cell centroids define the crop region, when *data*
-        is a MuData. Falls back to ``uns['default_modality']`` if not given.
+        Which modality's cell centroids **define the crop box**, when *data*
+        is a MuData (falls back to ``uns['default_modality']`` if not given).
+        The crop itself is then applied to every spatial modality — see
+        :func:`crop`.
     spatial_key
         Key in ``obsm`` for cell centroids.
     percentile
@@ -406,13 +440,14 @@ def auto_crop(
 
     Returns
     -------
-    None or AnnData
-        Same convention as :func:`crop`.
+    None or AnnData or MuData
+        Same convention as :func:`crop`: mirrors the input type, ``None``
+        when ``inplace=True``.
 
     Examples
     --------
     >>> ab.pp.auto_crop(mdata, inplace=True)  # tight crop around the cells, in place
-    >>> tight = ab.pp.auto_crop(mdata, padding=0.05)  # returned copy, minimal margin
+    >>> tight = ab.pp.auto_crop(mdata, padding=0.05)  # cropped copy, minimal margin
     """
     adata, _ = _resolve_adata_and_modality(data, modality)
 
@@ -442,7 +477,6 @@ def auto_crop(
     return crop(
         data,
         region,
-        modality=modality,
         spatial_key=spatial_key,
         crop_transcripts=crop_transcripts,
         transcripts_x_col=transcripts_x_col,
@@ -646,13 +680,24 @@ def add_image_filter(
     before per-cell reduction and stain deconvolution).  Multiple calls stack
     filters in order.
 
+    **Specify filter bandwidths in microns** (``sigma_um``, ``kernel_um``,
+    ``cutoff_um``, ``fov_size_um``): the two consumers filter the same image
+    at very different pixel resolutions (extraction always runs at full
+    resolution; rendering runs on a zoom-dependent downsampled pyramid
+    level), and both pass the effective µm-per-pixel of the array being
+    filtered so µm parameters resolve to the same physical scale everywhere.
+    The legacy pixel-unit parameters (``sigma_px``, ``kernel_px``, ``cutoff``,
+    ``fov_size_px``) are applied verbatim and therefore have a physical
+    bandwidth that changes with pyramid level and zoom.
+
     Parameters
     ----------
     data
         :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
     filter
         Any :class:`~astrolabe._utils.ImageFilter` — callable that accepts
-        and returns a 2-D ``float32`` NumPy array.
+        and returns a 2-D ``float32`` NumPy array, optionally accepting a
+        keyword-only ``um_per_px`` (see :class:`~astrolabe._utils.ImageFilter`).
     image_key
         Key in ``uns['spatial'][lib]['images']`` to target.
         ``None`` targets all image keys in each matched library.
@@ -665,9 +710,9 @@ def add_image_filter(
     Examples
     --------
     >>> import astrolabe as ab
-    >>> ab.pp.add_image_filter(mdata, ab.pl.GaussianFilter(sigma=1.5))
-    >>> ab.pp.add_image_filter(mdata, ab.pl.CLAHEFilter(clip_limit=0.02))
-    >>> ab.pp.add_image_filter(mdata, ab.pl.FFTFilter(cutoff=0.05, fov_size_px=220))
+    >>> ab.pp.add_image_filter(mdata, ab.pl.GaussianFilter(sigma_um=0.5))
+    >>> ab.pp.add_image_filter(mdata, ab.pl.CLAHEFilter(clip_limit=0.02, kernel_um=20))
+    >>> ab.pp.add_image_filter(mdata, ab.pl.FFTFilter(cutoff_um=100, fov_size_um=450))
     >>> ab.pl.image(mdata).show()   # filters applied lazily at render time
     """
     spatial = adata.uns.get("spatial", {})

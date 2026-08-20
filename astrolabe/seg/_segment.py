@@ -61,26 +61,35 @@ def _resolve_spec(
 def _um_to_px(
     xmin_um: float, ymin_um: float, xmax_um: float, ymax_um: float, spec: ImageSpec
 ) -> tuple[int, int, int, int]:
-    """Convert µm bbox to (row_min, row_max, col_min, col_max) pixel bbox."""
+    """Convert µm bbox to (row_min, row_max, col_min, col_max) pixel bbox.
+
+    All **four** corners of the µm rectangle are mapped through the affine
+    (not just two diagonal ones): under a rotated registration, the pixel
+    axis-aligned bounding box of the region is defined by different corners
+    than the µm one, and a 2-corner mapping silently crops the region.
+    """
     affine = spec.registration_affine
     pxum = spec.pixel_size_um or 1.0
+    corners_um = np.array(
+        [
+            [xmin_um, ymin_um, 1.0],
+            [xmin_um, ymax_um, 1.0],
+            [xmax_um, ymin_um, 1.0],
+            [xmax_um, ymax_um, 1.0],
+        ],
+        dtype=np.float64,
+    )
     if affine is not None:
         inv = np.linalg.inv(affine)
-
-        def _um_to_col_row(x_um: float, y_um: float) -> tuple[float, float]:
-            xy_px = inv @ np.array([x_um, y_um, 1.0])
-            return float(xy_px[0]), float(xy_px[1])
-
-        c0, r0 = _um_to_col_row(xmin_um, ymin_um)
-        c1, r1 = _um_to_col_row(xmax_um, ymax_um)
+        corners_px = (inv @ corners_um.T).T
+        cs, rs = corners_px[:, 0], corners_px[:, 1]
     else:
-        c0, r0 = xmin_um / pxum, ymin_um / pxum
-        c1, r1 = xmax_um / pxum, ymax_um / pxum
+        cs, rs = corners_um[:, 0] / pxum, corners_um[:, 1] / pxum
 
-    row_min = max(0, int(min(r0, r1)))
-    row_max = int(np.ceil(max(r0, r1)))
-    col_min = max(0, int(min(c0, c1)))
-    col_max = int(np.ceil(max(c0, c1)))
+    row_min = max(0, int(np.floor(rs.min())))
+    row_max = int(np.ceil(rs.max()))
+    col_min = max(0, int(np.floor(cs.min())))
+    col_max = int(np.ceil(cs.max()))
     return row_min, row_max, col_min, col_max
 
 
@@ -279,8 +288,19 @@ def _masks_to_adata(
     masks: np.ndarray,
     spec: ImageSpec,
     offset_yx: tuple[int, int] = (0, 0),
+    min_area_um2: float = 0.0,
 ) -> ad.AnnData:
     """Convert a 2-D integer label mask to AnnData with spatial obsm in µm.
+
+    Per-instance work is restricted to each label's own bounding box (via
+    ``scipy.ndimage.find_objects``), not a full-image ``masks == id`` scan
+    per cell — O(H·W) total instead of O(n_cells · H·W).
+
+    Each label's sub-mask is zero-padded by one pixel before contour
+    extraction so instances touching the image border still produce a
+    *closed* contour along the border (``find_contours`` otherwise returns
+    an open contour that gets implicitly closed by a straight chord cutting
+    across the cell).
 
     Parameters
     ----------
@@ -288,7 +308,17 @@ def _masks_to_adata(
         ``(row_offset, col_offset)`` in pixels to add to all centroids and
         boundary vertices before converting to µm.  Use when *masks* was
         extracted from a region of the full image rather than the full image.
+    min_area_um2
+        Drop instances whose polygon area (µm²) is below this. ``0.0``
+        (default) keeps everything.
+
+    Returns
+    -------
+    AnnData with ``obs['cell_area']`` (µm²) and ``obs['on_image_edge']``
+    (``True`` for instances touching the segmented image/region border —
+    typically cut off, so their area/boundary is partial).
     """
+    from scipy import ndimage
     from skimage.measure import find_contours, regionprops_table
 
     cell_ids = np.unique(masks)
@@ -305,6 +335,7 @@ def _masks_to_adata(
     log.info("Converting %d segmented cells to AnnData", n_cells)
 
     row_off, col_off = offset_yx
+    H, W = masks.shape
 
     # Centroids in pixel (y, x), offset to full-image coordinates
     props = regionprops_table(masks, properties=["label", "centroid"])
@@ -314,17 +345,27 @@ def _masks_to_adata(
         props["centroid-1"] + col_off,
     ])
 
+    # Per-label bounding-box slices, one linear pass over the image.
+    objects = ndimage.find_objects(masks)
+
     # Per-cell contours in pixel (row, col) = (y, x), offset to full-image coordinates
     polys_yx_px: list[np.ndarray] = []
-    for cell_id in label_order:
-        cell_mask = (masks == cell_id).astype(np.uint8)
-        contours = find_contours(cell_mask, level=0.5)
+    on_edge = np.zeros(len(label_order), dtype=bool)
+    for k, cell_id in enumerate(label_order):
+        sl = objects[int(cell_id) - 1]  # find_objects indexes by label - 1
+        if sl is None:
+            polys_yx_px.append(np.zeros((0, 2), dtype=np.float32))
+            continue
+        rs, cs = sl
+        on_edge[k] = rs.start == 0 or cs.start == 0 or rs.stop == H or cs.stop == W
+        sub = np.pad((masks[sl] == cell_id).astype(np.uint8), 1)
+        contours = find_contours(sub, level=0.5)
         if contours:
             # Select by area (shoelace) — avoids picking a large internal hole
             # as the "outer" boundary when len() would favor the wrong contour.
             poly = max(contours, key=lambda c: _shoelace_area(c[:, ::-1])).astype(np.float32)  # (N, 2) as (y, x)
-            poly[:, 0] += row_off
-            poly[:, 1] += col_off
+            poly[:, 0] += rs.start - 1 + row_off  # -1 undoes the pad
+            poly[:, 1] += cs.start - 1 + col_off
         else:
             poly = np.zeros((0, 2), dtype=np.float32)
         polys_yx_px.append(poly)
@@ -352,8 +393,27 @@ def _masks_to_adata(
     areas = np.array([_shoelace_area(p) for p in polys_um], dtype=np.float32)
 
     import pandas as pd
-    obs_names = [str(int(cid)) for cid in label_order]
-    adata = ad.AnnData(obs=pd.DataFrame({"cell_area": areas}, index=obs_names))
+    obs_names = np.array([str(int(cid)) for cid in label_order])
+
+    if min_area_um2 > 0.0:
+        keep = areas >= min_area_um2
+        n_dropped = int((~keep).sum())
+        if n_dropped:
+            log.info(
+                "Dropping %d segmented instances below min_area_um2=%.2f µm²",
+                n_dropped, min_area_um2,
+            )
+        centroids_um = centroids_um[keep]
+        polys_um = [p for p, k in zip(polys_um, keep) if k]
+        areas = areas[keep]
+        on_edge = on_edge[keep]
+        obs_names = obs_names[keep]
+
+    adata = ad.AnnData(
+        obs=pd.DataFrame(
+            {"cell_area": areas, "on_image_edge": on_edge}, index=obs_names.tolist()
+        )
+    )
     adata.obsm["spatial"] = centroids_um
     adata.obsm["cell_boundaries"] = ak.Array(polys_um)
 
@@ -382,6 +442,7 @@ def segment_cellpose(
     image_key: str = "full",
     gpu: bool = False,
     region_um: tuple[float, float, float, float] | None = None,
+    min_area_um2: float = 0.0,
 ) -> ad.AnnData:
     """Segment cells in a fluorescence image channel using Cellpose.
 
@@ -397,10 +458,11 @@ def segment_cellpose(
         ``uns['spatial'][library_id]['images'][image_key]``.
     channel
         Channel index (int) or channel name (str) to run Cellpose on.
-        Use the nuclear/DAPI channel for ``model_type='nuclei'``.
+        Use the nuclear/DAPI channel for nuclear segmentation.
     pretrained_model
-        Cellpose model to use.  Common choices: ``'cyto2'`` (whole-cell),
-        ``'nuclei'`` (nuclear segmentation).
+        Cellpose model to use.  Default ``'cpsam_v2'`` (the Cellpose-SAM
+        generalist model); classic choices like ``'cyto2'`` (whole-cell) or
+        ``'nuclei'`` (nuclear) also work with older Cellpose versions.
     diameter
         Expected cell diameter in pixels.  ``None`` triggers Cellpose's
         automatic diameter estimation.
@@ -423,6 +485,9 @@ def segment_cellpose(
         portion of the morphology image that overlaps this region is loaded and
         segmented.  Useful for avoiding loading a multi-GB full-tissue image
         when you only need cells in a cropped sub-region.
+    min_area_um2
+        Drop segmented instances smaller than this polygon area (µm²) —
+        debris / single-pixel speckles.  ``0.0`` (default) keeps everything.
 
     Returns
     -------
@@ -432,12 +497,14 @@ def segment_cellpose(
         - ``obsm['spatial']`` — cell centroids in µm (x, y).
         - ``obsm['cell_boundaries']`` — awkward array of polygon vertices in µm.
         - ``obs['cell_area']`` — cell area in µm².
+        - ``obs['on_image_edge']`` — ``True`` for cells touching the
+          segmented image/region border (typically cut off).
         - no ``X`` / variables yet — run :func:`~astrolabe.seg.assign_transcripts`
           to populate expression.
 
     Examples
     --------
-    >>> new_cells = ab.seg.segment_cellpose(mdata, channel='DAPI', model_type='nuclei')
+    >>> new_cells = ab.seg.segment_cellpose(mdata, channel='DAPI')
     >>> transcripts = ab.io.read_xenium_transcripts("Xenium_run/")
     >>> ab.seg.assign_transcripts(new_cells, transcripts)
     """
@@ -479,7 +546,7 @@ def segment_cellpose(
 
     n_found = int(masks.max())
     log.info("segment_cellpose: found %d cells", n_found)
-    return _masks_to_adata(masks, spec, offset_yx=offset_yx)
+    return _masks_to_adata(masks, spec, offset_yx=offset_yx, min_area_um2=min_area_um2)
 
 
 def segment_stardist(
@@ -621,12 +688,19 @@ def segment_stardist(
     # Use these directly instead of running find_contours on the label mask.
     coord_yx = np.transpose(details["coord"], (0, 2, 1))  # (n_cells, n_verts, 2)
 
+    # StarDist's own reported instance centers, (n_cells, 2) as (y, x) —
+    # preferred over averaging the ray vertices, which biases the centroid
+    # toward whichever directions the rays extend furthest.
+    points_yx = np.asarray(details.get("points"), dtype=np.float64) if "points" in details else None
+
     # Apply region offset so coordinates are in full-image pixel space.
     if offset_yx != (0, 0):
         row_off, col_off = offset_yx
         coord_yx = coord_yx.copy()
         coord_yx[:, :, 0] += row_off  # y (row)
         coord_yx[:, :, 1] += col_off  # x (col)
+        if points_yx is not None:
+            points_yx = points_yx + np.array([row_off, col_off], dtype=np.float64)
 
     affine = spec.registration_affine
     pxum = spec.pixel_size_um
@@ -641,10 +715,13 @@ def segment_stardist(
 
     polys_um = [_px_to_um_xy(np.asarray(verts)) for verts in coord_yx]
 
-    # Centroids: mean of vertices
-    centroids_um = np.stack(
-        [p.mean(axis=0) if len(p) else np.zeros(2, np.float32) for p in polys_um]
-    ).astype(np.float32)
+    if points_yx is not None and len(points_yx) == len(polys_um):
+        centroids_um = _px_to_um_xy(points_yx).astype(np.float32)
+    else:
+        # Fallback: mean of ray vertices.
+        centroids_um = np.stack(
+            [p.mean(axis=0) if len(p) else np.zeros(2, np.float32) for p in polys_um]
+        ).astype(np.float32)
 
     areas = np.array([_shoelace_area(p) for p in polys_um], dtype=np.float32)
 

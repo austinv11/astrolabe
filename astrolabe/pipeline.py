@@ -82,20 +82,31 @@ def filter_cells(
     1. :func:`~astrolabe.pp.calculate_qc_metrics` — per-cell/gene counts
        and detected-gene metrics.
     2. :func:`~astrolabe.pp.filter_cells` — apply *min_counts*, *min_genes*,
-       optional area bounds, and (if set) *max_pct_control*.
+       optional area bounds, and (if set) *max_pct_control* (running
+       :func:`~astrolabe.pp.flag_controls` first when
+       ``var['is_control_probe']`` is present but the per-cell percentage
+       hasn't been computed yet).
     3. :func:`~astrolabe.pp.filter_genes` — keep genes detected in at least
        *min_cells* cells.
-    4. Spatial isolation filter — builds a k=*isolation_k* nearest-neighbor
-       graph on ``obsm['spatial']`` and removes isolated or edge cells.
-       Disabled by passing ``max_neighbor_dist_um=None`` and
-       ``min_neighbor_dist_um=None``.
+    4. Spatial isolation filter — computes each cell's own (outbound)
+       k=*isolation_k* nearest-neighbor distances on ``obsm['spatial']``
+       and removes isolated or sparse-region cells
+       (:func:`~astrolabe.pp.filter_isolated`).  Disabled by passing
+       ``max_neighbor_dist_um=None`` and ``min_neighbor_dist_um=None``.
 
     Works with any segmented spatial dataset: Xenium, MERSCOPE, CosMx, or
     custom re-segmentations.  For Xenium data, use
     :func:`filter_xenium` which runs probe-type breakdown first and then
     defers to this function for the shared steps.
 
-    Logs cell counts after each filter step at the INFO level.
+    Logs cell counts after each filter step at the INFO level.  When *data*
+    is a :class:`~mudata.MuData`, ``data.update()`` is called at the end so
+    the top-level ``n_obs``/``obs_names`` stay in sync with the filtered
+    modality (cheap under astrolabe's global ``pull_on_update=False``).
+
+    The default thresholds are deliberately permissive floors that remove
+    only degenerate segments, not opinionated biology-dependent cutoffs —
+    tighten them per tissue/panel:
 
     Parameters
     ----------
@@ -105,28 +116,46 @@ def filter_cells(
         For :class:`~mudata.MuData`: modality key to filter.  ``None``
         resolves via ``uns['default_modality']``.
     min_counts
-        Minimum total transcript counts per cell.
+        Minimum total transcript counts per cell (default ``10`` — the
+        minimal gate used throughout 10x's own Xenium analysis guidance;
+        far below typical imaging-platform per-cell medians of ~100–300,
+        so it only removes near-empty segments).  Applies to
+        ``obs['total_counts']``, which excludes control-probe counts when
+        :func:`~astrolabe.pp.calculate_qc_metrics` ran with its default
+        ``exclude_controls=True``.
     min_genes
-        Minimum number of genes detected per cell.
+        Minimum number of genes detected per cell (default ``5`` — a cell
+        whose counts come from fewer than a handful of distinct genes is
+        almost always segmentation debris or ambient RNA rather than a
+        profiled cell).
     min_cell_area
-        Minimum cell area in µm².  ``None`` = no lower bound.
+        Minimum cell area in µm².  ``None`` = no lower bound (defaults off
+        because sensible bounds are tissue- and platform-dependent).
     max_cell_area
         Maximum cell area in µm².  ``None`` = no upper bound.
     max_pct_control
         Maximum percentage of counts from control probes per cell.
         ``None`` skips this filter (appropriate for non-Xenium data).
     isolation_k
-        Number of nearest spatial neighbors for the isolation filter.
+        Neighbor rank *k* for the isolation filter (default ``5`` — small
+        enough that the k-th-neighbor distance reflects the immediate
+        cellular neighborhood rather than tissue-scale structure).
     max_neighbor_dist_um
-        Remove cells whose *k*-th nearest neighbor exceeds this distance
-        in µm.  ``None`` disables this threshold.
+        Remove cells whose own *k*-th nearest neighbor exceeds this
+        distance in µm (default ``60`` — roughly 3–6 cell diameters for
+        typical 10–20 µm cells, i.e. the cell has almost no local
+        neighborhood).  ``None`` disables this threshold.
     min_neighbor_dist_um
-        Remove cells whose nearest neighbor exceeds this distance in µm.
-        ``None`` disables this threshold.
+        Remove cells whose nearest neighbor exceeds this distance in µm
+        (default ``50`` — at 2–5 cell diameters to the *closest* cell, the
+        segment is detached from the tissue entirely).  ``None`` disables
+        this threshold.
     spatial_key
         ``obsm`` key for cell centroid coordinates.
     min_cells
-        Minimum number of cells a gene must be detected in.
+        Minimum number of cells a gene must be detected in (default ``5``
+        — mirrors scanpy-workflow convention; genes below it carry no
+        statistical weight downstream).
     inplace
         Modify *data* in place and return ``None`` (default).
 
@@ -141,7 +170,6 @@ def filter_cells(
     >>> ab.pp.normalize_total(mdata)
     """
     import astrolabe.pp as pp
-    import astrolabe.tl as tl
     from astrolabe._utils import _resolve_adata
 
     if not inplace:
@@ -158,6 +186,22 @@ def filter_cells(
     pp.calculate_qc_metrics(data, modality=modality)
 
     # 2. Cell filtering
+    if max_pct_control is not None and "pct_counts_control" not in adata.obs.columns:
+        # The threshold needs obs['pct_counts_control']; derive it from the
+        # reader-written control flag instead of failing with a bare KeyError.
+        if "is_control_probe" in adata.var.columns:
+            log.info("  flag_controls (var_col='is_control_probe')")
+            pp.flag_controls(data, modality=modality, var_col="is_control_probe")
+        else:
+            log.warning(
+                "max_pct_control=%.1f requested but neither "
+                "obs['pct_counts_control'] nor var['is_control_probe'] is "
+                "present; skipping the control-percentage filter. Run "
+                "ab.pp.flag_controls(data, ...) first to enable it.",
+                max_pct_control,
+            )
+            max_pct_control = None
+
     n_before = adata.n_obs
     pp.filter_cells(
         data,
@@ -176,25 +220,27 @@ def filter_cells(
     pp.filter_genes(data, modality=modality, min_cells=min_cells, inplace=True)
     _log_step("filter_genes", n_before, adata.n_vars, axis="genes")
 
-    # 4. Spatial isolation filter
+    # 4. Spatial isolation filter — filter_isolated computes each cell's own
+    # outbound kNN distances internally (cKDTree), so no graph needs to be
+    # built here first.
     if max_neighbor_dist_um is not None or min_neighbor_dist_um is not None:
         n_before = adata.n_obs
-        log.info("  spatial_neighbors (k=%d)", isolation_k)
-        tl.spatial_neighbors(
-            data,
-            modality=modality,
-            n_neighbors=isolation_k,
-            spatial_key=spatial_key,
-        )
         pp.filter_isolated(
             data,
             modality=modality,
-            neighbors_key="spatial_neighbors",
+            spatial_key=spatial_key,
+            max_neighbor_rank=isolation_k,
             max_neighbor_dist_um=max_neighbor_dist_um,
             min_neighbor_dist_um=min_neighbor_dist_um,
             inplace=True,
         )
         _log_step("filter_isolation", n_before, adata.n_obs)
+
+    if isinstance(data, md.MuData):
+        # Keep the top-level MuData's n_obs/obs_names/var_names in sync with
+        # the modality that was just filtered in place (cheap under
+        # astrolabe's global pull_on_update=False).
+        data.update()
 
     log.info("filter_cells: done — %d cells × %d genes", adata.n_obs, adata.n_vars)
     return None if inplace else data
@@ -245,9 +291,16 @@ def filter_xenium(
     remove_controls
         Remove control probe features after computing QC metrics.
     max_pct_control
-        Maximum percentage of counts from control probes per cell.
+        Maximum percentage of counts from control probes per cell.  The
+        default ``10.0`` is deliberately permissive — genuine Xenium cells
+        rarely exceed ~1–2% control counts, so this gate only catches
+        pathological segments where control/noise counts dominate; tighten
+        it (e.g. to ``2–5``) for stricter QC.
     min_counts
-        Minimum total transcript counts per cell.
+        Minimum total transcript counts per cell.  See
+        :func:`filter_cells` for the rationale behind this and every other
+        shared default below (permissive floors, not biology-dependent
+        cutoffs).
     min_genes
         Minimum number of genes detected per cell.
     min_cell_area
@@ -255,9 +308,10 @@ def filter_xenium(
     max_cell_area
         Maximum cell area in µm².
     isolation_k
-        Number of nearest spatial neighbors for the isolation filter.
+        Neighbor rank *k* for the isolation filter.
     max_neighbor_dist_um
-        Maximum distance to the *k*-th nearest spatial neighbor in µm.
+        Remove cells whose own *k*-th nearest neighbor exceeds this
+        distance in µm.
     min_neighbor_dist_um
         Remove cells whose nearest neighbor exceeds this distance (µm).
         Threshold applies to the 1st neighbor; cf. *max_neighbor_dist_um*
@@ -325,6 +379,10 @@ def filter_xenium(
         pp.filter_genes(mdata, modality=xenium_key, exclude_controls=True, inplace=True)
         _log_step("remove_controls", n_before, adata.n_vars, axis="genes")
 
+    # filter_cells already updated once, but remove_controls above changed
+    # var again — re-sync the top-level MuData.
+    mdata.update()
+
     log.info(
         "filter_xenium: done — %d cells × %d genes",
         adata.n_obs,
@@ -340,6 +398,8 @@ def filter_merscope(
     # --- MERSCOPE-specific ---
     remove_controls: bool = True,
     max_pct_control: float = 5.0,
+    min_volume: float | None = None,
+    max_volume: float | None = None,
     # --- Shared with filter_cells ---
     min_counts: int = 10,
     min_genes: int = 5,
@@ -373,19 +433,39 @@ def filter_merscope(
     remove_controls
         Remove ``Blank-*`` probe features after computing QC metrics.
     max_pct_control
-        Maximum percentage of counts from blank probes per cell.
+        Maximum percentage of counts from blank probes per cell (default
+        ``5.0`` — permissive: blank counts in genuine MERSCOPE cells are
+        typically well under 1–2%, so this only removes segments dominated
+        by decoding noise).
+    min_volume
+        Minimum segmented cell volume in µm³, read from the
+        vendor-supplied ``obs['volume']`` column (Vizgen's true 3-D
+        segmentation volume — the size metric of record on this platform).
+        ``None`` (default) skips it; typical MERSCOPE QC uses roughly
+        ``min_volume=100``.
+    max_volume
+        Maximum segmented cell volume in µm³ (``None`` = no upper bound;
+        an upper cutoff around 3× the median volume is a common
+        doublet/merge guard).
     min_counts
-        Minimum total transcript counts per cell.
+        Minimum total transcript counts per cell.  See
+        :func:`filter_cells` for the rationale behind this and the other
+        shared defaults (permissive floors, not biology-dependent cutoffs).
     min_genes
         Minimum number of genes detected per cell.
     min_cell_area
-        Minimum cell area in µm².
+        Minimum cell area in µm².  **Note:** MERSCOPE's ``obs['cell_area']``
+        (derived by :func:`~astrolabe.io.read_merscope` from the bounding
+        box) is only a *proxy*, not a true polygon area — area thresholds
+        tuned on Xenium do not transfer; prefer *min_volume*/*max_volume*
+        on this platform.
     max_cell_area
-        Maximum cell area in µm².
+        Maximum cell area in µm² (same bounding-box-proxy caveat).
     isolation_k
-        Number of nearest spatial neighbors for the isolation filter.
+        Neighbor rank *k* for the isolation filter.
     max_neighbor_dist_um
-        Maximum distance to the *k*-th nearest spatial neighbor in µm.
+        Remove cells whose own *k*-th nearest neighbor exceeds this
+        distance in µm.
     min_neighbor_dist_um
         Remove cells whose nearest neighbor exceeds this distance (µm).
         Threshold applies to the 1st neighbor; cf. *max_neighbor_dist_um*
@@ -433,6 +513,27 @@ def filter_merscope(
         )
         max_pct_control = None
 
+    # MERSCOPE-specific: vendor volume bounds. obs['volume'] is Vizgen's
+    # true 3-D segmentation volume (µm³) — the platform's size metric of
+    # record, unlike obs['cell_area'] which is only a bounding-box proxy.
+    if min_volume is not None or max_volume is not None:
+        if "volume" not in adata.obs.columns:
+            raise KeyError(
+                "obs['volume'] not found — min_volume/max_volume require the "
+                "vendor volume column written by ab.io.read_merscope()."
+            )
+        import numpy as np
+
+        volume = adata.obs["volume"].to_numpy(dtype=np.float64)
+        keep = np.ones(adata.n_obs, dtype=bool)
+        if min_volume is not None:
+            keep &= volume >= min_volume
+        if max_volume is not None:
+            keep &= volume <= max_volume
+        n_before = adata.n_obs
+        adata._inplace_subset_obs(keep)
+        _log_step("filter_volume", n_before, adata.n_obs)
+
     # Shared steps
     filter_cells(
         mdata,
@@ -457,6 +558,10 @@ def filter_merscope(
             mdata, modality=merscope_key, exclude_controls=True, inplace=True
         )
         _log_step("remove_controls", n_before, adata.n_vars, axis="genes")
+
+    # Re-sync the top-level MuData after the volume/remove_controls steps
+    # that ran outside filter_cells' own update().
+    mdata.update()
 
     log.info(
         "filter_merscope: done — %d cells × %d genes",
@@ -506,9 +611,14 @@ def filter_cosmx(
     remove_controls
         Remove negative-control probe features after computing QC metrics.
     max_pct_control
-        Maximum percentage of counts from control probes per cell.
+        Maximum percentage of counts from control probes per cell (default
+        ``5.0`` — permissive: genuine CosMx cells typically sit well under
+        1–2% negative-probe counts, so this only removes segments dominated
+        by decoding noise).
     min_counts
-        Minimum total transcript counts per cell.
+        Minimum total transcript counts per cell.  See
+        :func:`filter_cells` for the rationale behind this and the other
+        shared defaults (permissive floors, not biology-dependent cutoffs).
     min_genes
         Minimum number of genes detected per cell.
     min_cell_area
@@ -516,9 +626,10 @@ def filter_cosmx(
     max_cell_area
         Maximum cell area in µm².
     isolation_k
-        Number of nearest spatial neighbors for the isolation filter.
+        Neighbor rank *k* for the isolation filter.
     max_neighbor_dist_um
-        Maximum distance to the *k*-th nearest spatial neighbor in µm.
+        Remove cells whose own *k*-th nearest neighbor exceeds this
+        distance in µm.
     min_neighbor_dist_um
         Remove cells whose nearest neighbor exceeds this distance (µm).
         Threshold applies to the 1st neighbor; cf. *max_neighbor_dist_um*
@@ -588,6 +699,10 @@ def filter_cosmx(
         n_before = adata.n_vars
         pp.filter_genes(mdata, modality=cosmx_key, exclude_controls=True, inplace=True)
         _log_step("remove_controls", n_before, adata.n_vars, axis="genes")
+
+    # Re-sync the top-level MuData after the remove_controls step that ran
+    # outside filter_cells' own update().
+    mdata.update()
 
     log.info(
         "filter_cosmx: done — %d cells × %d genes",

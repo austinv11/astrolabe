@@ -175,3 +175,49 @@ def merge_polygons(polys: list[np.ndarray]) -> np.ndarray:
         merged = max(merged.geoms, key=lambda g: g.area)
 
     return np.array(merged.exterior.coords, dtype=np.float64)
+
+
+def _build_polygons(raw) -> tuple[list, np.ndarray, int]:
+    """Build repaired shapely polygons from an awkward boundary array.
+
+    Returns ``(polys, unbuildable, n_repaired)`` — the shared construction/
+    repair path for cell and nucleus boundaries: ``make_valid`` repair for
+    self-intersecting rings (keeps all lobes), empty ``Polygon()`` +
+    ``unbuildable=True`` for rings that cannot produce any area.
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    from shapely.validation import make_valid
+
+    polys = []
+    unbuildable = np.zeros(len(raw), dtype=bool)
+    n_repaired = 0
+    for i in range(len(raw)):
+        verts = np.asarray(raw[i])
+        try:
+            p = Polygon(verts)
+        except Exception:
+            # < 3 vertices or otherwise unbuildable ring.
+            unbuildable[i] = True
+            polys.append(Polygon())
+            continue
+        if not p.is_valid:
+            # make_valid keeps ALL of a self-intersecting ring's area (a
+            # bow-tie becomes a two-lobe MultiPolygon); the old buffer(0)
+            # repair silently kept a single lobe. Its result can be a
+            # GeometryCollection with line/point debris -- keep only the
+            # polygonal parts.
+            p = make_valid(p)
+            if p.geom_type == "GeometryCollection":
+                parts = [
+                    g for g in p.geoms if g.geom_type in ("Polygon", "MultiPolygon")
+                ]
+                p = unary_union(parts) if parts else Polygon()
+            n_repaired += 1
+        if p.is_empty or p.geom_type not in ("Polygon", "MultiPolygon") or p.area == 0.0:
+            # Zero-area (collinear) rings reduce to lines/points: there is
+            # no geometry to measure -> NaN row, never a fake 0.0 area.
+            unbuildable[i] = True
+            p = Polygon()
+        polys.append(p)
+    return polys, unbuildable, n_repaired

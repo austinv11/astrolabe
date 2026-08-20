@@ -35,15 +35,16 @@ notebooks use it.
 
 | Group | Reference package(s) | Notebooks | What's validated |
 |---|---|---|---|
-| [`banksy_py/`](banksy_py/) | `banksy-py` (PyPI) | `banksy_matrix.ipynb` | `pp.banksy_matrix` vs the published BANKSY feature augmentation |
+| [`banksy_py/`](banksy_py/) | `banksy-py` (PyPI) | `banksy_matrix.ipynb` | `pp.banksy_matrix`'s **final λ-weighted, per-block-z-scored matrix** vs `banksy_py`'s, block by block, plus a graph-injection diagnosis of the residual gaps |
 | [`bin2cell/`](bin2cell/) | `bin2cell`, `cellpose` | `bin2cell_assign_bins.ipynb`, `seg_eval.ipynb` | `seg.assign_bins` vs `bin2cell`; `seg.evaluate_segmentation` vs `cellpose.metrics` (see note below on why not `stardist`) |
-| [`squidpy/`](squidpy/) | `squidpy` | `nhood_enrichment.ipynb`, `co_occurrence.ipynb`, `ligrec.ipynb`, `centrality_scores.ipynb` | `tl.nhood_enrichment`/`co_occurrence`/`ligrec`/`centrality_scores` vs `squidpy.gr.*` |
+| [`squidpy/`](squidpy/) | `squidpy` | `nhood_enrichment.ipynb`, `co_occurrence.ipynb`, `ligrec.ipynb`, `centrality_scores.ipynb`, `spatial_neighbors.ipynb` | `tl.nhood_enrichment`/`co_occurrence`/`ligrec`/`centrality_scores` vs `squidpy.gr.*`; `tl.spatial_neighbors` edge sets (KNN/Delaunay/radius, Jaccard = 1.0) vs `squidpy.gr.spatial_neighbors`, plus lattice formula checks for grid mode and the k∧radius intersection |
 | [`astropy_stats/`](astropy_stats/) | `astropy` | `ripley_l.ipynb`, `gradient_significance.ipynb` | `tl.ripley_l` vs `astropy.stats.RipleysKEstimator`; `tl.gradient_significance`'s R̄ vs `astropy.stats.circvar` |
-| [`esda/`](esda/) | `esda` (already a core astrolabe dependency) | `colocation_quotient.ipynb`, `spatial_silhouette.ipynb`, `gene_modules_moranbv.ipynb` | `tl.colocation_quotient` vs the published formula; `tl.spatial_silhouette` vs `esda.boundary_silhouette`; `tl.spatial_gene_modules`'s `moran_bv` mode vs `esda.Moran_BV` |
+| [`esda/`](esda/) | `esda` (already a core astrolabe dependency) | `colocation_quotient.ipynb`, `spatial_silhouette.ipynb`, `gene_modules_moranbv.ipynb` | `tl.colocation_quotient` vs the published formula; `tl.spatial_silhouette` vs `esda.boundary_silhouette`; `tl.spatial_gene_modules`'s `moran_bv` mode vs `esda.Moran_BV` (off-diagonal, unclipped) and `esda.Moran` (the new univariate diagonal) |
 | [`skimage/`](skimage/) | none - `scikit-image` is already a core astrolabe dependency | `stain_deconv.ipynb` | `method='ruifrok'` vs `skimage.color.rgb2hed`; `method='macenko'` vs an independent re-derivation (skimage has no Macenko estimator) |
-| [`sepal/`](sepal/) | none (see notebook) | `spatial_diffusion.ipynb` | `tl.spatial_diffusion`'s diffusion score vs a direct re-derivation of the Sepal (Andersson & Lundeberg 2021) formula |
-| [`scipy_stats/`](scipy_stats/) | `statsmodels` | `icg.ipynb` | `tl.interaction_changed_genes` vs a per-gene `scipy.stats` + `statsmodels` loop |
-| [`minisom/`](minisom/) | `minisom` (already an astrolabe optional extra) | `som_bmu.ipynb` | `tl.som`'s vectorized BMU assignment vs `minisom.MiniSom.winner()` |
+| [`sepal/`](sepal/) | none (see notebook) | `spatial_diffusion.ipynb` | `tl.spatial_diffusion`'s diffusion score vs a direct re-derivation of the Sepal (Andersson & Lundeberg 2021) formula — a self-referential regression test, not external validation (see note below) |
+| [`scipy_stats/`](scipy_stats/) | `statsmodels` | `icg.ipynb` | `tl.interaction_changed_genes`'s vectorized Mann-Whitney (`p_asymptotic`) vs a per-gene `scipy.stats` + `statsmodels` loop — a **vectorization-equivalence check**, not external validation (the reference re-types astrolabe's own algorithm; the real external reference, Giotto's `findInteractionChangedGenes`, is an R package and out of scope) |
+| [`minisom/`](minisom/) | `minisom` (already an astrolabe optional extra) | `som_training_quality.ipynb` | `tl.som` end-to-end training quality: planted-blob metacluster recovery + presentation-order invariance vs the pre-overhaul sequential-minisom configuration, QE/TE, and xenium_tiny SOM-vs-Leiden agreement |
+| [`synthetic_gradient/`](synthetic_gradient/) | none — analytic ground truth **is** the reference (see note below) | `gradient_ground_truth.ipynb` | `tl.expression_gradient`/`decay_length`/`gradient_field`/`interface_flux`/`gradient_significance` vs closed-form planted fields |
 
 ## Running a notebook
 
@@ -74,26 +75,63 @@ three metrics now match squidpy exactly (r=1.0).
 `tl.co_occurrence` used to normalize each type's ring-local co-occurrence
 rate against the *global* tissue-wide frequency instead of the ring-local
 one squidpy uses, making its output matrix asymmetric by construction - a
-real bug, now fixed. Agreement improved from Pearson r=0.7302/Spearman
-rho=0.5544 to r=0.9081/rho=0.7829.
+real bug, now fixed. Agreement improved from Pearson r~0.73/Spearman
+rho~0.55 to r~0.92/rho~0.92 (exact values drift slightly run-to-run with
+the Leiden clustering).
 
 ## A note on `squidpy/ligrec.ipynb`
 
 `tl.ligrec`'s CPU path used to score each spatial-graph edge as the product
 `L_i * R_j`, averaged over edges, instead of the published CellPhoneDB
 (Efremova et al. 2020) convention `(mean(L) + mean(R)) / 2` - a real bug,
-now fixed. `sender != receiver` agreement with `squidpy.gr.ligrec` is now
-strong (Pearson r ~ 0.98).
+now fixed. On the injected complete graph the match with `squidpy.gr.ligrec`
+is now exact (Pearson r = 1.0, max |diff| = 0). One gate difference matters
+for the comparison itself: astrolabe's CellPhoneDB expressing-fraction gate
+(`expr_frac_threshold`, default 0.1) NaNs *both* `means` and `pvalues` for
+untested entries, while squidpy's `threshold=` masks only `pvalues` and
+always reports every mean - so the notebook disables astrolabe's gate
+(`expr_frac_threshold=0.0`) to compare the scoring convention rather than
+the gating policy, and asserts the comparison set is non-empty.
 
 ## A note on `banksy_py/banksy_matrix.ipynb`
 
-`pp.banksy_matrix` used to weight every neighbor uniformly (`1/k`) instead
-of published BANKSY's default `scaled_gaussian` scheme (Gaussian decay from
-each cell's own median neighbor distance, row-normalized) - now fixed for
-both the M0 (neighbor mean) and |M1| (AGF) blocks. M0 now nearly exactly
-matches banksy_py (Pearson r ~ 0.996); |M1| is close but not exact (r ~ 0.83)
-because banksy_py deliberately uses a larger neighbor set for that term than
-astrolabe does - a documented, deliberate API difference, not a bug.
+Three rounds of fixes are reflected here. First, `pp.banksy_matrix` used to
+weight every neighbor uniformly (`1/k`) instead of published BANKSY's
+default `scaled_gaussian` scheme (Gaussian decay from each cell's own median
+neighbor distance, row-normalized) - fixed. Second, it neither z-scored the
+X/M0/|M1| blocks before applying the `sqrt`-λ weights (so λ's variance-split
+meaning silently depended on the data scale) nor subtracted the local
+neighborhood mean inside the AGF term (so M0's DC component leaked into
+|M1|), and its `agf_weight` default didn't match banksy_py's `2^-m` harmonic
+split - all fixed. The notebook now compares the **final λ-weighted
+matrices** (the ones PCA actually consumes) block by block: the X block
+matches to float32 exactly, M0 r = 0.9896, |M1| r = 0.9204 (up from 0.8329
+before the AGF mean subtraction). Third, the residual gaps are now
+**diagnosed, not just suspected**: feeding banksy_py's own directed
+k-neighbor graph through astrolabe makes M0 exact (r = 1.0000), and its
+directed 2k-neighbor AGF graph makes |M1| exact (r = 1.0000) - so the entire
+remaining divergence is graph construction (astrolabe's symmetrized shared
+kNN graph vs banksy_py's directed per-term graphs, including its 2× larger
+AGF neighbor set), a documented, deliberate API difference, not feature math.
+A final planted-domain section then asks whether that divergence *matters*:
+with weak signal and one domain 4× denser than the rest, astrolabe's
+symmetrized shared k-graph recovers domains at least as well as banksy_py's
+full directed k + 2k construction in every scenario tested, while the naive
+third option - a directed k-graph shared across both blocks - collapses
+under density heterogeneity (the AGF term needs either the 2k set or the
+symmetrized graph's variable-degree neighborhoods to stay stable). The
+symmetrized graph is therefore validated as a genuine improvement, not a
+convenience tradeoff.
+
+## A note on `esda/gene_modules_moranbv.ipynb`
+
+Two conventions changed in `tl.spatial_gene_modules`'s `moran_bv` matrix and
+are validated by this notebook: values are **no longer clipped to [-1, 1]**
+(bivariate Moran's I is not a correlation coefficient; clipping silently
+truncated exactly the strongest co-expression pairs), and the **diagonal is
+now each gene's univariate Moran's I** instead of a hardcoded 1.0. Both the
+symmetrized off-diagonal (vs `esda.Moran_BV`) and the new diagonal (vs
+`esda.Moran`) match esda to ~1e-8.
 
 ## A note on `esda/spatial_silhouette.ipynb`
 
@@ -112,7 +150,53 @@ formula directly as its own reference implementation. Two real bugs were
 found and fixed: a sign inversion in `diffusion_score`, and a redesign from
 a fixed-horizon variance-ratio proxy to Sepal's actual time-to-uniformity
 metric. Agreement is now an exact match (Pearson r = 1.0, 100% identical
-step counts).
+step counts). Because the reference cell hand-rebuilds the *identical*
+diffusion operator and convergence rule astrolabe uses, this group is
+explicitly a **self-referential regression test** (it guards against future
+refactor drift), not external validation.
+
+## A note on `minisom/`
+
+The original notebook here, `som_bmu.ipynb`, compared astrolabe's vectorized
+BMU assignment against `minisom.MiniSom.winner()` **on the same trained
+codebook** — a tautology (both are the identical squared-Euclidean argmin,
+so the 100% match it reported was guaranteed by construction and validated
+nothing about training: initialization, presentation order, iteration
+budget, decay, scaling, or meta-clustering). It has been deleted and
+replaced by `som_training_quality.ipynb`, which validates training quality
+end-to-end: planted-blob metacluster recovery (ARI ≈ 0.96–0.98 under both
+random and label-ordered sample presentation) vs the pre-overhaul
+raw-minisom configuration (sequential single-pass, `n_iter = 0.6·n`,
+asymptotic decay — ARI collapses to ≈ 0.47 on label-ordered data, with
+worse QE/TE in every condition), plus xenium_tiny SOM-vs-Leiden agreement.
+The real-data section also validates `tl.som`'s scaling rule: `scale=None`
+(the default) z-scores raw feature matrices (the FlowSOM convention) but
+leaves `obsm` embeddings like the default `use_rep='X_pca'` unwhitened — an
+earlier default z-scored (whitened) the embedding and measurably collapsed
+SOM-vs-Leiden agreement. A k-means control in the notebook shows the same
+collapse from whitening alone (no SOM in the loop), and the notebook asserts
+the default training space for `X_pca` is identical to an explicit
+`scale=False`.
+
+## A note on `synthetic_gradient/`
+
+This group has **no external reference package** — deliberately. The
+gradient/flux statistics it covers are either novel (`tl.interface_flux`)
+or assembled from published pieces in a way no package reproduces, so
+**synthetic fields with closed-form answers are the reference**: a planted
+linear ramp (exact MLS recovery), a radial exponential (λ = 80 µm recovered
+as 79.8 ± 0.9 with the background offset), a Gaussian bump (negative
+divergence at the peak, within a few % of the analytic Laplacian; no `curl`
+output), a two-block interface (integrated flux within ~4% of the a·H
+closed form, interface length within ~1% of the 4/π Poisson–Voronoi excess,
+bit-exact antisymmetry), and Type-I calibration of
+`tl.gradient_significance`'s smoothed-surrogate null (0/20 false positives
+on autocorrelated-but-isotropic fields; directional positive control at the
+permutation floor). Building it surfaced one small real bug, now fixed:
+`interface_flux` accumulated its two matrix triangles in separate
+`np.add.at` passes whose float additions interleave differently, so the
+documented identity Φ(B→A) = −Φ(A→B) held only to ~1e-16 rather than
+bit-exactly; it now antisymmetrizes by transpose-subtract.
 
 ## A note on `bin2cell/`
 

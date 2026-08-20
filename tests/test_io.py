@@ -407,3 +407,62 @@ class TestReadXeniumTranscripts:
         ab.io.read_xenium_transcripts(mdata, include_controls=False)
         names = set(mdata["xenium"].uns["transcripts"].column("feature_name").to_pylist())
         assert names == {"EPCAM", "CD3D"}
+
+
+class TestReaderControlTypes:
+    """read_cosmx / read_merscope mirror control classes into var['feature_type']
+    (the Xenium convention) so QC plots color controls by type on every platform."""
+
+    def test_read_cosmx_feature_type(self, tmp_path):
+        import pandas as pd
+
+        expr = pd.DataFrame(
+            {
+                "fov": [1, 1, 1],
+                "cell_ID": [1, 2, 3],
+                "GeneA": [1, 2, 3],
+                "GeneB": [0, 1, 0],
+                "NegPrb1": [0, 0, 1],
+                "Negative9": [0, 1, 0],
+                "SystemControl3": [1, 0, 0],
+                "FalseCode2": [0, 0, 1],
+            }
+        )
+        expr.to_csv(tmp_path / "run_exprMat_file.csv", index=False)
+
+        mdata = ab.io.read_cosmx(tmp_path)
+        var = mdata["cosmx"].var
+        assert var.loc["GeneA", "feature_type"] == "Gene Expression"
+        assert var.loc["GeneB", "feature_type"] == "Gene Expression"
+        assert var.loc["NegPrb1", "feature_type"] == "Negative Probe"
+        assert var.loc["Negative9", "feature_type"] == "Negative Probe"
+        assert var.loc["SystemControl3", "feature_type"] == "System Control"
+        assert var.loc["FalseCode2", "feature_type"] == "System Control"
+        # The boolean flag must stay exactly consistent with feature_type.
+        assert (
+            var["is_control_probe"] == (var["feature_type"] != "Gene Expression")
+        ).all()
+
+    def test_read_merscope_feature_type(self, tmp_path):
+        import pandas as pd
+
+        cbg = pd.DataFrame(
+            {"cell": ["c1", "c2"], "GeneA": [1, 2], "Blank-1": [0, 1]}
+        )
+        cbg.to_csv(tmp_path / "cell_by_gene.csv", index=False)
+        meta = pd.DataFrame(
+            {
+                "EntityID": ["c1", "c2"],
+                "center_x": [0.0, 1.0],
+                "center_y": [0.0, 1.0],
+            }
+        )
+        meta.to_csv(tmp_path / "cell_metadata.csv", index=False)
+
+        mdata = ab.io.read_merscope(tmp_path, load_boundaries=False)
+        var = mdata["merscope"].var
+        assert var.loc["GeneA", "feature_type"] == "Gene Expression"
+        assert var.loc["Blank-1", "feature_type"] == "Blank Barcode"
+        assert (
+            var["is_control_probe"] == (var["feature_type"] != "Gene Expression")
+        ).all()

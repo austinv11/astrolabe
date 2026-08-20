@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 
 import anndata as ad
-import numpy as np
 import scanpy as sc
 
 from astrolabe._gpu import _gpu_X, _require_rapids, _to_cpu_arr, gpu_enabled
@@ -18,33 +17,43 @@ __all__ = ["pca", "umap"]
 log = logging.getLogger(__name__)
 
 
+# Sentinel default for mask_var: "auto" defers to scanpy's own behavior
+# (use var['highly_variable'] when the column exists, else no mask).
+_MASK_VAR_AUTO = "auto"
+
+
+def _is_auto(mask_var) -> bool:
+    return isinstance(mask_var, str) and mask_var == _MASK_VAR_AUTO
+
+
 @with_adata
 def pca(
     adata: ad.AnnData,
     *,
-    n_comps: int = 50,
+    n_comps: int | None = None,
     use_rep: str | None = None,
-    use_highly_variable: bool | None = None,
+    mask_var=_MASK_VAR_AUTO,
     layer: str | None = None,
     zero_center: bool = True,
-    svd_solver: str = "arpack",
+    svd_solver: str | None = None,
     random_state: int = 0,
     key_added: str | None = None,
     **kwargs,
 ) -> None:
     """Compute PCA on the expression matrix or an arbitrary ``obsm`` embedding.
 
-    When ``use_rep`` is ``None``, delegates to :func:`scanpy.tl.pca` and
-    results are stored in ``obsm['X_pca']``, ``varm['PCs']``, ``uns['pca']``.
-
-    When ``use_rep`` is set, runs scikit-learn PCA on ``obsm[use_rep]``
-    (e.g. the BANKSY matrix) and stores the result in
-    ``obsm[key_added or 'X_pca']``.
+    Delegates to :func:`scanpy.pp.pca`.  When ``use_rep`` is ``None``,
+    results are stored in ``obsm[key_added or 'X_pca']``, ``varm['PCs']``,
+    ``uns[key_added or 'pca']``.  When ``use_rep`` is set (e.g. the BANKSY
+    matrix), scanpy's ``obsm=`` input path is used instead: the embedding
+    lands in ``obsm[key_added or 'X_pca']`` and the loadings /
+    ``variance_ratio`` in ``uns[key_added or 'pca']`` (``varm`` is not
+    written, since the input dimensions are not genes).
 
     If ``var['highly_variable']`` is present (written by
     :func:`~astrolabe.pp.highly_variable_genes`), PCA is restricted to those
-    genes unless ``use_highly_variable=False`` is passed explicitly.
-    (Ignored when ``use_rep`` is set.)
+    genes unless ``mask_var=None`` is passed explicitly.  (Never applied
+    when ``use_rep`` is set.)
 
     Parameters
     ----------
@@ -54,31 +63,36 @@ def pca(
     modality
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     n_comps
-        Number of principal components to compute.
+        Number of principal components.  ``None`` (default) lets scanpy
+        adapt: ``min(50, min_dim - 1)`` — safe for targeted panels with
+        fewer than 50 genes, where a hardcoded 50 would raise.
     use_rep
         Key in ``obsm`` to use as input instead of ``X`` / ``layer``.
         Useful for running PCA on the BANKSY matrix or any other precomputed
-        embedding.  When set, ``layer``, ``use_highly_variable``,
-        ``zero_center``, and ``svd_solver`` are ignored.
-    use_highly_variable
-        Restrict PCA to ``var['highly_variable']`` genes.  ``None`` (default)
-        uses HVGs automatically when the column exists.  Ignored when
-        ``use_rep`` is set.
+        embedding.  ``zero_center``, ``svd_solver``, ``random_state``, and
+        ``key_added`` are all honored on this path; ``layer`` and
+        ``mask_var`` are gene-space concepts and raise if combined with it.
+    mask_var
+        Boolean var mask, ``var`` column name, or ``None``.  The default
+        (``'auto'``) defers to scanpy: restrict to ``var['highly_variable']``
+        when that column exists, otherwise use all genes.  Pass ``None`` to
+        disable HVG masking explicitly.  (Replaces scanpy's deprecated
+        ``use_highly_variable``.)
     layer
-        Layer to use.  ``None`` uses ``X``.  Ignored when ``use_rep`` is set.
+        Layer to use.  ``None`` uses ``X``.  Incompatible with ``use_rep``.
     zero_center
         Subtract the mean before computing SVD.
     svd_solver
-        SVD solver.  ``'arpack'`` is stable; ``'randomized'`` is faster for
-        very large datasets.
+        SVD solver.  ``None`` (default) lets scanpy choose automatically
+        based on data size and sparsity; ``'arpack'`` / ``'randomized'``
+        force a specific solver.  Ignored (with a warning) on the GPU path.
     random_state
         Random seed.
     key_added
-        Output key in ``obsm`` (and prefix for ``varm``/``uns`` in the scanpy
-        path).  ``None`` defaults to ``'X_pca'``.
+        Output key in ``obsm`` (and prefix for ``varm``/``uns``).  ``None``
+        defaults to ``'X_pca'`` / ``'PCs'`` / ``'pca'``.
     **kwargs
-        Additional arguments forwarded to :func:`scanpy.tl.pca` (ignored when
-        ``use_rep`` is set).
+        Additional arguments forwarded to :func:`scanpy.pp.pca`.
 
     Examples
     --------
@@ -93,20 +107,34 @@ def pca(
     >>> ab.tl.transcriptional_neighbors(mdata)  # graph over the BANKSY-PCA embedding
     >>> ab.tl.cluster(mdata)
     """
+    if use_rep is not None:
+        if use_rep not in adata.obsm:
+            raise KeyError(f"obsm['{use_rep}'] not found")
+        if layer is not None:
+            raise ValueError("layer= and use_rep= are mutually exclusive")
+        if not _is_auto(mask_var) and mask_var is not None:
+            raise ValueError(
+                "mask_var= is a gene-space mask and cannot be combined with "
+                "use_rep= (obsm input columns are not genes)"
+            )
+
     if use_rep is None and gpu_enabled():
         rsc = _require_rapids()
         out_key = key_added or "X_pca"
+        if svd_solver is not None:
+            log.warning("pca: svd_solver=%r is ignored on the GPU path", svd_solver)
+        gpu_kwargs = dict(kwargs)
+        if not _is_auto(mask_var):
+            gpu_kwargs["mask_var"] = mask_var
         with _gpu_X(adata) as moved:
             rsc.pp.pca(
                 adata,
                 n_comps=n_comps,
-                use_highly_variable=use_highly_variable,
                 layer=layer,
                 zero_center=zero_center,
-                svd_solver=svd_solver,
                 random_state=random_state,
                 key_added=key_added,
-                **kwargs,
+                **gpu_kwargs,
             )
             if moved:
                 if out_key in adata.obsm:
@@ -115,34 +143,32 @@ def pca(
                     adata.varm["PCs"] = _to_cpu_arr(adata.varm["PCs"])
         return
 
-    if use_rep is not None:
-        from sklearn.decomposition import PCA as _PCA
-
-        if use_rep not in adata.obsm:
-            raise KeyError(f"obsm['{use_rep}'] not found")
-        X_in = np.asarray(adata.obsm[use_rep], dtype=np.float32)
-        n_comps_eff = min(n_comps, X_in.shape[0] - 1, X_in.shape[1] - 1)
-        embedding = _PCA(
-            n_components=n_comps_eff, random_state=random_state
-        ).fit_transform(X_in).astype(np.float32)
-        adata.obsm[key_added or "X_pca"] = embedding
-        log.info(
-            "pca (use_rep='%s'): %d components → obsm['%s']",
-            use_rep, n_comps_eff, key_added or "X_pca",
-        )
-        return
-
-    sc.tl.pca(
-        adata,
+    pca_kwargs = dict(
         n_comps=n_comps,
-        use_highly_variable=use_highly_variable,
         layer=layer,
+        obsm=use_rep,
         zero_center=zero_center,
         svd_solver=svd_solver,
         random_state=random_state,
         key_added=key_added,
         **kwargs,
     )
+    if use_rep is not None:
+        # An HVG mask over var makes no sense for obsm input — and scanpy's
+        # auto-mask default would try to apply one if var['highly_variable']
+        # exists, then fail on the dimension mismatch.
+        pca_kwargs["mask_var"] = None
+    elif not _is_auto(mask_var):
+        pca_kwargs["mask_var"] = mask_var
+
+    sc.pp.pca(adata, **pca_kwargs)
+
+    if use_rep is not None:
+        out_key = key_added or "X_pca"
+        log.info(
+            "pca (use_rep='%s'): %d components → obsm['%s']",
+            use_rep, adata.obsm[out_key].shape[1], out_key,
+        )
 
 
 @with_adata
@@ -188,6 +214,9 @@ def umap(
     """
     if gpu_enabled():
         rsc = _require_rapids()
+        # rsc.tl.umap may not accept key_added= — always let it write the
+        # default obsm['X_umap'], then move the result if a custom key was
+        # requested.
         rsc.tl.umap(
             adata,
             neighbors_key=neighbors_key,
@@ -195,9 +224,10 @@ def umap(
             spread=spread,
             n_components=n_components,
             random_state=random_state,
-            key_added=key_added,
             **kwargs,
         )
+        if key_added != "X_umap" and "X_umap" in adata.obsm:
+            adata.obsm[key_added] = adata.obsm.pop("X_umap")
         return
     sc.tl.umap(
         adata,

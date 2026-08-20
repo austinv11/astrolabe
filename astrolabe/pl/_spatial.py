@@ -27,6 +27,7 @@ import functools
 import io
 import logging
 import operator
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -49,6 +50,7 @@ import scipy.sparse as sp
 from astrolabe._shapes import arrow, circle, rectangle
 from astrolabe._utils import (
     ImageSpec,
+    _call_image_filter,
     _check_single_library,
     _od_deconvolve,
     _resolve_adata,
@@ -215,6 +217,60 @@ class Layer:
 # ---------------------------------------------------------------------------
 
 
+# Above this many marks (scatter offsets, boundary polygons, quiver arrows,
+# ...) a single Collection is drawn as an embedded raster rather than one SVG
+# element per mark. A whole-section Xenium panel is ~160k cells, and
+# matplotlib writes each one as a <g><use/></g> pair: measured on
+# notebooks/05, four such panels came to 103 MB of SVG in one .ipynb, past
+# GitHub's 100 MB per-file limit purely in point markers. Rasterizing only
+# the dense Collections keeps every axis label, tick, title, legend and
+# colorbar as real vector text -- the reason SVG is the display format at
+# all -- while the marks, which are sub-pixel dots at any realistic figure
+# size, cost a fixed amount instead of one element per cell.
+_RASTERIZE_MIN_MARKS = 2000
+
+# Raster resolution for those embedded marks. matplotlib's SVG backend takes
+# the rasterized portion's dpi from the figure dpi at savefig time (see
+# FigureCanvasSVG.print_svg -> MixedModeRenderer), so this is passed as
+# savefig(dpi=...) even though SVG is otherwise resolution-independent.
+_RASTERIZE_DPI = 200
+
+
+def _n_marks(coll: matplotlib.collections.Collection) -> int:
+    """Number of individually drawn marks in *coll*.
+
+    A scatter is one path (the marker) repeated at N offsets; a boundary
+    layer is N paths with no offsets -- so the mark count is the larger of
+    the two, not either one alone.
+    """
+    try:
+        n_offsets = len(coll.get_offsets())
+    except Exception:  # pragma: no cover - defensive; not every Collection has offsets
+        n_offsets = 0
+    return max(n_offsets, len(coll.get_paths()))
+
+
+def _rasterize_dense_marks(
+    fig: matplotlib.figure.Figure,
+) -> list[matplotlib.collections.Collection]:
+    """Flag every Collection in *fig* with a lot of marks as rasterized.
+
+    Returns the collections whose flag was actually flipped, so the caller
+    can restore them afterwards -- a Figure handed back to the user (or
+    re-rendered at another size) must not be left permanently altered by
+    having been displayed once.
+    """
+    flipped = []
+    for ax in fig.axes:
+        for coll in ax.collections:
+            if coll.get_rasterized():
+                continue
+            if _n_marks(coll) >= _RASTERIZE_MIN_MARKS:
+                coll.set_rasterized(True)
+                flipped.append(coll)
+    return flipped
+
+
 def _svg_mimebundle_for(fig: matplotlib.figure.Figure) -> dict[str, str]:
     """Render *fig* to an SVG Jupyter mimebundle.
 
@@ -228,16 +284,24 @@ def _svg_mimebundle_for(fig: matplotlib.figure.Figure) -> dict[str, str]:
     that has one.
     """
     buf = io.BytesIO()
-    fig.savefig(
-        buf, format="svg", bbox_inches="tight",
-        bbox_extra_artists=getattr(fig, "_ab_extra_artists", None),
-        # Explicit, not the 'savefig.facecolor' rcParam default: that rcParam
-        # tracks the *global* theme surface, which would silently overwrite
-        # a black fig.patch set by _apply_dark_theme (image dark_bg=True)
-        # back to the light theme's surface color, stranding the dark
-        # theme's white title/tick text on a light background.
-        facecolor=fig.get_facecolor(),
-    )
+    flipped = _rasterize_dense_marks(fig)
+    try:
+        fig.savefig(
+            buf, format="svg", bbox_inches="tight",
+            bbox_extra_artists=getattr(fig, "_ab_extra_artists", None),
+            # Explicit, not the 'savefig.facecolor' rcParam default: that
+            # rcParam tracks the *global* theme surface, which would silently
+            # overwrite a black fig.patch set by _apply_dark_theme (image
+            # dark_bg=True) back to the light theme's surface color, stranding
+            # the dark theme's white title/tick text on a light background.
+            facecolor=fig.get_facecolor(),
+            # See _RASTERIZE_DPI: sets the resolution of the rasterized
+            # dense-mark layers only; all other content stays vector.
+            dpi=_RASTERIZE_DPI,
+        )
+    finally:
+        for coll in flipped:
+            coll.set_rasterized(False)
     buf.seek(0)
     return {"image/svg+xml": buf.getvalue().decode("utf-8")}
 
@@ -302,11 +366,17 @@ class _Renderable(ABC):
             Output file path.  Format is inferred from the extension
             (e.g. ``'.pdf'``, ``'.png'``, ``'.svg'``).
         dpi
-            Resolution in dots per inch.  Ignored for vector formats.
+            Resolution in dots per inch.  For a vector format this sets the
+            resolution of the rasterized dense-mark layers only (see
+            :data:`_RASTERIZE_MIN_MARKS`); all other content stays vector.
         **savefig_kwargs
             Additional keyword arguments forwarded to ``figure.savefig()``.
         """
         fig = self.to_figure()
+        # Same reasoning as _svg_mimebundle_for -- a 160k-cell scatter written
+        # one <g><use/></g> per cell is what makes a saved SVG/PDF hundreds of
+        # megabytes. No-op for raster formats (everything is rasterized there).
+        _rasterize_dense_marks(fig)
         savefig_kwargs.setdefault("bbox_extra_artists", getattr(fig, "_ab_extra_artists", None))
         # See _svg_mimebundle_for: honor the figure's actual facecolor (which
         # _apply_dark_theme may have forced to black) rather than letting the
@@ -432,9 +502,17 @@ class SpatialPanel(_Renderable):
         # (see _theme.py). constrained_layout applies continuously and is
         # stable once converged, so nothing moves out from under it after.
         fig, ax = plt.subplots(1, 1, figsize=figsize or self.figsize, layout="constrained")
-        _render_panel(ax, self)
-        if any(lay.kind == "image" and lay.dark_bg for lay in self.layers):
-            _add_dark_panel_backgrounds(fig, [ax])
+        # Close the just-created figure if any layer's guard raises mid-render
+        # (e.g. _check_single_library on a multi-library object) -- otherwise
+        # a blank figure leaks into pyplot's registry and gets auto-flushed
+        # as an empty plot at the end of the notebook cell.
+        try:
+            _render_panel(ax, self)
+            if any(lay.kind == "image" and lay.dark_bg for lay in self.layers):
+                _add_dark_panel_backgrounds(fig, [ax])
+        except Exception:
+            plt.close(fig)
+            raise
         return fig
 
     def __repr__(self) -> str:
@@ -532,6 +610,46 @@ def _panel_crop_bounds(panel: SpatialPanel) -> dict | None:
     )
 
 
+def _robust_extent(
+    coords: np.ndarray, *, warn: bool = True
+) -> tuple[float, float, float, float]:
+    """Outlier-robust ``(xmin, xmax, ymin, ymax)`` for a coordinate array.
+
+    A single far-away centroid (a segmentation artifact, a stray fiducial)
+    can inflate a raw min/max extent enough to compress the whole tissue
+    into a corner of the panel and misestimate the auto point size.  Per
+    axis: when the raw range is under 1.5x the 0.1-99.9 percentile range,
+    the exact raw min/max are kept (clean data renders unchanged);
+    otherwise the percentile bounds padded by 2% are used, and a warning
+    reports how many points fall outside the returned box.
+    """
+    xs = np.asarray(coords[:, 0], dtype=np.float64)
+    ys = np.asarray(coords[:, 1], dtype=np.float64)
+    lims: list[tuple[float, float]] = []
+    clipped_any = False
+    for v in (xs, ys):
+        raw_lo, raw_hi = float(np.min(v)), float(np.max(v))
+        lo, hi = np.percentile(v, [0.1, 99.9])
+        robust_range = float(hi - lo)
+        raw_range = raw_hi - raw_lo
+        if robust_range <= 0 or raw_range < 1.5 * robust_range:
+            lims.append((raw_lo, raw_hi))
+        else:
+            pad = 0.02 * robust_range
+            lims.append((float(lo) - pad, float(hi) + pad))
+            clipped_any = True
+    (xmin, xmax), (ymin, ymax) = lims
+    if clipped_any and warn:
+        outside = int(((xs < xmin) | (xs > xmax) | (ys < ymin) | (ys > ymax)).sum())
+        log.warning(
+            "Auto extent: %d point(s) lie far outside the robust 0.1-99.9 "
+            "percentile box and were excluded from the axis extent. Crop with "
+            "pp.crop()/pp.auto_crop() or filter those cells to silence this.",
+            outside,
+        )
+    return xmin, xmax, ymin, ymax
+
+
 def _layer_extent(lay: Layer) -> tuple[float, float, float, float] | None:
     """Cheap, metadata-only ``(xmin, xmax, ymin, ymax)`` bbox for *lay*.
 
@@ -544,10 +662,10 @@ def _layer_extent(lay: Layer) -> tuple[float, float, float, float] | None:
     try:
         if lay.kind in ("points", "boundaries", "raster") and lay.adata is not None:
             coords = lay.adata.obsm[lay.spatial_key]
-            return (
-                float(coords[:, 0].min()), float(coords[:, 0].max()),
-                float(coords[:, 1].min()), float(coords[:, 1].max()),
-            )
+            # Robust, not raw min/max: one outlier centroid would otherwise
+            # dictate the whole panel's aspect ratio (warn=False -- this is
+            # a sizing estimate; the draw path emits the user-facing warning).
+            return _robust_extent(coords, warn=False)
         if lay.kind == "image" and lay.adata is not None:
             spec: ImageSpec = lay.adata.uns["spatial"][lay.library_id]["images"][lay.image_key]
             h_full, w_full = _spec_yx_full_shape(spec)
@@ -755,11 +873,39 @@ class PlotGrid(_Renderable):
                 explicit_total = (per_w, sum(heights))
             else:
                 # General NxM grid: a shared row height and column width
-                # can't simultaneously satisfy every cell's own aspect, so
-                # fall back to the same representative-ratio heuristic as
-                # before, normalized to the legacy total figure size.
-                width_ratios = col_aspect
-                height_ratios = [max(1.0 / x for x in v) if v else 1.0 for v in row_aspects]
+                # can't simultaneously satisfy every cell's own aspect when
+                # aspects are mixed, but the two dimensions must still be
+                # COUPLED. An earlier version normalized columns and rows
+                # back to the per-panel default independently, which forced
+                # e.g. a 2x2 grid of uniformly ~3.5:1-wide tissue panels
+                # into near-square cell boxes -- equal-aspect enforcement
+                # then filled every cell with vertical padding, rendered as
+                # a large blank band across the middle of the figure.
+                # Columns get width = aspect x per_h (the same rule as the
+                # exact single-row path); each row then gets the height its
+                # most demanding cell needs at its column's width. A
+                # uniform-aspect grid therefore renders every box at exactly
+                # its content aspect; mixed grids pad only what the aspect
+                # mismatch itself requires.
+                # Columns with no known-aspect cell (all FigurePanels) keep
+                # the reference panel width; their content is aspect-padded
+                # at render time regardless.
+                col_widths = [
+                    a * per_h if known else per_w
+                    for a, known in zip(col_aspect, col_aspects)
+                ]
+                row_heights = []
+                for i, row in enumerate(self.rows):
+                    needs = []
+                    for j in range(ncols):
+                        a = _cell_aspect(row[j] if j < len(row) else None)
+                        if a is not None and a > 0:
+                            a = min(max(a, 0.2), 5.0)
+                            needs.append(col_widths[j] / a)
+                    row_heights.append(max(needs) if needs else per_h)
+                width_ratios = col_widths
+                height_ratios = row_heights
+                explicit_total = (sum(col_widths), sum(row_heights))
 
         if explicit_total is not None:
             effective = figsize or explicit_total
@@ -788,34 +934,41 @@ class PlotGrid(_Renderable):
         # up front and resolving layout once before rasterizing means the
         # aspect used for padding is read from the actual final axes box,
         # not an estimate of it.
-        pending_figure_panels: list[tuple[matplotlib.axes.Axes, "FigurePanel"]] = []
-        dark_axes: list[matplotlib.axes.Axes] = []
-        for i, row in enumerate(self.rows):
-            for j in range(ncols):
-                panel = row[j] if j < len(row) else None
-                ax = axes_grid[i][j]
-                if panel is None:
-                    ax.set_visible(False)
-                elif isinstance(panel, SpatialPanel):
-                    _render_panel(ax, panel)
-                    if any(lay.kind == "image" and lay.dark_bg for lay in panel.layers):
-                        dark_axes.append(ax)
-                else:
-                    ax.axis("off")
-                    pending_figure_panels.append((ax, panel))
+        # Same blank-figure-leak guard as SpatialPanel.to_figure: if any
+        # cell's render raises (e.g. a multi-library guard), close the
+        # just-created grid figure before re-raising.
+        try:
+            pending_figure_panels: list[tuple[matplotlib.axes.Axes, "FigurePanel"]] = []
+            dark_axes: list[matplotlib.axes.Axes] = []
+            for i, row in enumerate(self.rows):
+                for j in range(ncols):
+                    panel = row[j] if j < len(row) else None
+                    ax = axes_grid[i][j]
+                    if panel is None:
+                        ax.set_visible(False)
+                    elif isinstance(panel, SpatialPanel):
+                        _render_panel(ax, panel)
+                        if any(lay.kind == "image" and lay.dark_bg for lay in panel.layers):
+                            dark_axes.append(ax)
+                    else:
+                        ax.axis("off")
+                        pending_figure_panels.append((ax, panel))
 
-        if pending_figure_panels:
-            fig.canvas.draw()  # resolve constrained_layout with final chrome in place
-            fig_w, fig_h = fig.get_size_inches()
-            for ax, panel in pending_figure_panels:
-                pos = ax.get_position()
-                target_aspect = (pos.width * fig_w) / (pos.height * fig_h)
-                _render_figure_panel(ax, panel.to_figure(), target_aspect=target_aspect)
+            if pending_figure_panels:
+                fig.canvas.draw()  # resolve constrained_layout with final chrome in place
+                fig_w, fig_h = fig.get_size_inches()
+                for ax, panel in pending_figure_panels:
+                    pos = ax.get_position()
+                    target_aspect = (pos.width * fig_w) / (pos.height * fig_h)
+                    _render_figure_panel(ax, panel.to_figure(), target_aspect=target_aspect)
 
-        # Computed last, after any FigurePanel content above is in its final
-        # place, so each dark axes' tight bbox reflects the fully-settled
-        # layout rather than an intermediate one.
-        _add_dark_panel_backgrounds(fig, dark_axes)
+            # Computed last, after any FigurePanel content above is in its final
+            # place, so each dark axes' tight bbox reflects the fully-settled
+            # layout rather than an intermediate one.
+            _add_dark_panel_backgrounds(fig, dark_axes)
+        except Exception:
+            plt.close(fig)
+            raise
 
         return fig
 
@@ -1272,6 +1425,7 @@ def boundaries(
     palette: dict | list | None = None,
     cmap: str | None = None,
     na_color: str | None = None,
+    max_boundaries: int | None = 50_000,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -1312,6 +1466,12 @@ def boundaries(
     na_color
         Color for polygons with ``NaN`` in the color column.  ``None``
         (default) uses the active theme's muted color.
+    max_boundaries
+        Polygon count above which a warning is logged (the plot is still
+        drawn).  At full-tissue scale (>~50k cells) an outline overlay
+        renders as a solid wash that occludes everything under it — crop
+        first with :func:`~astrolabe.pp.crop`/:func:`~astrolabe.pp.auto_crop`
+        instead.  ``None`` disables the warning.
     title
         Panel title.
     frameon
@@ -1328,6 +1488,17 @@ def boundaries(
             f"obsm['{boundaries_key}'] not found. "
             "Re-run ab.io.read_xenium() with load_boundaries=True, "
             "or pass boundaries_key='nucleus_boundaries' for nucleus outlines"
+        )
+
+    n_polys = len(adata.obsm[boundaries_key])
+    if max_boundaries is not None and n_polys > max_boundaries:
+        log.warning(
+            "boundaries: drawing %d polygons — at this scale the outlines "
+            "overlap into a solid wash that occludes any layer underneath. "
+            "Crop to a region of interest first (ab.pp.crop / ab.pp.auto_crop) "
+            "or raise linewidth/alpha deliberately. Pass max_boundaries=None "
+            "to silence this warning.",
+            n_polys,
         )
 
     # Apply key-based default color when no explicit color/data mapping is given.
@@ -1855,8 +2026,11 @@ def _auto_point_size(ax: matplotlib.axes.Axes, coords: np.ndarray, n_cells: int)
     markers read as "cells at roughly their natural spacing" regardless of
     how the panel ends up sized.
     """
-    x_range = float(coords[:, 0].max() - coords[:, 0].min())
-    y_range = float(coords[:, 1].max() - coords[:, 1].min())
+    # Robust ranges: a single outlier centroid inflating the raw range would
+    # inflate the implied cell spacing (and so the marker size) with it.
+    xmin, xmax, ymin, ymax = _robust_extent(coords, warn=False)
+    x_range = xmax - xmin
+    y_range = ymax - ymin
     if x_range <= 0 or y_range <= 0 or n_cells <= 0:
         return max(0.5, min(50, 120_000 / max(n_cells, 1)))
 
@@ -1889,6 +2063,16 @@ def _draw_points_layer(
     coords = adata.obsm[lay.spatial_key]
     n_cells = len(coords)
     size = lay.size if lay.size is not None else _auto_point_size(ax, coords, n_cells)
+
+    # Impose robust axis limits only when outliers were actually clipped --
+    # for clean data _robust_extent returns the exact raw min/max and the
+    # limits are left to matplotlib's normal autoscale (so image/boundary
+    # layers stacked with '+' keep contributing to the shared extent).
+    robust_ext = _robust_extent(coords)
+    raw_ext = (
+        float(coords[:, 0].min()), float(coords[:, 0].max()),
+        float(coords[:, 1].min()), float(coords[:, 1].max()),
+    )
 
     color_values, is_categorical = _resolve_color_values(adata, lay.color)
 
@@ -1936,11 +2120,15 @@ def _draw_points_layer(
             vmin=vmin if norm is None else None,
             vmax=vmax if norm is None else None,
             norm=norm,
-            rasterized=n_cells > 100_000,
+            rasterized=n_cells >= _RASTERIZE_MIN_MARKS,
             **lay.extra_kwargs,
         )
         if color_values is not None:
             _register_colorbar(ax, plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label=lay.color))
+
+    if robust_ext != raw_ext:
+        ax.set_xlim(robust_ext[0], robust_ext[1])
+        ax.set_ylim(robust_ext[2], robust_ext[3])
 
 
 # Additive-blending colors for multi-channel fluorescence composites.
@@ -1970,8 +2158,11 @@ def _load_tiff_level(
 ) -> tuple[np.ndarray, int]:
     """Open *path*, read pyramid level *level_idx*, collapse extra dims, stride if needed.
 
-    Returns ``(raw, ch_axis)`` where *raw* has axes ``(C, Y, X)`` and *ch_axis*
-    is the channel axis index (always 0 after collapsing).  Z is reduced via
+    Returns ``(raw, ch_axis, stride_step)`` where *raw* has axes ``(C, Y, X)``,
+    *ch_axis* is the channel axis index (always 0 after collapsing), and
+    *stride_step* is the integer stride used for downsampling (1 = none) —
+    needed by the caller to compute the effective µm-per-pixel of *raw* for
+    µm-specified image filters.  Z is reduced via
     max-intensity projection; T and other non-spatial dims are collapsed by
     taking index 0 (a view via basic indexing).  Stride downsampling is also
     a view.  The TiffFile is opened and closed within this call.
@@ -2033,31 +2224,36 @@ def _load_tiff_level(
         raw = np.moveaxis(raw, ch_ax, 0)
         ch_ax = 0
 
-    return raw, ch_ax
+    return raw, ch_ax, step
 
 
 def _apply_filter_chain(
     raw: np.ndarray,
     filters: list,
     ch_ax: int,
+    um_per_px: float | None = None,
 ) -> np.ndarray:
     """Apply each filter in *filters* independently to every channel of *raw*.
 
     *raw* is expected to be ``(C, Y, X)`` after ``_load_tiff_level`` (ch_ax==0).
     Each filter receives a 2-D float32 channel and must return float32.
+    *um_per_px* is the effective physical pixel size of *raw* (level-0 pixel
+    size × pyramid-level scale × stride step), forwarded so µm-specified
+    filter bandwidths resolve to the same physical scale here as in
+    ``pp.extract_if_intensities``'s full-resolution path.
     """
     raw = raw.astype(np.float32)
     if raw.ndim == 2:
         ch = raw
         for f in filters:
-            ch = f(ch)
+            ch = _call_image_filter(f, ch, um_per_px)
         return ch
     n_ch = raw.shape[ch_ax]  # ch_ax is always 0 here
     channels = []
     for i in range(n_ch):
         ch = raw[i].astype(np.float32)
         for f in filters:
-            ch = f(ch)
+            ch = _call_image_filter(f, ch, um_per_px)
         channels.append(ch)
     return np.stack(channels, axis=0)
 
@@ -2183,11 +2379,25 @@ def _normalize_image_channel(
     vmin: float | None,
     vmax: float | None,
     gamma: float,
+    valid_mask: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Percentile-stretch a 2-D channel to float32 [0, 1]."""
+    """Percentile-stretch a 2-D channel to float32 [0, 1].
+
+    *valid_mask* (from :func:`_apply_registration_rotation`) restricts the
+    percentile computation to real image pixels: a rotated image's padding
+    corners can be ~1% of the array or more, exactly enough to capture the
+    99.8th-percentile anchor and crush the stretch of the actual tissue.
+    """
     img_f = img_2d.astype(np.float32)
-    lo = float(vmin) if vmin is not None else float(np.percentile(img_f, 1.0))
-    hi = float(vmax) if vmax is not None else float(np.percentile(img_f, 99.8))
+    if valid_mask is not None and valid_mask.shape != img_f.shape:
+        # A later transform_chain rotation can reshape the array after the
+        # mask was computed -- fall back to the unmasked stretch then.
+        valid_mask = None
+    ref = img_f if valid_mask is None else img_f[valid_mask]
+    if ref.size == 0:
+        ref = img_f
+    lo = float(vmin) if vmin is not None else float(np.percentile(ref, 1.0))
+    hi = float(vmax) if vmax is not None else float(np.percentile(ref, 99.8))
     if hi <= lo:
         hi = lo + 1.0
     return np.clip((img_f - lo) / (hi - lo), 0.0, 1.0) ** gamma
@@ -2374,30 +2584,41 @@ def _apply_registration_rotation(
     spec: ImageSpec,
     level_idx: int,
     crop_pixels: tuple[int, int, int, int] | None,
-) -> tuple[np.ndarray, list[float] | None]:
+) -> tuple[np.ndarray, list[float] | None, np.ndarray | None]:
     """Physically rotate/flip *raw* per a rotated ``spec.registration_affine``.
 
     Unlike a pure scale+translation registration (already handled correctly
     by ``extent=`` alone), a rotated registration means the loaded pixel
     array's own row/col axes are not aligned with the µm x/y axes — it must
     be resampled, same as ``pp.rotate``/``pp.flip``'s ``transform_chain``
-    handling in :func:`_apply_image_transform`.  Returns ``(raw, None)``
-    unchanged when the registration has no meaningful rotation.
+    handling in :func:`_apply_image_transform`.  Returns
+    ``(raw, None, None)`` unchanged when the registration has no meaningful
+    rotation.
 
     *crop_pixels* (if given) is the same ``(row_min, row_max, col_min, col_max)``
     region passed to :func:`_load_tiff_level` — used to recompute the true µm
     extent of exactly what was loaded, since a rotated crop's pixel-space
     bounding box loaded here is larger than the originally requested µm
     viewport (the classic "bounding box of a rotated region" inflation).
+
+    The third return value is a 2-D boolean **validity mask** (``True`` on
+    real pixels, ``False`` on the corner padding scipy's rotation adds),
+    computed by rotating a ones companion image with ``cval=0``.  Padding
+    corners can cover a nontrivial fraction of the array, so any percentile
+    contrast stretch must ignore them (see :func:`_normalize_image_channel`).
+    Rotation padding itself uses ``cval`` = white (dtype max) for
+    brightfield/RGB images — black padding on an H&E slide reads as maximal
+    optical density and blows up stain deconvolution — and the conventional
+    0 (background) for fluorescence images.
     """
     A = spec.registration_affine
     if A is None:
-        return raw, None
+        return raw, None, None
 
     L = A[:2, :2]
     off_diag = abs(L[0, 1]) + abs(L[1, 0])
     if off_diag <= 1e-6:
-        return raw, None
+        return raw, None, None
 
     import scipy.ndimage
 
@@ -2437,6 +2658,7 @@ def _apply_registration_rotation(
     if det < 0:
         raw = np.flip(raw, axis=2)
 
+    valid_mask: np.ndarray | None = None
     if abs(angle_deg) > 0.1:
         # scipy.ndimage.rotate's positive-angle direction rotates axis 1 (col)
         # towards axis 0 (row) in the array's own row-down indexing sense.
@@ -2449,13 +2671,37 @@ def _apply_registration_rotation(
         # opposite corner -- a full 180° point-reflection, since rotating by
         # -angle instead of +angle differs by exactly 180° for angles near
         # +-90°, as is the case for this dataset's ~90° H&E registration).
+        #
+        # Padding value: white (dtype max) for brightfield/RGB so the
+        # rotation corners look like empty slide rather than pure black
+        # (which OD-deconvolves to a maximal stain concentration); 0 for
+        # fluorescence, where black *is* background.
+        if spec.is_brightfield:
+            cval = (
+                float(np.iinfo(raw.dtype).max)
+                if np.issubdtype(raw.dtype, np.integer)
+                else 1.0
+            )
+        else:
+            cval = 0.0
+        pre_rotation_shape = raw.shape[1:]  # (Y, X) of what actually gets rotated
         rotated_channels = [
-            scipy.ndimage.rotate(raw[ci], -angle_deg, reshape=True, order=1, prefilter=False)
+            scipy.ndimage.rotate(
+                raw[ci], -angle_deg, reshape=True, order=1, prefilter=False, cval=cval
+            )
             for ci in range(raw.shape[0])
         ]
         raw = np.stack(rotated_channels, axis=0)
+        # Ones-companion rotation marks which output pixels contain real
+        # image data (padding corners come out ~0). Slight interpolation
+        # feathering at the boundary is fine -- 0.5 splits it cleanly.
+        ones = np.ones(pre_rotation_shape, dtype=np.float32)
+        rotated_ones = scipy.ndimage.rotate(
+            ones, -angle_deg, reshape=True, order=1, prefilter=False, cval=0.0
+        )
+        valid_mask = rotated_ones > 0.5
 
-    return raw, extent
+    return raw, extent, valid_mask
 
 
 def _draw_annotation_layer(
@@ -2503,7 +2749,7 @@ def _draw_annotation_layer(
 
     if is_categorical:
         resolved_na = lay.resolved_na_color
-        unique_cats = sorted(set(values))
+        unique_cats = _sorted_categories(set(values))
         cat_colors = _build_cat_colors(unique_cats, lay.palette, resolved_na)
         base_c = [mcolors.to_rgb(cat_colors.get(str(v), resolved_na)) for v in values]
         edge_c = [(*rgb, lay.alpha) for rgb in base_c]
@@ -2570,18 +2816,33 @@ def _draw_image_layer(
         lay.library_id, lay.image_key, level_idx, spec.n_levels, _MAX_IMAGE_DIM, crop_pixels,
     )
 
-    raw, ch_ax = _load_tiff_level(spec.path, spec.dimension_order, level_idx, crop=crop_pixels)
+    raw, ch_ax, stride_step = _load_tiff_level(
+        spec.path, spec.dimension_order, level_idx, crop=crop_pixels
+    )
 
     # Physically rotate/flip pixels for a rotated registration_affine (e.g. an
     # H&E scan registered at an angle relative to the Xenium frame). No-op when
-    # the registration is axis-aligned or absent.
-    raw, rotated_extent = _apply_registration_rotation(raw, spec, level_idx, crop_pixels)
+    # the registration is axis-aligned or absent. valid_mask marks real (non-
+    # padding) pixels so percentile stretches ignore the rotation corners.
+    raw, rotated_extent, valid_mask = _apply_registration_rotation(raw, spec, level_idx, crop_pixels)
     if rotated_extent is not None:
         extent = rotated_extent
 
     # Apply per-channel image filters (filter_chain set by ab.pp.add_image_filter).
     if spec.filter_chain:
-        raw = _apply_filter_chain(raw, spec.filter_chain, ch_ax)
+        # Effective µm-per-pixel of `raw`: level-0 pixel size × the pyramid
+        # level's downsampling factor × the display stride step. Registration
+        # rotation (above) resamples onto the same grid spacing, so it does
+        # not change the pixel size. Forwarding this keeps µm-specified
+        # filter bandwidths physically identical across zoom levels and
+        # consistent with pp.extract_if_intensities' full-resolution path.
+        base_um_per_px = spec.um_per_px
+        if base_um_per_px is not None:
+            _, xscale = spec.level_scales[min(level_idx, spec.n_levels - 1)]
+            eff_um_per_px: float | None = base_um_per_px * float(xscale) * stride_step
+        else:
+            eff_um_per_px = None
+        raw = _apply_filter_chain(raw, spec.filter_chain, ch_ax, eff_um_per_px)
 
     # Apply lazy pixel transforms (rotate/flip stored in transform_chain).
     if spec.transform_chain:
@@ -2597,7 +2858,7 @@ def _draw_image_layer(
 
     def _prep(arr2d: np.ndarray) -> np.ndarray:
         if lay.normalize:
-            return _normalize_image_channel(arr2d, lay.vmin, lay.vmax, lay.gamma)
+            return _normalize_image_channel(arr2d, lay.vmin, lay.vmax, lay.gamma, valid_mask)
         dtype_max = (
             float(np.iinfo(arr2d.dtype).max)
             if np.issubdtype(arr2d.dtype, np.integer)
@@ -2639,7 +2900,9 @@ def _draw_image_layer(
         if is_brightfield_rgb and spec.stain_matrix is not None and isinstance(lay.channel, str):
             rgb_chw = np.stack(ch_slices, axis=0).astype(np.float64)
             stains = _od_deconvolve(rgb_chw, spec.stain_matrix)  # (H, W, 3)
-            img_display = _normalize_image_channel(stains[..., ch_idx], lay.vmin, lay.vmax, lay.gamma)
+            img_display = _normalize_image_channel(
+                stains[..., ch_idx], lay.vmin, lay.vmax, lay.gamma, valid_mask
+            )
         else:
             img_display = _prep(ch_slices[ch_idx])
         cmap = lay.image_cmap
@@ -2684,26 +2947,41 @@ def _draw_boundary_layer(
     # Vectorised extraction: avoid a Python loop over n_cells.
     # The awkward ListOffsetArray wraps a flat (total_verts, 2) NumpyArray;
     # ak.num gives per-cell vertex counts and ak.flatten recovers the flat array.
+    # `raw` is either one ring per cell (n_cells, n_verts, 2) or, for a
+    # multi-part region such as a flux domain, a list of rings per cell
+    # (n_cells, n_rings, n_verts, 2). `poly_cell` maps each drawn ring back to
+    # its cell so per-cell colouring stays correct in both layouts.
     try:
         import awkward as ak
         if isinstance(raw, ak.Array):
-            counts = np.asarray(ak.num(raw))            # (n_cells,) int
-            flat = np.asarray(ak.flatten(raw))          # (total_verts, 2) float32
-            split_pts = np.cumsum(counts[:-1])
-            polys = np.split(flat, split_pts)           # list of (n_verts_i, 2)
+            if raw.ndim >= 4:
+                rings = np.asarray(ak.num(raw))               # rings per cell
+                owner = np.repeat(np.arange(len(raw)), rings)
+                inner = ak.flatten(raw, axis=1)               # rings, verts, 2
+                counts = np.asarray(ak.num(inner))
+                flat = np.asarray(ak.flatten(inner))
+            else:
+                owner = np.arange(len(raw))
+                counts = np.asarray(ak.num(raw))              # (n_cells,) int
+                flat = np.asarray(ak.flatten(raw))            # (total_verts, 2)
+            polys = np.split(flat, np.cumsum(counts[:-1]))
         else:
             raise TypeError
     except (ImportError, TypeError):
         polys = [np.asarray(raw[i]) for i in range(len(raw))]
+        owner = np.arange(len(raw))
 
-    valid_mask = np.array([p.ndim == 2 and len(p) >= 3 for p in polys])
+    if len(polys) != len(owner):     # empty trailing cells drop out of np.split
+        owner = owner[:len(polys)]
+    valid_mask = np.array([p.ndim == 2 and len(p) >= 3 for p in polys]) \
+        if polys else np.zeros(0, dtype=bool)
     valid_polys = [polys[i] for i in np.where(valid_mask)[0]]
-    valid_indices = np.where(valid_mask)[0]
+    valid_indices = np.asarray(owner)[np.where(valid_mask)[0]]
 
     if not valid_polys:
         return
 
-    rasterized = len(valid_polys) > 10_000
+    rasterized = len(valid_polys) >= _RASTERIZE_MIN_MARKS
 
     # Allow lay.color to be a literal matplotlib color string (e.g. 'steelblue', '#ff0000').
     # If it doesn't resolve to an obs column or gene, check whether it's a valid color first.
@@ -2718,7 +2996,7 @@ def _draw_boundary_layer(
             raise
 
     if is_categorical and color_values is not None:
-        unique_cats = sorted(set(color_values[valid_indices]))
+        unique_cats = _sorted_categories(set(color_values[valid_indices]))
         resolved_na = lay.resolved_na_color
         cat_colors = _build_cat_colors(unique_cats, lay.palette, resolved_na)
         base_c = [mcolors.to_rgb(cat_colors.get(str(color_values[i]), resolved_na)) for i in valid_indices]
@@ -2773,18 +3051,23 @@ def _draw_boundary_layer(
         ax.add_collection(col)
         if legend_entries is not None:
             label = lay.boundaries_key.replace("_", " ").title()
-            # Unfilled ring (not a solid dot) to reflect that this layer draws
-            # outlines only, matching the finalized dot-marker legend style.
+            # Unfilled ring when the layer draws outlines only, matching the
+            # finalized dot-marker legend style; filled when the layer is
+            # filled, since otherwise several filled layers of different
+            # colours all read as the same empty ring in the key that is
+            # supposed to tell them apart.
             handle = Line2D(
                 [0], [0], marker="o", linestyle="none", markersize=6,
-                markerfacecolor="none", markeredgecolor=edge_color, label=label,
+                markerfacecolor=(edge_color if lay.fill_alpha > 0 else "none"),
+                markeredgecolor=edge_color, label=label,
             )
             legend_entries.append((handle, label))
 
     if lay.spatial_key in adata.obsm:
         coords = adata.obsm[lay.spatial_key]
-        ax.set_xlim(coords[:, 0].min(), coords[:, 0].max())
-        ax.set_ylim(coords[:, 1].min(), coords[:, 1].max())
+        xmin, xmax, ymin, ymax = _robust_extent(coords)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
     else:
         ax.autoscale_view()
 
@@ -2900,7 +3183,7 @@ def _draw_raster_square(
             _register_colorbar(ax, plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="count"))
 
     elif is_categorical:
-        unique_cats = sorted(set(color_values))
+        unique_cats = _sorted_categories(set(color_values))
         n_cats = len(unique_cats)
         cat_to_int = {c: i for i, c in enumerate(unique_cats)}
         int_vals = np.array([cat_to_int[v] for v in color_values], dtype=np.intp)
@@ -2974,7 +3257,7 @@ def _draw_raster_hex(
             _register_colorbar(ax, plt.colorbar(hb, ax=ax, fraction=0.046, pad=0.04, label="count"))
 
     elif is_categorical:
-        unique_cats = sorted(set(color_values))
+        unique_cats = _sorted_categories(set(color_values))
         cat_to_int = {c: i for i, c in enumerate(unique_cats)}
         int_vals = np.array([cat_to_int[v] for v in color_values], dtype=np.float64)
 
@@ -3057,6 +3340,36 @@ def _density_to_rgba(
 # ---------------------------------------------------------------------------
 
 
+def _sorted_categories(cats) -> list:
+    """Numeric-aware natural sort for category labels.
+
+    Cluster labels are strings, so a plain ``sorted()`` orders them
+    lexicographically ("0", "1", "10", "11", "2", ...) — wrong for the
+    routine >9-cluster Leiden/BANKSY case, and it silently drives *color
+    assignment* too (colors are handed out in sort order). Rules:
+
+    - all labels parse as numbers → sort numerically ("9" before "10");
+    - otherwise → natural key: digit runs compare as integers
+      ("domain_9" before "domain_10"), remaining text case-insensitively;
+    - no digits at all → equivalent to plain lexicographic order.
+
+    Shared by every categorical draw site (points/boundaries/raster/
+    annotation layers and ``pl.scatter``) so legend order and colors stay
+    consistent across plot types.
+    """
+    cats = list(cats)
+    try:
+        return sorted(cats, key=lambda c: float(c))
+    except (TypeError, ValueError):
+        pass
+
+    def _natural_key(c):
+        parts = re.split(r"(\d+)", str(c))
+        return [(0, int(p)) if p.isdigit() else (1, p.lower()) for p in parts]
+
+    return sorted(cats, key=_natural_key)
+
+
 def _resolve_color_values(
     adata: ad.AnnData,
     col_name: str | None,
@@ -3122,7 +3435,7 @@ def _plot_categorical(
     # switch, etc.) deliberately left out of this fix -- see the astrolabe
     # bugfix-pass memory/plan for this note.
     resolved_na = na_color if na_color is not None else get_theme().muted
-    unique_cats = sorted(set(categories))
+    unique_cats = _sorted_categories(set(categories))
     cat_colors = _build_cat_colors(unique_cats, palette, resolved_na)
     n_cells = len(coords)
 
@@ -3143,7 +3456,7 @@ def _plot_categorical(
         c=[point_colors[i] for i in order],
         s=size,
         alpha=alpha,
-        rasterized=n_cells > 100_000,
+        rasterized=n_cells >= _RASTERIZE_MIN_MARKS,
         **scatter_kwargs,
     )
 
@@ -3192,6 +3505,9 @@ def gradient_quiver(
     scale: float | None = None,
     cmap: str = "viridis",
     alpha: float = 0.85,
+    color_percentiles: tuple[float, float] = (2.0, 98.0),
+    gradient_key_added: str | None = None,
+    exclude_unreliable: bool = True,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -3200,8 +3516,13 @@ def gradient_quiver(
 
     Reads per-cell gradient vectors from ``obsm['gradient_{key}']`` (computed
     by :func:`~astrolabe.tl.expression_gradient`) and aggregates them into
-    spatial bins of size *bin_size_um* µm.  Mean (U, V) per bin is rendered
-    as a quiver plot colored by gradient magnitude.
+    spatial bins of size *bin_size_um* µm.  Each bin's arrow is the mean
+    (U, V) vector; the arrow **color is the mean of the per-cell magnitudes**,
+    not the magnitude of the mean vector — where opposing directions cancel
+    within a bin (e.g. between two nearby expression nests) the mean vector
+    shrinks toward zero, and coloring by its magnitude would understate the
+    gradient exactly where the structure is richest.  A short arrow with a
+    hot color therefore reads as "steep but directionally mixed".
 
     Compose with other layers using ``+`` to overlay on a cell scatter or
     image::
@@ -3229,6 +3550,19 @@ def gradient_quiver(
         Colormap for magnitude.
     alpha
         Arrow transparency.
+    color_percentiles
+        Robust ``(low, high)`` percentiles of the bin magnitudes used for the
+        color scale (values outside are clipped). A plain min–max scale lets
+        one extreme bin flatten the colormap for the whole tissue. Pass
+        ``(0, 100)`` for the raw range.
+    gradient_key_added
+        ``key_added`` used in the :func:`~astrolabe.tl.expression_gradient`
+        call this reads from, if it was given a custom one.
+    exclude_unreliable
+        Drop cells flagged ``obs['gradient_unreliable']`` (one-sided
+        boundary neighborhoods) before binning.  Tissue-edge bins otherwise
+        contain mostly unreliable cells and their inflated vectors dominate
+        the arrow and color scales.  Set ``False`` to show every cell.
     title
         Panel title.
     frameon
@@ -3241,7 +3575,7 @@ def gradient_quiver(
     SpatialPanel
     """
     adata = _resolve_adata(data, modality)
-    grad_key = f"gradient_{key}"
+    grad_key = f"{gradient_key_added}_{key}" if gradient_key_added else f"gradient_{key}"
     if grad_key not in adata.obsm:
         raise KeyError(
             f"obsm['{grad_key}'] not found. "
@@ -3251,6 +3585,9 @@ def gradient_quiver(
 
     coords = adata.obsm[spatial_key][:, :2].astype(np.float64)
     grad = adata.obsm[grad_key].astype(np.float64)
+    if exclude_unreliable and "gradient_unreliable" in adata.obs:
+        keep = ~adata.obs["gradient_unreliable"].to_numpy(dtype=bool)
+        coords, grad = coords[keep], grad[keep]
 
     x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
     y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
@@ -3270,15 +3607,19 @@ def gradient_quiver(
     n_bins = n_y * n_x
     U_sum = np.zeros(n_bins, dtype=np.float64)
     V_sum = np.zeros(n_bins, dtype=np.float64)
+    M_sum = np.zeros(n_bins, dtype=np.float64)
     counts = np.zeros(n_bins, dtype=np.int64)
     np.add.at(U_sum, flat_idx, grad[:, 0])
     np.add.at(V_sum, flat_idx, grad[:, 1])
+    np.add.at(M_sum, flat_idx, np.linalg.norm(grad, axis=1))
     np.add.at(counts, flat_idx, 1)
 
     has_cells = counts > 0
-    U_bin = np.where(has_cells, U_sum / np.where(has_cells, counts, 1), np.nan)
-    V_bin = np.where(has_cells, V_sum / np.where(has_cells, counts, 1), np.nan)
-    magnitude = np.sqrt(U_bin ** 2 + V_bin ** 2)
+    safe_counts = np.where(has_cells, counts, 1)
+    U_bin = np.where(has_cells, U_sum / safe_counts, np.nan)
+    V_bin = np.where(has_cells, V_sum / safe_counts, np.nan)
+    # mean of magnitudes, not magnitude of the mean (see docstring)
+    magnitude = np.where(has_cells, M_sum / safe_counts, np.nan)
 
     x_centers = x_min + (np.arange(n_x) + 0.5) * (x_max - x_min) / n_x
     y_centers = y_min + (np.arange(n_y) + 0.5) * (y_max - y_min) / n_y
@@ -3298,12 +3639,13 @@ def gradient_quiver(
             "V": V_bin[has_cells],
             "magnitude": magnitude[has_cells],
             "scale": scale,
+            "color_percentiles": color_percentiles,
             "key": key,
         },
     )
     return SpatialPanel(
         layers=[lay],
-        title=title if title is not None else f"∇{key}",
+        title=title if title is not None else f"{key} gradient",
         frameon=frameon,
         figsize=figsize,
     )
@@ -3320,6 +3662,7 @@ def gradient_streamlines(
     color_by: str = "magnitude",
     cmap: str = "viridis",
     alpha: float = 0.8,
+    field_key: str | None = None,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
@@ -3328,7 +3671,9 @@ def gradient_streamlines(
 
     Reads the pre-interpolated grid from ``uns['gradient_field_{key}']``
     (computed by :func:`~astrolabe.tl.gradient_field`) and renders streamlines
-    via ``matplotlib.axes.Axes.streamplot``.
+    via ``matplotlib.axes.Axes.streamplot``.  Streamlines ascend the
+    expression field and terminate on local maxima (peaks); they emanate
+    from local minima.
 
     Streamlines are integral curves of the spatial ODE
     ``dx/dt = ∇f(x)`` — field lines of the static expression gradient.
@@ -3362,6 +3707,10 @@ def gradient_streamlines(
         Colormap for ``color_by='magnitude'``.
     alpha
         Line transparency.
+    field_key
+        Full ``uns`` key to read, when :func:`~astrolabe.tl.gradient_field`
+        was called with a custom ``key_added``. ``None`` (default) reads
+        ``'gradient_field_{key}'``.
     title
         Panel title.
     frameon
@@ -3374,7 +3723,7 @@ def gradient_streamlines(
     SpatialPanel
     """
     adata = _resolve_adata(data, modality)
-    field_key = f"gradient_field_{key}"
+    field_key = field_key or f"gradient_field_{key}"
     if field_key not in adata.uns:
         raise KeyError(
             f"uns['{field_key}'] not found. "
@@ -3410,7 +3759,7 @@ def gradient_streamlines(
     )
     return SpatialPanel(
         layers=[lay],
-        title=title if title is not None else f"∇{key} streamlines",
+        title=title if title is not None else f"{key} gradient streamlines",
         frameon=frameon,
         figsize=figsize,
     )
@@ -3422,24 +3771,31 @@ def divergence_plot(
     *,
     modality: str | None = None,
     spatial_key: str = "spatial",
-    show_curl: bool = False,
     cmap: str = "RdBu_r",
     vcenter: float = 0.0,
     alpha: float = 0.8,
+    field_key: str | None = None,
     title: str | None = None,
     frameon: bool = True,
     figsize: tuple[float, float] = (5, 5),
 ) -> SpatialPanel:
-    """Heatmap of expression gradient divergence (or curl) on a spatial panel.
+    """Heatmap of expression gradient divergence on a spatial panel.
 
     Reads ``uns['gradient_field_{key}']`` and renders the divergence field
-    ``∂U/∂x + ∂V/∂y`` as a pseudocolor overlay.  Positive divergence marks
-    expression *sources* (field expands outward); negative marks *sinks*.
+    ``∂U/∂x + ∂V/∂y = ∇²f`` as a pseudocolor overlay.
 
-    ``show_curl=True`` renders curl ``∂V/∂x − ∂U/∂y`` instead.  For a pure
-    scalar gradient field, curl should be near zero everywhere — significant
-    curl indicates estimation noise or model misfit rather than biological
-    rotation.
+    **Sign convention** — because the field is a *gradient*, its divergence
+    is the Laplacian of expression: **negative divergence (blue with the
+    default colormap) marks local expression maxima / peaks** (gradients
+    converge into them; streamlines terminate there), and **positive
+    divergence (red) marks local expression minima** (gradients point
+    outward, ascending away).  This is the opposite of the fluid-flow
+    "source/sink" intuition, where outward flow means a source of material —
+    here outward *ascent* means a low point.
+
+    No curl output exists: :func:`~astrolabe.tl.gradient_field` grids the
+    scalar field and differentiates it, so the gridded field is curl-free by
+    construction.
 
     Compose over a cell scatter or image::
 
@@ -3456,15 +3812,17 @@ def divergence_plot(
         Modality key when *data* is a MuData.
     spatial_key
         ``obsm`` key for µm coordinates.
-    show_curl
-        If ``True``, display curl instead of divergence.
     cmap
-        Diverging colormap.  Defaults to ``'RdBu_r'`` (red = source,
-        blue = sink for divergence).
+        Diverging colormap.  Defaults to ``'RdBu_r'`` (blue = expression
+        peak, red = expression minimum; see the sign convention above).
     vcenter
         Center of the diverging colormap.
     alpha
         Heatmap transparency.
+    field_key
+        Full ``uns`` key to read, when :func:`~astrolabe.tl.gradient_field`
+        was called with a custom ``key_added``. ``None`` (default) reads
+        ``'gradient_field_{key}'``.
     title
         Panel title.
     frameon
@@ -3477,7 +3835,7 @@ def divergence_plot(
     SpatialPanel
     """
     adata = _resolve_adata(data, modality)
-    field_key = f"gradient_field_{key}"
+    field_key = field_key or f"gradient_field_{key}"
     if field_key not in adata.uns:
         raise KeyError(
             f"uns['{field_key}'] not found. "
@@ -3486,11 +3844,11 @@ def divergence_plot(
     _check_single_library(adata)
 
     gf = adata.uns[field_key]
-    field_data = np.array(gf["curl"] if show_curl else gf["divergence"], dtype=np.float64)
+    field_data = np.array(gf["divergence"], dtype=np.float64)
     x_grid = np.array(gf["X_grid"])
     y_grid = np.array(gf["Y_grid"])
 
-    field_name = "curl" if show_curl else "divergence"
+    field_name = "divergence"
     lay = Layer(
         kind="divergence",
         adata=adata,
@@ -3509,7 +3867,7 @@ def divergence_plot(
     )
     return SpatialPanel(
         layers=[lay],
-        title=title if title is not None else f"{field_name}(∇{key})",
+        title=title if title is not None else f"{key} gradient {field_name}",
         frameon=frameon,
         figsize=figsize,
     )
@@ -3538,10 +3896,18 @@ def _draw_quiver_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         scale = mean_mag / (x_range * 0.05 + 1e-12)
         scale = max(scale, 1e-6)
 
-    norm = mcolors.Normalize(
-        vmin=float(np.nanmin(magnitude)),
-        vmax=float(np.nanmax(magnitude)),
-    )
+    # Robust percentile color limits (clipped): a single extreme bin would
+    # otherwise stretch a min-max Normalize and flatten the whole colormap.
+    pct_lo, pct_hi = p.get("color_percentiles", (2.0, 98.0))
+    finite_mag = magnitude[np.isfinite(magnitude)]
+    if len(finite_mag):
+        vmin = float(np.percentile(finite_mag, pct_lo))
+        vmax = float(np.percentile(finite_mag, pct_hi))
+        if vmax <= vmin:
+            vmin, vmax = float(finite_mag.min()), float(finite_mag.max() + 1e-12)
+    else:
+        vmin, vmax = 0.0, 1.0
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax, clip=True)
     qv = ax.quiver(
         X[valid], Y[valid],
         U[valid], V[valid],
@@ -3554,7 +3920,7 @@ def _draw_quiver_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         pivot="mid",
         width=0.004,
     )
-    _register_colorbar(ax, plt.colorbar(qv, ax=ax, fraction=0.046, pad=0.04, label=f"‖∇{key}‖"))
+    _register_colorbar(ax, plt.colorbar(qv, ax=ax, fraction=0.046, pad=0.04, label=f"{key} gradient magnitude"))
     ax.autoscale_view()
 
 
@@ -3584,8 +3950,11 @@ def _draw_streamplot_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             vmin=float(np.nanmin(finite_mag)),
             vmax=float(np.nanmax(finite_mag)),
         )
+        # Slim lines + small arrowheads: arrowheads are fixed display-size
+        # (independent of the axes), so on a wide tissue strip rendered short
+        # a fat ramp turns the panel into opaque arrowhead soup.
         lw = linewidth if linewidth is not None else (
-            1 + 2 * np.clip(speed / (speed.max() + 1e-8), 0, 1)
+            0.5 + 1.0 * np.clip(speed / (speed.max() + 1e-8), 0, 1)
         )
         sp_result = ax.streamplot(
             x_grid, y_grid, U_plot, V_plot,
@@ -3594,11 +3963,16 @@ def _draw_streamplot_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
             norm=norm,
             linewidth=lw,
             density=density,
-            arrowsize=1.2,
+            arrowsize=0.7,
         )
+        sp_result.lines.set_alpha(lay.alpha)
+        try:
+            sp_result.arrows.set_alpha(lay.alpha)
+        except AttributeError:
+            pass
         _register_colorbar(ax, plt.colorbar(
             sp_result.lines, ax=ax, fraction=0.046, pad=0.04,
-            label=f"‖∇{key}‖",
+            label=f"{key} gradient magnitude",
         ))
     else:
         lw = linewidth if linewidth is not None else 1.2
@@ -3642,7 +4016,7 @@ def _draw_divergence_layer(ax: matplotlib.axes.Axes, lay: Layer) -> None:
         alpha=lay.alpha,
         shading="auto",
     )
-    label = f"{field_name}(∇{key})" if key else field_name
+    label = f"{key} gradient {field_name}" if key else field_name
     _register_colorbar(ax, plt.colorbar(pm, ax=ax, fraction=0.046, pad=0.04, label=label))
     ax.set_xlim(x_grid[0], x_grid[-1])
     ax.set_ylim(y_grid[0], y_grid[-1])

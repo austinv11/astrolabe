@@ -30,10 +30,49 @@ class ImageFilter(Protocol):
 
     A filter is any callable that accepts a 2-D ``float32`` NumPy array
     (one image channel) and returns a ``float32`` array of the same shape.
+
+    **Unit convention:** filter bandwidths should be specified in physical
+    **microns**, not pixels — the same ``filter_chain`` is applied at very
+    different pixel resolutions by its two consumers (full-resolution
+    extraction in :func:`~astrolabe.pp.extract_if_intensities` vs a
+    downsampled, zoom-dependent pyramid level in :func:`~astrolabe.pl.image`).
+    To support this, a filter *may* accept an optional keyword-only
+    ``um_per_px: float | None = None`` giving the effective µm-per-pixel of
+    the array being filtered; astrolabe's built-in filters
+    (:class:`~astrolabe.pl.GaussianFilter`, :class:`~astrolabe.pl.CLAHEFilter`,
+    :class:`~astrolabe.pl.FFTFilter`) use it to convert their µm parameters
+    to pixels per call.  Both consumers pass it via
+    :func:`_call_image_filter`, which falls back to a plain
+    ``filter(channel)`` call for filters that don't accept the keyword —
+    such filters remain valid but are resolution-locked (pixel semantics).
     """
 
-    def __call__(self, channel: np.ndarray) -> np.ndarray:
+    def __call__(self, channel: np.ndarray, *, um_per_px: float | None = None) -> np.ndarray:
         ...
+
+
+def _call_image_filter(
+    filt: Callable,
+    channel: np.ndarray,
+    um_per_px: float | None = None,
+) -> np.ndarray:
+    """Invoke an :class:`ImageFilter`, forwarding *um_per_px* when accepted.
+
+    Filters that don't declare a ``um_per_px`` keyword (e.g. bare
+    ``lambda ch: ...`` callables) are called with the channel only and keep
+    legacy pixel semantics.
+    """
+    accepts = False
+    try:
+        params = inspect.signature(filt).parameters
+        accepts = "um_per_px" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+    except (TypeError, ValueError):
+        pass
+    if accepts:
+        return filt(channel, um_per_px=um_per_px)
+    return filt(channel)
 
 
 @dataclass
@@ -108,6 +147,26 @@ class ImageSpec:
         return len(self.level_shapes)
 
     @property
+    def um_per_px(self) -> float | None:
+        """Physical size of one level-0 pixel in microns, or ``None`` if unknown.
+
+        Prefers :attr:`pixel_size_um`; falls back to the isotropic scale
+        implied by :attr:`registration_affine` (``sqrt(|det|)`` of its 2×2
+        linear part, which maps pixels → µm).  Used to resolve µm-specified
+        image-filter bandwidths (see :class:`ImageFilter`) to the pixel grid
+        actually being filtered.
+        """
+        px = self.pixel_size_um
+        if px is not None and np.isfinite(px) and px > 0:
+            return float(px)
+        if self.registration_affine is not None:
+            L = np.asarray(self.registration_affine, dtype=np.float64)[:2, :2]
+            det = abs(float(np.linalg.det(L)))
+            if det > 0:
+                return float(np.sqrt(det))
+        return None
+
+    @property
     def combined_transform(self) -> np.ndarray | None:
         """Composed 3×3 µm-space affine from :attr:`transform_chain`; ``None`` if empty."""
         if not self.transform_chain:
@@ -123,9 +182,19 @@ class ImageSpec:
         Iterates from finest (index 0) to coarsest and returns the first
         level whose longest spatial dimension is ≤ *target_max_dim*.
         Returns the coarsest level if none fits.
+
+        The spatial dimensions are located via :attr:`dimension_order` (the
+        Y/X axis positions) rather than assuming the last two axes — true for
+        ``CYX``-style fluorescence images, but false for channels-last
+        ``YXC``/``YXS`` RGB images (e.g. H&E), where ``shape[-1]`` is the
+        channel count, not a spatial extent.
         """
+        axes = self.dimension_order.upper()
+        ndim = len(self.full_shape)
+        y_idx = axes.index("Y") if "Y" in axes else ndim - 2
+        x_idx = axes.index("X") if "X" in axes else ndim - 1
         for i, shape in enumerate(self.level_shapes):
-            if max(shape[-2], shape[-1]) <= target_max_dim:
+            if max(shape[y_idx], shape[x_idx]) <= target_max_dim:
                 return i
         return self.n_levels - 1
 
@@ -193,6 +262,35 @@ class BinMatrixSpec:
     a *lazily loaded* bin submatrix's coordinates (fetched later via
     :func:`~astrolabe.pp.load_bin_counts`) can still be reconciled with any
     transform applied after the bin modality was read."""
+
+
+def _resolve_transcripts(adata: ad.AnnData, transcripts: object, func_name: str) -> object:
+    """Default a ``transcripts=None`` argument to ``adata.uns['transcripts']``.
+
+    The shared resolver behind the ``transcripts=None`` convention
+    (``seg.assign_transcripts``, ``seg.create_compartment_layers``,
+    ``tl.subcellular_coords``, ``tl.flux``). Unlike
+    ``pp.calculate_transcript_assignment_qc``'s stricter resolver, a pruned
+    table (``uns['transcripts_pruned']``) is fine here: these consumers are
+    not rate computations, and a table whose QC-removed cells' rows were
+    dropped is the right input — so it only logs, never raises, on the
+    pruned flag.
+    """
+    if transcripts is not None:
+        return transcripts
+    if "transcripts" not in adata.uns:
+        raise ValueError(
+            f"{func_name}: no transcript table given and none found in "
+            "adata.uns['transcripts']. Call ab.io.read_xenium_transcripts(mdata) "
+            "first, or pass transcripts= explicitly."
+        )
+    if adata.uns.get("transcripts_pruned", False):
+        log.info(
+            "%s: using uns['transcripts'], which has been pruned by a "
+            "filtering step (rows of removed cells/genes dropped).",
+            func_name,
+        )
+    return adata.uns["transcripts"]
 
 
 def _resolve_field(
@@ -358,14 +456,37 @@ def _aggregate_sparse_by_group(X, group_ids: np.ndarray, n_groups: int):
     return (indicator @ X).tocsr()
 
 
-def _od_deconvolve(rgb: np.ndarray, stain_matrix: np.ndarray) -> np.ndarray:
+def _dtype_scale(dtype) -> float:
+    """White-point scale for normalizing image data to [0, 1] from its dtype.
+
+    Integer dtypes map to their type maximum (255 for uint8, 65535 for
+    uint16, ...); floating dtypes are assumed already in [0, 1] and map
+    to 1.0. Deriving the scale from the *dtype* rather than from the data
+    (``arr.max()``) keeps normalization consistent across calls — a
+    data-dependent max differs per cell/tile and silently zeroes 16-bit
+    brightfield data when divided by an assumed 255.
+    """
+    dtype = np.dtype(dtype)
+    if dtype.kind in ("u", "i"):
+        return float(np.iinfo(dtype).max)
+    return 1.0
+
+
+def _od_deconvolve(
+    rgb: np.ndarray, stain_matrix: np.ndarray, scale: float | None = None
+) -> np.ndarray:
     """Apply H&E optical-density stain deconvolution: ``(3, ...)`` RGB → ``(..., 3)`` concentrations.
 
-    Shared by :func:`astrolabe.pp._if._deconvolve_cell_pixels` (per-cell mean,
-    ``rgb`` shaped ``(3, n_pixels)``) and :mod:`astrolabe.pl._spatial`'s
+    Shared by :func:`astrolabe.pp._if._deconvolve_cell_pixels` (per-cell
+    reduction, ``rgb`` shaped ``(3, n_pixels)``) and :mod:`astrolabe.pl._spatial`'s
     render-time single-stain view (``rgb`` shaped ``(3, H, W)``) — both just
     reduce/index the trailing stain axis of this function's output
     differently, so the OD-space math lives in exactly one place.
+
+    Optical density is base-10 (``od = -log10(rgb)``). Note this differs
+    from ``skimage.color.separate_stains``, which normalizes by
+    ``log(1e-6)`` — astrolabe concentrations are a constant 6.0× skimage's
+    for the same stain matrix (invariant under correlation/ranking).
 
     Parameters
     ----------
@@ -376,6 +497,12 @@ def _od_deconvolve(rgb: np.ndarray, stain_matrix: np.ndarray) -> np.ndarray:
         ``(3, 3)`` deconvolution matrix: ``conc = od @ M`` where *od* is
         optical-density-space RGB. Convention matches
         :attr:`~astrolabe._utils.ImageSpec.stain_matrix`.
+    scale
+        Explicit white-point divisor mapping *rgb* to [0, 1] — derive it
+        from the source image dtype via :func:`_dtype_scale` and pass it
+        whenever the dtype is known. ``None`` falls back to a
+        data-dependent guess (divide by 255 iff ``rgb.max() > 1``), which
+        is per-call inconsistent and wrong for 16-bit brightfield data.
 
     Returns
     -------
@@ -384,9 +511,17 @@ def _od_deconvolve(rgb: np.ndarray, stain_matrix: np.ndarray) -> np.ndarray:
         clipped to non-negative (negative optical density has no physical
         meaning as a stain concentration).
     """
-    eps = 1e-6
+    # Floor at one 8-bit quantization step (1/255), not an arbitrary tiny
+    # eps: a pure-black pixel (e.g. scipy.ndimage.rotate's default zero
+    # padding) clipped to 1e-6 produced OD = 6.0 per channel -- far beyond
+    # the ~2.4 OD ceiling an 8-bit brightfield sensor can actually encode --
+    # and those synthetic spikes then dominated any percentile-based
+    # contrast stretch of the deconvolved stain image.
+    eps = 1.0 / 255.0
     rgb = rgb.astype(np.float64)
-    if rgb.max() > 1.0:
+    if scale is not None:
+        rgb = rgb / scale
+    elif rgb.max() > 1.0:
         rgb = rgb / 255.0
     rgb = np.clip(rgb, eps, 1.0)
 

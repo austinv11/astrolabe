@@ -6,6 +6,8 @@ divergence with scanpy's well-tested implementations.
 
 from __future__ import annotations
 
+import logging
+
 import anndata as ad
 import numpy as np
 import scanpy as sc
@@ -15,6 +17,8 @@ from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
 from astrolabe._utils import with_adata
 
 __all__ = ["normalize_total", "log1p", "normalize_by_area", "highly_variable_genes"]
+
+log = logging.getLogger(__name__)
 
 
 @with_adata
@@ -127,35 +131,43 @@ def normalize_by_area(
     area_key: str = "cell_area",
     layer: str | None = None,
     layer_added: str | None = None,
+    log1p: bool = True,
 ) -> None:
-    """Divide expression by cell area (on the linear scale) to correct for cell size.
+    """Area-density normalization of raw counts — an *alternative* to
+    :func:`normalize_total`, never a step after it.
 
-    Large cells capture more transcripts simply because they have more
-    cytoplasm.  This function divides each cell's expression vector by its
-    area (in µm²) *on the linear count scale*, then re-applies ``log1p`` so
-    the output stays on the same log-scale downstream steps (PCA,
-    clustering) expect:
+    Divides each cell's **raw counts** by its segmented area (µm²), rescales
+    by the median cell area so values stay in a familiar count-like range,
+    and (by default) applies ``log1p``:
 
     .. math::
 
-        X_{\\text{corr}} = \\log_1p\\!\\left(\\frac{\\exp(X) - 1}{\\text{area}}\\right)
+        X_{\\text{corr}} = \\log 1p\\!\\left(
+            \\frac{\\text{counts}}{\\text{area}} \\times
+            \\operatorname{median}(\\text{area})\\right)
 
-    .. note::
+    Use it when "how much transcript was captured per unit of segmented
+    cell" is the quantity of interest — e.g. correlating expression with
+    per-cell image intensities (which are themselves area densities), or
+    comparing large vs. small cells on an equal footing.  The standard
+    scanpy pipeline (:func:`normalize_total` + :func:`log1p` on ``X``)
+    remains the right input for PCA/clustering/DE.
 
-        This is not simply ``X / area``. Dividing already-``log1p``-transformed
-        values directly by a raw linear-scale area is not a valid size
-        correction under any generative model of count data (log-scale
-        values and linear-scale area live on incompatible scales) and
-        empirically produces a *stronger* residual area-dependence than no
-        correction at all (a spurious ``1/area`` hyperbola). The division
-        has to happen on the linear (pre-log) scale, where "counts per µm²"
-        is a real density -- ``expm1``/``log1p`` round-trips the input back
-        to that scale and forward again.
+    .. warning::
 
-    .. note::
-        Run **after** :func:`normalize_total` and :func:`log1p`.
-        Requires ``obs[area_key]`` (written by
-        :func:`~astrolabe.pp.calculate_qc_metrics`).
+        **Never apply this on top of library-size-normalized data.** After
+        :func:`normalize_total`, every cell's linear-scale total is the same
+        constant, so dividing by area forces *every* gene's value in a cell
+        to scale as ``1/area`` — a pure artifact: a gene whose expression
+        *fraction* is size-independent acquires a strong spurious negative
+        area dependence.  Area normalization and library-size normalization
+        are competing answers to the same question (what is each cell's
+        "size" denominator?); pick one.  This function therefore raises if
+        the input looks log1p-transformed (``uns['log1p']`` present) unless
+        an explicit raw-counts ``layer`` is passed.
+
+    Requires ``obs[area_key]`` (written by
+    :func:`~astrolabe.pp.calculate_qc_metrics`).
 
     Parameters
     ----------
@@ -167,21 +179,35 @@ def normalize_by_area(
         ``obs`` column containing cell area in µm²
         (default ``'cell_area'``).
     layer
-        Layer to read from.  ``None`` reads ``X``.
+        Layer holding **raw counts** to read from.  ``None`` reads ``X``
+        (which must then still be raw counts).
     layer_added
         Layer to write corrected values into.  ``None`` overwrites the
         source (``X`` or *layer*).
+    log1p
+        Apply ``log1p`` to the area-scaled counts (default ``True``).
+        Pass ``False`` to keep linear densities.
 
     Examples
     --------
+    >>> mdata['xenium'].layers['counts'] = mdata['xenium'].X.copy()  # before normalize_total
     >>> ab.pp.normalize_total(mdata)
     >>> ab.pp.log1p(mdata)
-    >>> ab.pp.normalize_by_area(mdata)
+    >>> # area-normalized values from the RAW counts, in a separate layer:
+    >>> ab.pp.normalize_by_area(mdata, layer='counts', layer_added='area_norm')
     """
     if area_key not in adata.obs.columns:
         raise KeyError(
             f"obs['{area_key}'] not found.  "
             "Run ab.pp.calculate_qc_metrics() first, or supply area_key=."
+        )
+    if layer is None and "log1p" in adata.uns:
+        raise ValueError(
+            "adata.X appears to be log1p-transformed (uns['log1p'] is set). "
+            "normalize_by_area is an alternative to library-size "
+            "normalization and must run on raw counts — stash them first "
+            "(adata.layers['counts'] = adata.X.copy() before normalize_total) "
+            "and pass layer='counts'."
         )
 
     area = adata.obs[area_key].to_numpy(dtype=np.float64)
@@ -192,20 +218,23 @@ def normalize_by_area(
             "Filter them before area normalization."
         )
 
-    scale = area.astype(np.float32)
+    # counts / area, rescaled by the median area so the output stays in a
+    # count-like range ("counts per median-sized cell").
+    scale = (area / np.median(area)).astype(np.float64)
 
     mat = adata.layers[layer] if layer is not None else adata.X
 
     if sp.issparse(mat):
-        # expm1 -> divide (still sparse: zeros stay zero through both
-        # expm1 and the division) -> log1p, each row divided by its scalar
-        # via a diagonal matrix multiply: D^{-1} @ expm1(X).
         inv_diag = sp.diags(1.0 / scale, format="csr")
-        linear = mat.tocsr().expm1()
-        result = (inv_diag @ linear).log1p().astype(np.float32)
+        result = (inv_diag @ mat.tocsr().astype(np.float64))
+        if log1p:
+            result = result.log1p()
+        result = result.astype(np.float32)
     else:
-        linear = np.expm1(np.asarray(mat, dtype=np.float64))
-        result = np.log1p(linear / scale[:, np.newaxis]).astype(np.float32)
+        result = np.asarray(mat, dtype=np.float64) / scale[:, np.newaxis]
+        if log1p:
+            result = np.log1p(result)
+        result = result.astype(np.float32)
 
     target_layer = layer_added if layer_added is not None else layer
     if target_layer is None:
@@ -218,7 +247,7 @@ def normalize_by_area(
 def highly_variable_genes(
     adata: ad.AnnData,
     *,
-    n_top_genes: int | None = 1000,
+    n_top_genes: int | None = None,
     flavor: str = "seurat",
     min_mean: float = 0.0125,
     max_mean: float = 3.0,
@@ -247,7 +276,14 @@ def highly_variable_genes(
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     n_top_genes
         Number of highly variable genes to keep.  When set, ``min_mean``,
-        ``max_mean``, and ``min_disp`` are ignored.  Defaults to ``2000``.
+        ``max_mean``, and ``min_disp`` are ignored.  Defaults to ``None``
+        (scanpy's own default): genes are selected by the dispersion
+        cutoffs instead of a fixed count — the right behavior for targeted
+        spatial panels of a few hundred genes, where a fixed
+        1000/2000-gene budget either selects everything (a silent no-op)
+        or is meaningless.  If you pass a value at or above the panel
+        size, every gene is flagged highly variable and a warning is
+        logged.
     flavor
         Method for identifying variable genes.  ``'seurat'`` (default)
         expects normalized, log-transformed data — matching the
@@ -281,9 +317,17 @@ def highly_variable_genes(
     --------
     >>> ab.pp.normalize_total(mdata)
     >>> ab.pp.log1p(mdata)
-    >>> ab.pp.highly_variable_genes(mdata, n_top_genes=1000)
+    >>> ab.pp.highly_variable_genes(mdata)
     >>> ab.tl.pca(mdata)
     """
+    if n_top_genes is not None and n_top_genes >= adata.n_vars:
+        log.warning(
+            "highly_variable_genes: n_top_genes=%d >= n_vars=%d — every gene "
+            "will be flagged highly variable (selection is a no-op on this "
+            "panel). Use n_top_genes=None to select by dispersion cutoffs "
+            "instead.",
+            n_top_genes, adata.n_vars,
+        )
     if gpu_enabled():
         rsc = _require_rapids()
         with _gpu_X(adata):

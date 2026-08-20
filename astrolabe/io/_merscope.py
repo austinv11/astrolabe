@@ -16,7 +16,9 @@ mdata['merscope']
         spatial            : float32 (n_cells, 2)  [x_centroid, y_centroid] in µm
         cell_boundaries    : awkward (n_cells,) of (n_verts, 2) float32 polygons
         nucleus_boundaries : awkward (n_cells,) of (n_verts, 2) float32 polygons
-    var         : gene_name (index)
+    var         : gene_name (index),
+                  feature_type ('Gene Expression' | 'Blank Barcode'),
+                  is_control_probe (bool, True for Blank-*/Blank_*)
     uns
         spatial
             <library_id>
@@ -143,15 +145,20 @@ def read_merscope(
             )
 
     # ------------------------------------------------------------------ #
-    # 4. Control probe flag                                               #
+    # 4. Control probe flag + feature_type                                 #
     # ------------------------------------------------------------------ #
-    adata.var["is_control_probe"] = np.array(
+    is_ctrl = np.array(
         [any(n.startswith(p) for p in _CONTROL_PREFIXES) for n in adata.var_names],
         dtype=bool,
     )
-    n_ctrl = int(adata.var["is_control_probe"].sum())
+    adata.var["is_control_probe"] = is_ctrl
+    # MERFISH has a single control class (blank barcodes: codewords with no
+    # probe assigned), mirrored into var['feature_type'] (the Xenium
+    # convention) so QC plots label controls by type on every platform.
+    adata.var["feature_type"] = np.where(is_ctrl, "Blank Barcode", "Gene Expression")
+    n_ctrl = int(is_ctrl.sum())
     if n_ctrl:
-        log.info("Flagged %d / %d features as control probes (Blank-*)", n_ctrl, adata.n_vars)
+        log.info("Flagged %d / %d features as blank barcodes (Blank-*)", n_ctrl, adata.n_vars)
 
     # ------------------------------------------------------------------ #
     # 5. uns['spatial']                                                   #

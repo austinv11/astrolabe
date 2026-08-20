@@ -193,6 +193,66 @@ def test_heatmap_values_and_agg(small_mdata):
     assert isinstance(panel, FigurePanel)
 
 
+def test_heatmap_crosstab_axis_orientation(small_mdata):
+    """x categories must land on the x-axis (regression: crosstab rows used
+    to be the x field, silently swapping the plot relative to its labels)."""
+    adata = small_mdata["xenium"]
+    adata.obs["three_cat"] = (["p", "q", "r"] * adata.n_obs)[: adata.n_obs]
+    panel = ab.pl.heatmap(small_mdata, x="three_cat", y="cell_type")
+    ax = panel.figure.axes[0]
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["p", "q", "r"]
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["A", "B"]
+
+
+def test_heatmap_field_list_rows(small_mdata):
+    """y as a list of numeric fields: one row per field, aggregated per
+    category of the categorical x — no manual tile/repeat long-form arrays."""
+    panel = ab.pl.heatmap(
+        small_mdata, x="cell_type", y=["cell_area", "nucleus_area"], agg="mean"
+    )
+    ax = panel.figure.axes[0]
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["A", "B"]
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["cell_area", "nucleus_area"]
+    # values must be the per-category means of each field
+    adata = small_mdata["xenium"]
+    expected = adata.obs.groupby("cell_type", observed=True)["cell_area"].mean()
+    drawn = ax.images[0].get_array()
+    np.testing.assert_allclose(drawn[0], expected.loc[["A", "B"]].to_numpy())
+
+
+def test_heatmap_field_list_columns(small_mdata):
+    panel = ab.pl.heatmap(
+        small_mdata, x=["cell_area", "nucleus_area"], y="cell_type", agg="mean"
+    )
+    ax = panel.figure.axes[0]
+    assert [t.get_text() for t in ax.get_xticklabels()] == ["cell_area", "nucleus_area"]
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["A", "B"]
+
+
+def test_heatmap_field_list_gene_names(small_mdata):
+    genes = list(small_mdata["xenium"].var_names[:3])
+    panel = ab.pl.heatmap(small_mdata, x="cell_type", y=genes)
+    ax = panel.figure.axes[0]
+    assert [t.get_text() for t in ax.get_yticklabels()] == genes
+
+
+def test_heatmap_field_list_requires_categorical_partner(small_mdata):
+    with pytest.raises(ValueError, match="categorical"):
+        ab.pl.heatmap(small_mdata, x="cell_area", y=["nucleus_area"])
+
+
+def test_heatmap_field_list_rejects_values(small_mdata):
+    with pytest.raises(ValueError, match="values"):
+        ab.pl.heatmap(
+            small_mdata, x="cell_type", y=["cell_area"], values="nucleus_area"
+        )
+
+
+def test_heatmap_both_axes_lists_raise(small_mdata):
+    with pytest.raises(ValueError, match="Only one"):
+        ab.pl.heatmap(small_mdata, x=["cell_area"], y=["nucleus_area"])
+
+
 # ---------------------------------------------------------------------------
 # Composability + rename safety
 # ---------------------------------------------------------------------------

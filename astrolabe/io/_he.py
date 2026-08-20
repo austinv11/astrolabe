@@ -288,8 +288,16 @@ def _estimate_stain_matrix(
     """Return a (3, 3) stain deconvolution matrix.
 
     Convention: ``concentrations_flat = od_flat @ M`` where *od_flat* has
-    shape ``(N, 3)`` (optical density, base-10).  Rows of *M* correspond to
-    the three output channels: [hematoxylin, eosin, residual].
+    shape ``(N, 3)`` (optical density, base-10).  **Columns** of *M*
+    correspond to the three output channels [hematoxylin, eosin, residual]
+    (``conc[:, k] = od @ M[:, k]``); it is the *rows* of the underlying
+    stain-vector matrix ``he`` (with ``M = inv(he)``) that hold the
+    per-stain OD-RGB unit vectors.
+
+    Note astrolabe's OD is base-10 (``-log10``); ``skimage.color`` scales
+    its OD by ``1/log(1e-6)`` instead, so concentrations here are a
+    constant 6.0× skimage's for the same matrix — harmless for any
+    correlation/ranking-based use.
     """
     if method == "ruifrok":
         return _ruifrok_matrix()
@@ -344,11 +352,13 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     elif raw.ndim == 2:
         raw = np.stack([raw, raw, raw], axis=-1)
 
-    if raw.dtype == np.uint8:
-        rgb = raw.astype(np.float64) / 255.0
-    else:
-        rgb = raw.astype(np.float64)
-        rgb = np.clip(rgb / rgb.max() if rgb.max() > 0 else rgb, 0.0, 1.0)
+    # White point from the *dtype* maximum (255 / 65535 / ...), never the
+    # data maximum: dividing by the brightest pixel makes I0 depend on
+    # slide content (a slide with no pure-white background gets its whole
+    # OD scale shifted), whereas the sensor's representable maximum is the
+    # stable brightfield reference. Float inputs are assumed already [0, 1].
+    from astrolabe._utils import _dtype_scale
+    rgb = np.clip(raw.astype(np.float64) / _dtype_scale(raw.dtype), 0.0, 1.0)
 
     # Flatten and subsample
     pixels = rgb.reshape(-1, 3)
@@ -381,10 +391,12 @@ def _macenko_matrix(spec: ImageSpec, sample_n: int = 50_000) -> np.ndarray:
     # stain matrix and silently falling back to Ruifrok on nearly every
     # real slide (condition number 400-900 observed). Fixed by orienting
     # each singular vector to point toward the OD cloud's own centroid
-    # before computing angles, the standard sign-normalization for this
-    # exact SVD-based stain-separation approach -- this doesn't change
-    # *which* plane was found (a sign flip of a basis vector spans the same
-    # plane), only where its zero-angle reference sits relative to the data.
+    # before computing angles -- a common sign-normalization that keeps the
+    # angular cluster away from the branch cut for OD data (all-positive
+    # octant), though not something Macenko's paper itself specifies. It
+    # doesn't change *which* plane was found (a sign flip of a basis vector
+    # spans the same plane), only where its zero-angle reference sits
+    # relative to the data.
     mean_dir = od_fg.mean(axis=0)
     for i in range(2):
         if np.dot(plane[i], mean_dir) < 0:

@@ -50,9 +50,13 @@ paga_plot
 ripley_plot
     Ripley's L(d) − d curve plot from tl.ripley_l results.
 flux_plot
-    Heatmap of cross-compartment expression flux from tl.compartment_flux results.
+    Heatmap of interface-integrated expression flux from tl.interface_flux results.
 direction_histogram
-    Polar rose diagram of gradient direction distributions.
+    Polar rose diagram of gradient direction distributions (magnitude-weighted; cell-elongation-axis frame by default, landmark-relative via relative_to).
+diffusion_comparison
+    Raw vs. graph-diffused expression panels on a shared color scale (the MAGIC step-count rule).
+decay_length_plot
+    Radial decay profile + fitted exponential from tl.decay_length results.
 
 Classes
 -------
@@ -106,7 +110,17 @@ from astrolabe.pl._spatial import (
 )
 from astrolabe.pl._filters import CLAHEFilter, FFTFilter, GaussianFilter
 from astrolabe.pl._generic import heatmap, histogram, scatter
-from astrolabe.pl._gradient_plots import direction_histogram, flux_plot
+from astrolabe.pl._gradient_plots import (
+    decay_length_plot,
+    diffusion_comparison,
+    direction_histogram,
+    flux_plot,
+)
+from astrolabe.pl._subcellular_plots import (
+    subcellular_profile,
+    subcellular_enrichment_plot,
+    subcellular_plot,
+)
 from astrolabe.pl._napari import view_napari
 from astrolabe.pl._theme import Theme, get_theme, set_theme, theme
 from astrolabe.pl._qc_plots import (
@@ -140,7 +154,8 @@ from astrolabe.pl._qc_plots import (
     som_umatrix,
     som_component_plane,
     som_hits,
-    som_subcellular_plot,
+    som_quality_plot,
+    som_stability_plot,
 )
 
 __all__ = [
@@ -202,10 +217,16 @@ __all__ = [
     "som_umatrix",
     "som_component_plane",
     "som_hits",
-    "som_subcellular_plot",
+    "som_quality_plot",
+    "som_stability_plot",
+    "subcellular_profile",
+    "subcellular_enrichment_plot",
+    "subcellular_plot",
     # Gradient / vector-field summary plots
     "flux_plot",
     "direction_histogram",
+    "diffusion_comparison",
+    "decay_length_plot",
     # Image filters
     "GaussianFilter",
     "CLAHEFilter",

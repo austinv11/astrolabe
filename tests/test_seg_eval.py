@@ -32,7 +32,8 @@ class TestEvaluateSegmentationPixelPerfect:
         pred_boundaries = np.array([pred_xy])
 
         metrics = evaluate_segmentation(pred_boundaries, true_masks, pixel_size_um=1.0)
-        assert metrics["dice"] == pytest.approx(1.0, abs=1e-6)
+        assert metrics["dice_pixel"] == pytest.approx(1.0, abs=1e-6)
+        assert metrics["dice_matched"] == pytest.approx(1.0, abs=1e-6)
         assert metrics["n_tp"] == 1
         assert metrics["precision"] == pytest.approx(1.0)
         assert metrics["recall"] == pytest.approx(1.0)
@@ -92,4 +93,72 @@ class TestEvaluateSegmentationOrigin:
             pred_boundaries, true_masks, pixel_size_um=1.0, origin_um=(100.0, 100.0)
         )
         assert metrics_with_origin["n_tp"] == 1
-        assert metrics_with_origin["dice"] == pytest.approx(1.0, abs=1e-6)
+        assert metrics_with_origin["dice_pixel"] == pytest.approx(1.0, abs=1e-6)
+
+
+class TestEvaluateSegmentationBorderCells:
+    def test_out_of_frame_vertices_not_clipped(self):
+        # Regression: _rasterize used to clip polygon *vertices* into the
+        # frame, squashing a border-straddling cell's shape onto the frame
+        # edge and distorting its IoU (measured 0.633 self-IoU on real
+        # data). polygon2mask handles out-of-frame vertices natively; only
+        # the in-frame part of the polygon should rasterize, exactly.
+        shape = (30, 30)
+        # Ground truth: the in-frame part of a square whose polygon extends
+        # 5 px beyond the top-left corner of the frame.
+        poly_rc = np.array(
+            [[-5.0, -5.0], [-5.0, 10.0], [10.0, 10.0], [10.0, -5.0]], dtype=np.float64
+        )
+        from skimage.draw import polygon2mask
+        true_masks = np.zeros(shape, dtype=np.int32)
+        true_masks[polygon2mask(shape, poly_rc)] = 1
+
+        pred_xy = poly_rc[:, [1, 0]]
+        metrics = evaluate_segmentation([pred_xy], true_masks, pixel_size_um=1.0)
+        assert metrics["n_tp"] == 1
+        assert metrics["dice_pixel"] == pytest.approx(1.0, abs=1e-6)
+        assert metrics["dice_matched"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_fully_out_of_frame_polygon_is_no_match(self):
+        shape = (20, 20)
+        true_masks, _ = _square_mask(shape, 2, 2, 5, label=1)
+        far_poly_xy = np.array(
+            [[100.0, 100.0], [110.0, 100.0], [110.0, 110.0], [100.0, 110.0]]
+        )
+        metrics = evaluate_segmentation([far_poly_xy], true_masks, pixel_size_um=1.0)
+        assert metrics["n_tp"] == 0
+        assert metrics["dice_matched"] == 0.0
+
+
+class TestDicePixelVsDiceMatched:
+    def test_partial_overlap_separates_the_two_dice_statistics(self):
+        # One true 10x10 square; prediction shifted by 2 px -> overlap 80,
+        # per-pair Dice = 2*80/(100+100) = 0.8 (also the pixel Dice here,
+        # single instance). IoU = 80/120 = 0.667 >= 0.5 -> matched.
+        shape = (40, 40)
+        true_masks, poly = _square_mask(shape, 5, 5, 10, label=1)
+        shifted_xy = poly[:, [1, 0]] + np.array([2.0, 0.0])
+        metrics = evaluate_segmentation([shifted_xy], true_masks, pixel_size_um=1.0)
+        assert metrics["n_tp"] == 1
+        assert metrics["dice_matched"] == pytest.approx(0.8, abs=0.05)
+        assert metrics["dice_pixel"] == pytest.approx(0.8, abs=0.05)
+
+    def test_merge_error_visible_in_dice_matched_not_dice_pixel(self):
+        # Two adjacent true squares fully covered by ONE merged prediction:
+        # pixel Dice stays high (coverage is perfect), but the merged
+        # prediction can match at most one true instance and its per-pair
+        # Dice is poor -- the split/merge blindness dice_pixel has by design.
+        shape = (40, 60)
+        true_masks = np.zeros(shape, dtype=np.int32)
+        m1, _ = _square_mask(shape, 10, 10, 10, label=1)
+        m2, _ = _square_mask(shape, 10, 20, 10, label=2)
+        true_masks[m1 == 1] = 1
+        true_masks[m2 == 2] = 2
+        merged_rc = np.array(
+            [[10.0, 10.0], [10.0, 30.0], [20.0, 30.0], [20.0, 10.0]], dtype=np.float64
+        )
+        merged_xy = merged_rc[:, [1, 0]]
+        metrics = evaluate_segmentation([merged_xy], true_masks, pixel_size_um=1.0)
+        assert metrics["dice_pixel"] > 0.9
+        assert metrics["dice_matched"] < 0.75
+        assert metrics["recall"] <= 0.5

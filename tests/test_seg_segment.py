@@ -4,7 +4,82 @@ import pytest
 import tifffile
 
 from astrolabe._utils import ImageSpec
-from astrolabe.seg._segment import _to_hwc, _load_all_channels
+from astrolabe.seg._segment import _to_hwc, _load_all_channels, _masks_to_adata, _um_to_px
+
+
+def _plain_spec(shape_hw):
+    return ImageSpec(
+        path="unused.tif",
+        pixel_size_um=1.0,
+        dimension_order="YX",
+        full_shape=tuple(shape_hw),
+        level_shapes=[tuple(shape_hw)],
+        level_scales=[(1.0, 1.0)],
+    )
+
+
+class TestMasksToAdata:
+    def test_border_instance_contour_closed_and_flagged(self):
+        # A label flush against the image border: the contour must follow
+        # the border (padded sub-mask -> closed contour, full area), not be
+        # cut by a straight chord; and on_image_edge must flag it.
+        masks = np.zeros((20, 20), dtype=np.int32)
+        masks[0:6, 0:6] = 1     # touches top-left border
+        masks[10:14, 10:14] = 2  # interior
+        adata = _masks_to_adata(masks, _plain_spec(masks.shape))
+
+        assert adata.n_obs == 2
+        assert adata.obs["on_image_edge"].tolist() == [True, False]
+        # Border cell's polygon must enclose (approximately) its full 6x6
+        # pixel area -- an open contour closed by a chord loses ~half of it.
+        border_area = float(adata.obs["cell_area"].iloc[0])
+        interior_area = float(adata.obs["cell_area"].iloc[1])
+        assert border_area > 0.8 * 36.0
+        assert interior_area > 0.8 * 16.0
+
+    def test_min_area_filter_drops_speckles(self):
+        masks = np.zeros((20, 20), dtype=np.int32)
+        masks[5:13, 5:13] = 1  # 8x8 cell
+        masks[16, 16] = 2      # single-pixel speckle
+        adata = _masks_to_adata(masks, _plain_spec(masks.shape), min_area_um2=4.0)
+        assert adata.n_obs == 1
+        assert list(adata.obs_names) == ["1"]
+
+    def test_nonconsecutive_labels_handled(self):
+        masks = np.zeros((20, 20), dtype=np.int32)
+        masks[2:6, 2:6] = 3   # labels 1 and 2 absent
+        masks[10:14, 10:14] = 7
+        adata = _masks_to_adata(masks, _plain_spec(masks.shape))
+        assert adata.n_obs == 2
+        assert list(adata.obs_names) == ["3", "7"]
+        assert all(len(np.asarray(p)) >= 3 for p in adata.obsm["cell_boundaries"])
+
+
+class TestUmToPxFourCorners:
+    def test_rotated_affine_bbox_covers_full_region(self):
+        # 90-degree rotation: px->um affine maps (col, row) -> (-row, col).
+        # A 2-corner mapping of the um bbox [(0,0), (10,20)] through the
+        # inverse would span only a diagonal pair and miss the true pixel
+        # extent; all four corners must define the bbox.
+        affine = np.array(
+            [[0.0, -1.0, 0.0],
+             [1.0,  0.0, 0.0],
+             [0.0,  0.0, 1.0]],
+            dtype=np.float64,
+        )
+        spec = ImageSpec(
+            path="unused.tif",
+            pixel_size_um=1.0,
+            dimension_order="YX",
+            full_shape=(100, 100),
+            level_shapes=[(100, 100)],
+            level_scales=[(1.0, 1.0)],
+            registration_affine=affine,
+        )
+        # um bbox x in [-20, 0], y in [0, 10] maps back to cols 0..10, rows 0..20.
+        row_min, row_max, col_min, col_max = _um_to_px(-20.0, 0.0, 0.0, 10.0, spec)
+        assert row_min == 0 and row_max == 20
+        assert col_min == 0 and col_max == 10
 
 
 class TestToHwc:

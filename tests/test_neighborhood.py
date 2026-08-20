@@ -1,5 +1,6 @@
-"""Tests for nhood_enrichment Welford variance algorithm (audit fix 2.1)
-and the n_jobs parallelism added to nhood_enrichment / ligrec."""
+"""Tests for the neighborhood-analysis module: nhood_enrichment permutation
+z-scores, co_occurrence ring semantics, ligrec gating/p-values, and the
+n_jobs parallelism added to nhood_enrichment / ligrec."""
 import numpy as np
 import pandas as pd
 import anndata as ad
@@ -66,9 +67,11 @@ class TestNhoodEnrichment:
             adata2.uns["nhood_enrichment"]["zscore"],
         )
 
-    def test_welford_variance_not_negative(self):
-        # With catastrophic cancellation the old sum-of-squares method could
-        # produce negative variance. Welford's algorithm prevents this.
+    def test_permutation_variance_numerically_stable(self):
+        # With catastrophic cancellation a single-pass sum-of-squares method
+        # could produce negative variance; the two-pass mean-then-deviations
+        # computation (which replaced an earlier Welford implementation when
+        # the loop was parallelized) must not.
         # Use a large homogeneous graph to stress-test variance stability.
         n = 100
         adata = _adata_with_neighbors(n=n, seed=7)
@@ -152,11 +155,12 @@ class TestCoOccurrence:
         # thresholds=[10, 30]: ring 1 = [0,10] contains exactly the paired
         # partner (real, strong co-localization); ring 2 = (10,30] contains
         # nothing at all for any cell (its only real neighbor was already
-        # captured by ring 1). A correct annular ring 2 should read as "no
-        # local structure" (ratio ~0, since no neighbor of any type falls in
-        # that ring) -- the old cumulative code would instead report ring 2
-        # identical to ring 1 (~2.0), since `dists<=30` still includes the
-        # same distance-3 pair with nothing new to dilute or change it.
+        # captured by ring 1). A correct annular ring 2 is *empty* -- NaN,
+        # "no data at this scale" (squidpy's convention too), NOT 0.0
+        # (which would falsely read as perfect avoidance) -- while the old
+        # cumulative code would instead report ring 2 identical to ring 1
+        # (~2.0), since `dists<=30` still includes the same distance-3 pair
+        # with nothing new to dilute or change it.
         m = 15
         centers = np.column_stack([np.arange(m) * 1000.0, np.zeros(m)])
         a_coords = centers
@@ -175,7 +179,31 @@ class TestCoOccurrence:
         occ = result["occ"]
 
         assert occ[a_idx, b_idx, 0] == pytest.approx(2.0, rel=0.05)  # ring 1: strong
-        assert occ[a_idx, b_idx, 1] < 0.5  # ring 2: no structure, NOT ~2.0 again
+        # ring 2: empty -> NaN for every type pair, NOT ~2.0 again and NOT 0.0
+        assert np.isnan(occ[:, :, 1]).all()
+
+    def test_empty_ring_is_nan_not_zero(self):
+        # Regression: an empty ring used to be filled with 0.0 -- the value
+        # for "perfect avoidance" -- instead of NaN ("no data at this
+        # scale"). Two cells 5um apart, thresholds [10, 20]: ring 2 (10,20]
+        # has no pairs at all.
+        adata = ad.AnnData(X=np.zeros((2, 1), dtype=np.float32))
+        adata.obsm["spatial"] = np.array([[0.0, 0.0], [5.0, 0.0]], dtype=np.float32)
+        adata.obs["ct"] = ["A", "B"]
+
+        co_occurrence(adata, "ct", interval=np.array([10.0, 20.0]))
+        occ = adata.uns["co_occurrence"]["occ"]
+        assert np.isfinite(occ[0, 1, 0])  # ring 1 has the real pair
+        assert np.isnan(occ[:, :, 1]).all()  # ring 2 is empty -> NaN
+
+    def test_unsorted_interval_raises(self):
+        adata = ad.AnnData(X=np.zeros((5, 1), dtype=np.float32))
+        adata.obsm["spatial"] = np.random.default_rng(0).uniform(0, 50, (5, 2)).astype(np.float32)
+        adata.obs["ct"] = ["A", "B", "A", "B", "A"]
+        with pytest.raises(ValueError, match="strictly increasing"):
+            co_occurrence(adata, "ct", interval=np.array([50.0, 10.0, 30.0]))
+        with pytest.raises(ValueError, match="strictly increasing"):
+            co_occurrence(adata, "ct", interval=np.array([-5.0, 10.0]))
 
 
 class TestCentralityScoresMaxCloseness:
@@ -320,6 +348,65 @@ class TestLigrecCPUPath:
         adata = _adata_for_ligrec()
         ligrec(adata, "cell_type", lr_pairs, n_perms=10, seed=0)
         assert adata.uns["ligrec"]["metadata"]["spatial_restricted"] is True
+
+    def test_expr_frac_gate_nans_untested_pairs(self):
+        # CellPhoneDB expressing-fraction gate: type A never expresses the
+        # ligand (gene_0 == 0 in every A cell), so every (sender=A, *) column
+        # for that LR pair must be NaN -- untested, not scored -- in both
+        # means and pvalues. B expresses everything, so (B, A) and (B, B)
+        # stay tested (finite).
+        lr_pairs = pd.DataFrame({"ligand": ["gene_0"], "receptor": ["gene_1"]})
+        adata = _adata_for_ligrec(n=40, seed=2)
+        a_mask = (adata.obs["cell_type"] == "A").to_numpy()
+        adata.X[a_mask, 0] = 0.0  # A never expresses the ligand
+        adata.X[~a_mask, :] += 0.5  # B robustly expresses everything
+
+        ligrec(adata, "cell_type", lr_pairs, n_perms=20, seed=0, expr_frac_threshold=0.1)
+        means = adata.uns["ligrec"]["means"]
+        pvalues = adata.uns["ligrec"]["pvalues"]
+        for receiver in ("A", "B"):
+            assert np.isnan(means.loc[("gene_0", "gene_1"), ("A", receiver)])
+            assert np.isnan(pvalues.loc[("gene_0", "gene_1"), ("A", receiver)])
+        for receiver in ("A", "B"):
+            assert np.isfinite(means.loc[("gene_0", "gene_1"), ("B", receiver)])
+            assert np.isfinite(pvalues.loc[("gene_0", "gene_1"), ("B", receiver)])
+
+    def test_zero_edge_pair_is_nan_not_zero(self):
+        # Two spatially separated blobs whose KNN graph never connects them:
+        # cross-type (A, B) columns have zero spatial edges, which must be
+        # NaN (no contact observed), not a fabricated score of 0 with p ~ 1.
+        rng = np.random.default_rng(3)
+        n_half = 20
+        blob_a = rng.normal((0.0, 0.0), 2.0, (n_half, 2))
+        blob_b = rng.normal((10_000.0, 10_000.0), 2.0, (n_half, 2))
+        X = rng.random((2 * n_half, 4)).astype(np.float32) + 0.5
+        adata = ad.AnnData(X=X, obsm={"spatial": np.vstack([blob_a, blob_b]).astype(np.float32)})
+        adata.var_names = [f"gene_{i}" for i in range(4)]
+        adata.obs["cell_type"] = ["A"] * n_half + ["B"] * n_half
+        spatial_neighbors(adata, n_neighbors=5)
+
+        lr_pairs = pd.DataFrame({"ligand": ["gene_0"], "receptor": ["gene_1"]})
+        ligrec(adata, "cell_type", lr_pairs, n_perms=20, seed=0)
+        means = adata.uns["ligrec"]["means"]
+        pvalues = adata.uns["ligrec"]["pvalues"]
+        assert np.isnan(means.loc[("gene_0", "gene_1"), ("A", "B")])
+        assert np.isnan(pvalues.loc[("gene_0", "gene_1"), ("A", "B")])
+        assert np.isfinite(means.loc[("gene_0", "gene_1"), ("A", "A")])
+        assert np.isfinite(pvalues.loc[("gene_0", "gene_1"), ("A", "A")])
+
+    def test_corr_method_adds_adjusted_pvalues(self):
+        lr_pairs = pd.DataFrame({"ligand": ["gene_0", "gene_2"], "receptor": ["gene_1", "gene_3"]})
+        adata = _adata_for_ligrec(n=40, seed=4)
+        ligrec(adata, "cell_type", lr_pairs, n_perms=20, seed=0, corr_method="fdr_bh")
+        result = adata.uns["ligrec"]
+        assert "pvalues_adj" in result
+        adj = result["pvalues_adj"]
+        raw = result["pvalues"]
+        assert adj.shape == raw.shape
+        finite = np.isfinite(raw.to_numpy())
+        # FDR-BH adjusted p is never below the raw p.
+        assert (adj.to_numpy()[finite] >= raw.to_numpy()[finite] - 1e-12).all()
+        assert result["metadata"]["corr_method"] == "fdr_bh"
 
 
 class TestLigrecPlot:

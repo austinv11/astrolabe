@@ -8,7 +8,8 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from astrolabe._utils import with_adata
+from astrolabe._constants import UNS_XENIUM_SEGMENTATION_KEY
+from astrolabe._utils import _resolve_transcripts, with_adata
 
 __all__ = ["assign_transcripts", "create_compartment_layers"]
 
@@ -17,9 +18,44 @@ log = logging.getLogger(__name__)
 _CHUNK = 500_000  # transcripts per processing batch
 
 
+def _normalize_feature_names(feat_arr: np.ndarray) -> np.ndarray:
+    """Decode bytes feature names to str.
+
+    Transcript tables read through some parquet/HDF5 paths carry feature
+    names as ``bytes``; left as-is they never match str ``var_names`` and
+    every transcript is silently skipped.
+    """
+    if feat_arr.dtype.kind == "S" or (
+        feat_arr.dtype == object and len(feat_arr) > 0 and isinstance(feat_arr[0], bytes)
+    ):
+        return np.array(
+            [f.decode() if isinstance(f, bytes) else str(f) for f in feat_arr],
+            dtype=object,
+        )
+    return feat_arr
+
+
+def _dedup_point_matches(
+    pt_idx_raw: np.ndarray, poly_idx_raw: np.ndarray, poly_areas: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve points matching >1 overlapping polygon to exactly one match.
+
+    Ties are broken to the **smallest-area** polygon rather than STRtree
+    insertion order — deterministic under any polygon ordering, and the
+    smallest containing polygon is the most specific claim on the point
+    (an enclosing over-segmented giant never steals a transcript from the
+    small cell actually drawn around it).
+    """
+    order = np.lexsort((poly_areas[poly_idx_raw], pt_idx_raw))
+    pt_sorted = pt_idx_raw[order]
+    poly_sorted = poly_idx_raw[order]
+    _, first_idx = np.unique(pt_sorted, return_index=True)
+    return pt_sorted[first_idx], poly_sorted[first_idx]
+
+
 def assign_transcripts(
     adata: ad.AnnData,
-    transcripts: "object",  # pyarrow.Table | pd.DataFrame
+    transcripts: "object" = None,  # pyarrow.Table | pd.DataFrame | None
     *,
     x_col: str = "x_location",
     y_col: str = "y_location",
@@ -51,7 +87,11 @@ def assign_transcripts(
         Transcript table as a :class:`pyarrow.Table` (e.g. from
         :func:`~astrolabe.io.read_xenium_transcripts`) or
         :class:`pandas.DataFrame`.  Must contain columns *x_col*, *y_col*,
-        and *feature_col*.
+        and *feature_col*.  ``None`` (default) uses ``adata.uns['transcripts']``
+        — present whenever *adata* descends from a ``read_xenium`` load (e.g. a
+        :func:`~astrolabe.seg.voronoi_resegment` result), and already culled
+        to the region of interest if the object was cropped with
+        :func:`~astrolabe.pp.crop`.
     x_col, y_col
         Column names for transcript x/y coordinates in µm.
     feature_col
@@ -76,10 +116,11 @@ def assign_transcripts(
 
     Examples
     --------
-    >>> new_cells = ab.seg.segment_cellpose(mdata, channel="DAPI", model_type="nuclei")
-    >>> transcripts = ab.io.read_xenium_transcripts("Xenium_run/")
-    >>> # strict containment only
-    >>> ab.seg.assign_transcripts(new_cells, transcripts)
+    >>> # a voronoi_resegment result inherits uns['transcripts'] -- no table needed:
+    >>> ab.seg.assign_transcripts(voronoi_cells, boundaries_key='voronoi_boundaries')
+    >>> # a fresh segmentation AnnData has no uns['transcripts'] -- pass one:
+    >>> new_cells = ab.seg.segment_cellpose(mdata, channel="DAPI")
+    >>> ab.seg.assign_transcripts(new_cells, mdata['xenium'].uns['transcripts'])
     >>> # also capture transcripts up to 5 µm outside the nearest cell boundary
     >>> ab.seg.assign_transcripts(new_cells, transcripts, max_assign_distance_um=5.0)
     """
@@ -88,6 +129,7 @@ def assign_transcripts(
     from shapely.geometry import Polygon as _Polygon
     import scipy.sparse as sp
 
+    transcripts = _resolve_transcripts(adata, transcripts, "assign_transcripts")
     try:
         import pyarrow as _pa
     except ImportError:
@@ -115,7 +157,7 @@ def assign_transcripts(
 
     x_arr = df[x_col].to_numpy(dtype=np.float64)
     y_arr = df[y_col].to_numpy(dtype=np.float64)
-    feat_arr = df[feature_col].to_numpy()
+    feat_arr = _normalize_feature_names(df[feature_col].to_numpy())
     n_transcripts = len(x_arr)
 
     log.info("assign_transcripts: %d transcripts, %d cells", n_transcripts, adata.n_obs)
@@ -127,6 +169,7 @@ def assign_transcripts(
         cell_polys.append(_Polygon(coords) if len(coords) >= 3 else _Polygon())
 
     tree = _STRtree(cell_polys)
+    poly_areas = np.array([p.area for p in cell_polys], dtype=np.float64)
 
     # Unique genes
     gene_names = sorted(set(feat_arr.tolist()))
@@ -147,18 +190,20 @@ def assign_transcripts(
         # result shape (2, N_hits):
         #   result[0] = input point indices (relative to pts)
         #   result[1] = tree polygon indices
-        result = tree.query(pts, predicate="within")
+        # predicate="covered_by" (not "within"): "within" is
+        # boundary-exclusive, so a transcript landing exactly on a polygon
+        # edge/vertex matched no cell and silently fell through.
+        result = tree.query(pts, predicate="covered_by")
         if result.shape[1] == 0:
             continue
 
         # A transcript within >1 overlapping cell polygon otherwise appears
         # once per overlapping cell here, double-counting it into every
         # overlapping cell's totals instead of exactly one. Deduplicate to
-        # the first (arbitrary but deterministic) matching cell per point --
-        # see the identical fix/comment in create_compartment_layers above.
+        # one match per point (smallest-area polygon on ties) -- see the
+        # identical fix/comment in create_compartment_layers below.
         pt_idx_raw, poly_idx_raw = result[0], result[1]
-        _, first_idx = np.unique(pt_idx_raw, return_index=True)
-        pt_idx_chunk, poly_idx = pt_idx_raw[first_idx], poly_idx_raw[first_idx]
+        pt_idx_chunk, poly_idx = _dedup_point_matches(pt_idx_raw, poly_idx_raw, poly_areas)
         global_pt_idx = start + pt_idx_chunk
         assigned[global_pt_idx] = True
 
@@ -225,20 +270,36 @@ def assign_transcripts(
         n_assigned, n_transcripts, pct,
     )
 
-    if not inplace:
-        adata = adata.copy()
-
-    # AnnData validates shape on X assignment; set _var first so n_vars matches.
-    adata._var = pd.DataFrame(index=pd.Index(gene_names, name="gene_ids"))
-    adata.X = X
-
-    return None if inplace else adata
+    # Build the result through the public, fully-validated AnnData
+    # constructor (never by assigning private attributes like `_var`, which
+    # bypasses every dimension check). layers/varm are deliberately not
+    # carried over: n_vars changes here, so any existing per-var structure
+    # would be invalid.
+    new = ad.AnnData(
+        X=X,
+        obs=adata.obs.copy(),
+        var=pd.DataFrame(index=pd.Index(gene_names, name="gene_ids")),
+        uns=dict(adata.uns),
+        obsm=dict(adata.obsm),
+        obsp=dict(adata.obsp),
+    )
+    if inplace:
+        # In-place var-dimension changes have no public AnnData API;
+        # _init_as_actual is the exact code path AnnData.__init__ delegates
+        # to, so the caller's object is rebuilt through the same validated
+        # construction as `new` above.
+        adata._init_as_actual(
+            X=new.X, obs=new.obs, var=new.var, uns=new.uns,
+            obsm=dict(new.obsm), obsp=dict(new.obsp),
+        )
+        return None
+    return new
 
 
 @with_adata
 def create_compartment_layers(
     adata: ad.AnnData,
-    transcripts: "object",  # pyarrow.Table | pd.DataFrame
+    transcripts: "object" = None,  # pyarrow.Table | pd.DataFrame | None
     *,
     x_col: str = "x_location",
     y_col: str = "y_location",
@@ -256,16 +317,36 @@ def create_compartment_layers(
 
     Creates three sparse count layers aligned with ``adata.X`` (same shape):
 
-    * **nucleus** — transcripts confirmed inside nuclear boundaries (uses the
-      Xenium ``overlaps_nucleus`` column directly when present; falls back to
-      STRtree containment against ``obsm[nucleus_boundaries_key]``).
-    * **cytoplasm** — transcripts inside cell boundaries but outside the nucleus.
+    * **nucleus** — transcripts inside *their assigned cell's own* nucleus
+      boundary. A transcript inside a *neighboring* cell's nucleus but
+      assigned to this cell counts as this cell's cytoplasm, never as
+      nuclear signal. Uses STRtree containment against
+      ``obsm[nucleus_boundaries_key]`` (row-aligned with the cell
+      boundaries); the Xenium ``overlaps_nucleus`` column is used as a fast
+      path **only** when ``uns['xenium_native_segmentation']`` is ``True``
+      (set by :func:`~astrolabe.io.read_xenium`), i.e. when the boundaries
+      are still the unmodified Xenium originals that column was computed
+      against — for any re-segmentation the column describes the *wrong*
+      nuclei and the STRtree path is used instead (logged).
+    * **cytoplasm** — transcripts inside cell boundaries but outside their
+      own cell's nucleus.
     * **ambient** — transcripts outside all cells, assigned to the nearest cell
       centroid (optionally capped by *max_ambient_distance_um*).
 
-    Transcripts whose feature name is not in ``adata.var_names`` are silently
-    skipped.  If no nucleus information is available, only the cytoplasm and
-    ambient layers are written and a warning is emitted.
+    Transcripts whose feature name is not in ``adata.var_names`` are skipped
+    (with a summary count in the log); if *every* transcript is skipped this
+    way, a :class:`ValueError` is raised instead of silently writing three
+    all-zero layers. If no nucleus information is available, only the
+    cytoplasm and ambient layers are written and a warning is emitted.
+
+    .. note::
+        The three layers partition the *transcript table passed in*, not
+        ``adata.X``: ``nucleus + cytoplasm + ambient`` sums transcripts of
+        this table (minus skipped features and out-of-range ambient), which
+        only equals ``X`` when ``X`` was built from the same table with the
+        same assignment rule. Xenium's shipped ``X`` uses its own on-device
+        assignment, so small discrepancies against these layers are
+        expected and are not an error.
 
     Parameters
     ----------
@@ -274,7 +355,10 @@ def create_compartment_layers(
         polygons in ``obsm[cell_boundaries_key]``.
     transcripts
         Transcript table (:class:`pyarrow.Table` or :class:`pandas.DataFrame`).
-        Must contain *x_col*, *y_col*, and *feature_col* columns.
+        Must contain *x_col*, *y_col*, and *feature_col* columns.  ``None``
+        (default) uses the modality's own ``uns['transcripts']`` (loaded by
+        :func:`~astrolabe.io.read_xenium`, kept row-synced by filtering steps,
+        and culled to the region of interest by :func:`~astrolabe.pp.crop`).
     modality
         For :class:`~mudata.MuData`: modality key.
     x_col, y_col
@@ -289,7 +373,9 @@ def create_compartment_layers(
     overlaps_nucleus_col
         Transcript table column name with a boolean flag indicating nuclear
         overlap (Xenium-native ``overlaps_nucleus``).  Set to ``None`` to force
-        STRtree lookup even when the column exists.
+        STRtree lookup even when the column exists.  Even when present, the
+        column is only trusted when ``uns['xenium_native_segmentation']`` is
+        ``True`` — see the nucleus layer description above.
     spatial_key
         ``obsm`` key for cell centroids (µm); used for ambient KDTree lookup.
     max_ambient_distance_um
@@ -300,8 +386,7 @@ def create_compartment_layers(
 
     Examples
     --------
-    >>> transcripts = ab.io.read_xenium_transcripts(mdata)
-    >>> ab.seg.create_compartment_layers(mdata, transcripts)
+    >>> ab.seg.create_compartment_layers(mdata)   # uses uns['transcripts']
     >>> mdata['xenium'].layers['nucleus'].shape   # (n_cells, n_genes)
     """
     from shapely import points as _shapely_points
@@ -310,6 +395,7 @@ def create_compartment_layers(
     from scipy.spatial import cKDTree
     import scipy.sparse as sp
 
+    transcripts = _resolve_transcripts(adata, transcripts, "create_compartment_layers")
     try:
         import pyarrow as _pa
     except ImportError:
@@ -330,7 +416,7 @@ def create_compartment_layers(
 
     x_arr = df[x_col].to_numpy(dtype=np.float64)
     y_arr = df[y_col].to_numpy(dtype=np.float64)
-    feat_arr = df[feature_col].to_numpy()
+    feat_arr = _normalize_feature_names(df[feature_col].to_numpy())
     n_transcripts = len(x_arr)
 
     # Map gene names → var column indices; unknowns stay at -1 (skipped)
@@ -348,18 +434,27 @@ def create_compartment_layers(
         coords = np.asarray(cell_coords)
         cell_polys.append(_Polygon(coords) if len(coords) >= 3 else _Polygon())
     cell_tree = _STRtree(cell_polys)
+    cell_areas = np.array([p.area for p in cell_polys], dtype=np.float64)
 
-    # Determine nuclear classification strategy
+    # Determine nuclear classification strategy. The Xenium-native
+    # overlaps_nucleus fast path is only valid for the unmodified Xenium
+    # segmentation the column was computed against: applied to any other
+    # segmentation it books transcripts overlapping a *neighboring* cell's
+    # (original Xenium) nucleus as nuclear signal of whatever foreign cell
+    # they were assigned to.
     nuc_strategy: str
     nuc_flag: np.ndarray | None = None
     nuc_tree: "_STRtree | None" = None
+    has_flag_col = overlaps_nucleus_col is not None and overlaps_nucleus_col in df.columns
+    native_seg = bool(adata.uns.get(UNS_XENIUM_SEGMENTATION_KEY, False))
 
-    if overlaps_nucleus_col is not None and overlaps_nucleus_col in df.columns:
+    if has_flag_col and native_seg:
         nuc_strategy = "fast"
         nuc_flag = df[overlaps_nucleus_col].to_numpy(dtype=bool)
         log.info(
-            "create_compartment_layers: using column '%s' for nuclear classification",
-            overlaps_nucleus_col,
+            "create_compartment_layers: using column '%s' for nuclear classification "
+            "(uns['%s'] confirms unmodified Xenium segmentation)",
+            overlaps_nucleus_col, UNS_XENIUM_SEGMENTATION_KEY,
         )
     elif nucleus_boundaries_key in adata.obsm:
         nuc_strategy = "strtree"
@@ -368,14 +463,32 @@ def create_compartment_layers(
             coords = np.asarray(nuc_coords)
             nuc_polys.append(_Polygon(coords) if len(coords) >= 3 else _Polygon())
         nuc_tree = _STRtree(nuc_polys)
-        log.info("create_compartment_layers: using nucleus STRtree for classification")
+        if has_flag_col:
+            log.info(
+                "create_compartment_layers: column '%s' is present but "
+                "uns['%s'] is not set — the segmentation is not (or not "
+                "provably) the unmodified Xenium original the column refers "
+                "to; using nucleus-boundary STRtree classification instead",
+                overlaps_nucleus_col, UNS_XENIUM_SEGMENTATION_KEY,
+            )
+        else:
+            log.info("create_compartment_layers: using nucleus STRtree for classification")
     else:
         nuc_strategy = "skip"
-        log.warning(
-            "create_compartment_layers: no nucleus information found — "
-            "writing only '%s' and '%s' layers (skipping '%s')",
-            layer_cytoplasm, layer_ambient, layer_nucleus,
-        )
+        if has_flag_col:
+            log.warning(
+                "create_compartment_layers: column '%s' is present but cannot "
+                "be trusted (uns['%s'] not set) and obsm['%s'] is absent — "
+                "writing only '%s' and '%s' layers (skipping '%s')",
+                overlaps_nucleus_col, UNS_XENIUM_SEGMENTATION_KEY,
+                nucleus_boundaries_key, layer_cytoplasm, layer_ambient, layer_nucleus,
+            )
+        else:
+            log.warning(
+                "create_compartment_layers: no nucleus information found — "
+                "writing only '%s' and '%s' layers (skipping '%s')",
+                layer_cytoplasm, layer_ambient, layer_nucleus,
+            )
 
     assigned = np.zeros(n_transcripts, dtype=bool)
     nuc_rows_list: list[np.ndarray] = []
@@ -389,7 +502,10 @@ def create_compartment_layers(
         chunk_end = min(chunk_start + _CHUNK, n_transcripts)
         pts = _shapely_points(x_arr[chunk_start:chunk_end], y_arr[chunk_start:chunk_end])
 
-        cell_result = cell_tree.query(pts, predicate="within")
+        # predicate="covered_by" (not "within"): "within" is
+        # boundary-exclusive, so a transcript landing exactly on a polygon
+        # edge/vertex matched no cell and silently fell through to ambient.
+        cell_result = cell_tree.query(pts, predicate="covered_by")
         if cell_result.shape[1] == 0:
             continue
 
@@ -399,11 +515,11 @@ def create_compartment_layers(
         # cell's totals downstream instead of exactly one, double-counting
         # it and breaking the documented nucleus/cytoplasm/ambient partition
         # contract (measured excess on real data: 592 of 10.55M
-        # transcripts). Deduplicate to the first (arbitrary but
-        # deterministic) matching cell per transcript point.
+        # transcripts). Deduplicate to one match per transcript point
+        # (smallest-area cell on ties -- deterministic under any polygon
+        # ordering, unlike STRtree insertion order).
         pt_local_raw, cell_row_raw = cell_result[0], cell_result[1]
-        _, first_idx = np.unique(pt_local_raw, return_index=True)
-        pt_local, cell_row = pt_local_raw[first_idx], cell_row_raw[first_idx]
+        pt_local, cell_row = _dedup_point_matches(pt_local_raw, cell_row_raw, cell_areas)
         global_pt = chunk_start + pt_local
         assigned[global_pt] = True
 
@@ -415,14 +531,18 @@ def create_compartment_layers(
         if nuc_strategy == "fast":
             is_nuc = nuc_flag[global_pt]  # type: ignore[index]
         elif nuc_strategy == "strtree":
+            # A transcript is nuclear only when inside its *own* assigned
+            # cell's nucleus (nucleus polygons are row-aligned with cell
+            # polygons, so "own" = matching row index). Testing "inside ANY
+            # nucleus" (the previous behavior) booked a transcript sitting
+            # in a *neighboring* cell's nucleus -- but assigned to this
+            # cell -- as this cell's nuclear signal.
             nuc_pts = _shapely_points(x_arr[global_pt], y_arr[global_pt])
-            nuc_res = nuc_tree.query(nuc_pts, predicate="within")  # type: ignore[union-attr]
-            in_nuc_set = set(nuc_res[0].tolist()) if nuc_res.shape[1] > 0 else set()
-            is_nuc = np.fromiter(
-                (i in in_nuc_set for i in range(len(global_pt))),
-                dtype=bool,
-                count=len(global_pt),
-            )
+            nuc_res = nuc_tree.query(nuc_pts, predicate="covered_by")  # type: ignore[union-attr]
+            is_nuc = np.zeros(len(global_pt), dtype=bool)
+            if nuc_res.shape[1] > 0:
+                own_nucleus = cell_row[nuc_res[0]] == nuc_res[1]
+                is_nuc[nuc_res[0][own_nucleus]] = True
         else:
             is_nuc = np.zeros(len(global_pt), dtype=bool)
 
@@ -465,8 +585,17 @@ def create_compartment_layers(
             [var_idx.get(feat_arr[i], -1) for i in unassigned_idx], dtype=np.int32
         )
         known_amb = gene_cols_amb >= 0
+        n_skipped += int((~known_amb).sum())
         amb_rows_arr = nearest_cell[known_amb].astype(np.int32)
         amb_cols_arr = gene_cols_amb[known_amb]
+
+    if n_transcripts > 0 and n_skipped >= n_transcripts:
+        raise ValueError(
+            "create_compartment_layers: every transcript's feature name failed "
+            "to match adata.var_names — the layers would be all zeros. This "
+            "usually means the transcript table and the AnnData use different "
+            "feature naming (check the feature_col values against var_names)."
+        )
 
     # Build sparse CSR layers
     def _build_csr(rows_list: list[np.ndarray], cols_list: list[np.ndarray]):

@@ -34,7 +34,10 @@ dependencies = [
     "matplotlib>=3.10.9",
     "mudata>=0.3.8",
     "pyarrow>=24.0.0",
-    "esda>=2.6.0",
+    # <3: tl relies on esda 2.x's retained-simulation attributes (.rlisas/.sim)
+    # and recomputes pseudo-p two-sided from them; the announced esda 3.0
+    # p-value convention change should be revalidated before unpinning.
+    "esda>=2.6.0,<3",
     "scanpy>=1.12.1",
     "scikit-image>=0.22",
     "scikit-learn>=1.5.0",
@@ -60,7 +63,7 @@ harmony  = [
     "harmonypy",
 ]
 som      = [
-    "minisom",
+    "minisom>=2.3.5,<3",
 ]
 dev      = [
     "ipykernel>=6",

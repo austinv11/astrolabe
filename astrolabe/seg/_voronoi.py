@@ -8,6 +8,7 @@ import anndata as ad
 import awkward as ak
 import numpy as np
 
+from astrolabe._constants import UNS_XENIUM_SEGMENTATION_KEY
 from astrolabe._utils import with_adata
 
 __all__ = ["voronoi_resegment"]
@@ -39,6 +40,14 @@ def voronoi_resegment(
     .. note::
         Voronoi boundaries are an approximation — they do not follow true cell
         membranes.  ``nucleus_boundaries`` are not modified.
+
+    .. warning::
+        Only the boundary polygons (and *area_key*) are replaced — ``X``
+        still reflects the **original** segmentation's transcript-to-cell
+        assignment. To rebuild expression counts against the new Voronoi
+        boundaries, run :func:`~astrolabe.seg.assign_transcripts` afterward
+        (it defaults to the object's own ``uns['transcripts']``, which this
+        function's output inherits). A warning is logged as a reminder.
 
     Parameters
     ----------
@@ -138,6 +147,17 @@ def voronoi_resegment(
     if area_key is not None:
         adata.obs[area_key] = areas.astype(np.float32)
         log.info("voronoi_resegment: updated obs[%r] with Voronoi areas", area_key)
+
+    # The boundaries no longer match whatever segmentation X (and any
+    # Xenium-native transcript flags) were computed against.
+    adata.uns[UNS_XENIUM_SEGMENTATION_KEY] = False
+    if adata.X is not None:
+        log.warning(
+            "voronoi_resegment: boundary polygons were replaced but X still "
+            "reflects the ORIGINAL segmentation's transcript-to-cell "
+            "assignment. Run seg.assign_transcripts to rebuild counts "
+            "against the new Voronoi boundaries."
+        )
 
     log.info("voronoi_resegment: done")
     return None if inplace else adata

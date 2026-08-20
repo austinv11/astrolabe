@@ -185,70 +185,124 @@ class TestCropTranscriptsSync:
         assert result.uns["transcripts"].num_rows == 1
 
 
-class TestCropSyncsSiblingModalitySpatialBounds:
-    def _make_mdata_with_image_sibling(self):
-        xen = _adata_with_transcripts()
-        xen.uns["spatial"] = {"lib_xen": {"images": {}}}
-        he = ad.AnnData(obs=pd.DataFrame(index=pd.Index([], name="cell_id", dtype=str)))
-        he.uns["spatial"] = {"lib_he": {"images": {}}}
-        mdata = md.MuData({"xenium": xen, "he": he})
-        mdata.uns["default_modality"] = "xenium"
-        return mdata
+_CROP_BOUNDS = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 10.0}
 
-    def test_not_inplace_does_not_touch_mdata_at_all(self):
-        # Regression test: inplace=False must leave *data* (mdata) completely
-        # untouched, including sibling modalities -- previously the sibling
-        # sync ran unconditionally, so an unrelated ab.pl.image(mdata,
-        # modality='he') call after an inplace=False crop would silently
-        # start rendering a stale cropped viewport instead of the full image.
-        mdata = self._make_mdata_with_image_sibling()
+
+def _make_multimodal_mdata():
+    # 'xenium': 4 cells (2 inside _REGION) + a transcripts table + uns['spatial'].
+    xen = _adata_with_transcripts()
+    xen.uns["spatial"] = {"lib_xen": {"images": {}}}
+    # 'he': image-only modality -- 0 obs, no obsm['spatial'], only uns['spatial'].
+    he = ad.AnnData(obs=pd.DataFrame(index=pd.Index([], name="cell_id", dtype=str)))
+    he.uns["spatial"] = {"lib_he": {"images": {}}}
+    # 'micro': micronuclei-like -- has obsm['spatial'] (1 of 3 inside _REGION)
+    # but NO uns['spatial']. The old sibling gate ("spatial" in uns) skipped
+    # this modality entirely.
+    micro = ad.AnnData(
+        obs=pd.DataFrame(index=[f"m{i}" for i in range(3)]),
+        obsm={"spatial": np.array([[1.0, 1.0], [50.0, 50.0], [90.0, 90.0]], dtype=np.float32)},
+    )
+    mdata = md.MuData({"xenium": xen, "he": he, "micro": micro})
+    mdata.uns["default_modality"] = "xenium"
+    return mdata
+
+
+class TestCropMuDataTypePreserving:
+    def test_not_inplace_returns_cropped_mudata_and_leaves_original_untouched(self):
+        mdata = _make_multimodal_mdata()
 
         result = crop(mdata, _REGION, inplace=False)
 
-        assert result.n_obs == 2
-        assert "spatial_bounds" not in mdata["he"].uns
-        assert "spatial_bounds" not in mdata["xenium"].uns
-
-    def test_not_inplace_on_a_copy_syncs_siblings_without_touching_original(self):
-        # The documented pattern for a fully-synced, non-destructive crop:
-        # copy the MuData, then crop the copy in place.
-        mdata = self._make_mdata_with_image_sibling()
-        mdata_crop = mdata.copy()
-
-        result = crop(mdata_crop, _REGION, inplace=True)
-
-        assert result is None
-        expected = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 10.0}
-        assert mdata_crop["he"].uns["spatial_bounds"] == expected
-        assert mdata_crop["xenium"].uns["spatial_bounds"] == expected
-        # Original mdata (and its 'he' sibling) fully untouched.
-        assert "spatial_bounds" not in mdata["he"].uns
+        assert isinstance(result, md.MuData)
+        assert result["xenium"].n_obs == 2
+        assert result["xenium"].uns["spatial_bounds"] == _CROP_BOUNDS
+        assert result["he"].uns["spatial_bounds"] == _CROP_BOUNDS
+        # Original completely untouched -- rows and viewport hints alike.
         assert mdata["xenium"].n_obs == 4
+        assert mdata["micro"].n_obs == 3
+        assert "spatial_bounds" not in mdata["xenium"].uns
+        assert "spatial_bounds" not in mdata["he"].uns
+        assert mdata["xenium"].uns["transcripts"].num_rows == 6
 
-    def test_inplace_syncs_sibling_bounds_too(self):
-        mdata = self._make_mdata_with_image_sibling()
+    def test_every_spatial_modality_subset_by_its_own_centroids(self):
+        # Each modality is masked by its OWN obsm['spatial'], not by a shared
+        # row mask -- and a modality with obsm['spatial'] but no uns['spatial']
+        # (the micronuclei shape) is no longer skipped.
+        mdata = _make_multimodal_mdata()
+
+        result = crop(mdata, _REGION, inplace=False)
+
+        assert result["micro"].n_obs == 1
+        assert list(result["micro"].obs_names) == ["m0"]
+        assert result["micro"].uns["spatial_bounds"] == _CROP_BOUNDS
+
+    def test_inplace_subsets_all_modalities_and_updates_global_index(self):
+        mdata = _make_multimodal_mdata()
 
         result = crop(mdata, _REGION, inplace=True)
 
         assert result is None
         assert mdata["xenium"].n_obs == 2
-        expected = {"xmin": 0.0, "xmax": 10.0, "ymin": 0.0, "ymax": 10.0}
-        assert mdata["xenium"].uns["spatial_bounds"] == expected
-        assert mdata["he"].uns["spatial_bounds"] == expected
+        assert mdata["micro"].n_obs == 1
+        assert mdata["xenium"].uns["spatial_bounds"] == _CROP_BOUNDS
+        assert mdata["he"].uns["spatial_bounds"] == _CROP_BOUNDS
+        # mdata.update() must have re-synced the global obs index (same
+        # contract as pipeline.filter_cells -- see tests/test_pipeline.py).
+        assert mdata.n_obs == 3
+        assert set(mdata.obs_names) == set(mdata["xenium"].obs_names) | set(
+            mdata["micro"].obs_names
+        )
 
-    def test_sibling_without_spatial_uns_is_left_untouched(self):
-        mdata = self._make_mdata_with_image_sibling()
-        del mdata["he"].uns["spatial"]
+    def test_transcripts_cropped_in_mudata_path(self):
+        mdata = _make_multimodal_mdata()
 
-        crop(mdata, _REGION, inplace=True)
+        result = crop(mdata, _REGION, inplace=False)
 
-        assert "spatial_bounds" not in mdata["he"].uns
+        tx = result["xenium"].uns["transcripts"]
+        assert tx.num_rows == 3
+        assert tx["feature_name"].to_pylist() == ["A", "B", "C"]
 
-    def test_plain_adata_input_has_no_sibling_propagation_error(self):
-        # A bare AnnData (not part of any MuData) has no siblings to sync --
-        # must not raise or behave differently from before this feature.
+    def test_image_only_modality_gets_bounds_hint_only(self):
+        # A 0-obs image modality has nothing to subset; the spatial_bounds
+        # stamp alone drives the renderer's pyramid-level and pixel-crop
+        # choice, so it must still land.
+        mdata = _make_multimodal_mdata()
+
+        result = crop(mdata, _REGION, inplace=False)
+
+        assert result["he"].n_obs == 0
+        assert result["he"].uns["spatial_bounds"] == _CROP_BOUNDS
+
+    def test_modality_without_spatial_info_left_unsubset_with_warning(self, caplog):
+        mdata = _make_multimodal_mdata()
+        tab = ad.AnnData(obs=pd.DataFrame(index=[f"t{i}" for i in range(3)]))
+        mdata.mod["tab"] = tab
+        mdata.update()
+
+        with caplog.at_level(logging.WARNING):
+            crop(mdata, _REGION, inplace=True)
+
+        assert "left unsubset" in caplog.text
+        assert mdata["tab"].n_obs == 3
+        assert "spatial_bounds" not in mdata["tab"].uns
+
+    def test_no_spatial_modality_anywhere_raises(self):
+        he = ad.AnnData(obs=pd.DataFrame(index=pd.Index([], name="cell_id", dtype=str)))
+        he.uns["spatial"] = {"lib_he": {"images": {}}}
+        mdata = md.MuData({"he": he})
+        with pytest.raises(KeyError):
+            crop(mdata, _REGION)
+
+    def test_modality_kwarg_removed(self):
+        mdata = _make_multimodal_mdata()
+        with pytest.raises(TypeError):
+            crop(mdata, _REGION, modality="xenium")
+
+    def test_plain_adata_input_returns_adata(self):
+        # AnnData in -> AnnData out, exactly as before.
         adata = _adata_with_transcripts()
         result = crop(adata, _REGION, inplace=False)
+        assert isinstance(result, ad.AnnData)
         assert result.n_obs == 2
 
 
@@ -353,22 +407,40 @@ class TestAutoCrop:
 
         assert result.n_obs == 10
 
-    def test_modality_forwarded_and_sibling_bounds_synced(self):
-        # auto_crop must delegate to crop() faithfully, including its
-        # MuData modality resolution and sibling spatial_bounds sync.
+    def _make_mdata_with_outlier(self):
         xen, _ = _adata_with_outlier()
         xen.uns["spatial"] = {"lib_xen": {"images": {}}}
         he = ad.AnnData(obs=pd.DataFrame(index=pd.Index([], name="cell_id", dtype=str)))
         he.uns["spatial"] = {"lib_he": {"images": {}}}
         mdata = md.MuData({"xenium": xen, "he": he})
         mdata.uns["default_modality"] = "xenium"
+        return mdata
 
-        result = auto_crop(mdata, inplace=True)
+    def test_mudata_inplace_crops_all_modalities(self):
+        # auto_crop must delegate to crop() faithfully: modality= picks whose
+        # centroids define the box, then every spatial modality is cropped
+        # and every modality gets the spatial_bounds stamp.
+        mdata = self._make_mdata_with_outlier()
+
+        result = auto_crop(mdata, modality="xenium", inplace=True)
 
         assert result is None
         assert mdata["xenium"].n_obs == 99
         assert "spatial_bounds" in mdata["he"].uns
         assert mdata["he"].uns["spatial_bounds"] == mdata["xenium"].uns["spatial_bounds"]
+        assert mdata.n_obs == mdata["xenium"].n_obs
+
+    def test_mudata_not_inplace_returns_cropped_mudata(self):
+        mdata = self._make_mdata_with_outlier()
+
+        result = auto_crop(mdata, inplace=False)
+
+        assert isinstance(result, md.MuData)
+        assert result["xenium"].n_obs == 99
+        assert result["he"].uns["spatial_bounds"] == result["xenium"].uns["spatial_bounds"]
+        # Original untouched.
+        assert mdata["xenium"].n_obs == 100
+        assert "spatial_bounds" not in mdata["he"].uns
 
 
 class TestRotateFlipSyncSpatialBounds:

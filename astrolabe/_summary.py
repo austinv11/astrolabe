@@ -94,7 +94,7 @@ def _classify_obs_col(col: str) -> str:
         col in _QC_EXPLICIT
         or col.startswith(("log1p_", "pct_counts_", "n_transcripts_", "pct_transcripts_"))
         or (col.startswith("n_") and col.endswith("_by_counts"))
-        or col.endswith(("_total", "_circularity", "_solidity", "_elongation"))
+        or col.endswith(("_total", "_circularity", "_solidity", "_aspect_ratio"))
         or (col.startswith(("n_", "pct_")) and col.endswith(("_probes", "_codewords")))
     ):
         return "QC"

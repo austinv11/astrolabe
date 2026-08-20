@@ -83,12 +83,14 @@ def nhood_enrichment(
     n_jobs: int = 1,
     key_added: str = "nhood_enrichment",
 ) -> None:
-    """Neighborhood enrichment permutation test.
+    """Neighborhood enrichment permutation test (Schapiro et al. 2017; Palla et al. 2022).
 
     For each pair of cell types (A, B), asks whether cells of type A and type B
     are connected in the spatial graph more (or less) than expected by chance.
     Labels are permuted ``n_perms`` times to build a null distribution; the
-    result is reported as a z-score.
+    result is reported as a z-score — the same statistic as histoCAT's
+    neighborhood analysis (Schapiro et al. 2017) and
+    ``squidpy.gr.nhood_enrichment`` (Palla et al. 2022).
 
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
 
@@ -131,7 +133,6 @@ def nhood_enrichment(
     """
     codes, categories = _category_codes(adata, groupby)
     n_types = len(categories)
-    n_cells = adata.n_obs
 
     adj = _get_conn_matrix(adata, neighbors_key).astype(bool)
     C = _one_hot(codes, n_types)
@@ -177,7 +178,7 @@ def co_occurrence(
     interval: tuple[float, float, int] | np.ndarray = (10.0, 500.0, 50),
     key_added: str = "co_occurrence",
 ) -> None:
-    """Co-occurrence probability ratio across spatial scales.
+    """Co-occurrence probability ratio across spatial scales (Palla et al. 2022).
 
     For each distance threshold *d* and each pair of cell types (A, B),
     computes the ratio:
@@ -215,7 +216,8 @@ def co_occurrence(
         ``obsm`` key for cell centroids in µm.
     interval
         Either a ``(start_µm, stop_µm, n_steps)`` tuple (evenly spaced) or a
-        1-D array of explicit distance thresholds in µm.
+        1-D array of explicit distance thresholds in µm (must be positive
+        and strictly increasing).
     key_added
         ``uns`` key to write results into.
 
@@ -224,7 +226,11 @@ def co_occurrence(
     Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
 
     ``occ``
-        (n_types × n_types × n_intervals) float array of co-occurrence ratios.
+        (n_types × n_types × n_intervals) float array of co-occurrence
+        ratios. Rings that contain no neighbor pairs at all (or no
+        neighbors of the conditioning type) are ``NaN`` — "no data at this
+        scale", matching ``squidpy.gr.co_occurrence`` — never ``0.0``,
+        which would falsely read as perfect avoidance.
     ``interval``
         1-D float array of distance thresholds used.
     ``groups``
@@ -237,14 +243,38 @@ def co_occurrence(
     """
     _check_single_library(adata)
 
+    # Resolve + validate thresholds once, shared by the CPU and GPU paths.
+    # Unsorted thresholds would silently produce negative-width "rings"
+    # (lo > hi -> empty masks) rather than an error.
+    if isinstance(interval, tuple) and len(interval) == 3:
+        thresholds = np.linspace(float(interval[0]), float(interval[1]), int(interval[2]))
+    else:
+        thresholds = np.asarray(interval, dtype=np.float64).ravel()
+    if len(thresholds) == 0:
+        raise ValueError("interval must contain at least one distance threshold")
+    if thresholds[0] <= 0 or (len(thresholds) > 1 and np.any(np.diff(thresholds) <= 0)):
+        raise ValueError(
+            f"interval thresholds must be positive and strictly increasing; got {thresholds!r}"
+        )
+
     if gpu_enabled():
         rsc = _require_rapids()
-        # Convert astrolabe interval format to ndarray for rsc
-        if isinstance(interval, tuple) and len(interval) == 3:
-            start, stop, n = interval
-            rsc_interval = np.linspace(float(start), float(stop), int(n))
-        else:
-            rsc_interval = np.asarray(interval, dtype=np.float64)
+        # rsc/squidpy require a Categorical cluster column; cast up front so
+        # a plain string column doesn't fail deep inside rsc.
+        if not isinstance(adata.obs[groupby].dtype, pd.CategoricalDtype):
+            adata.obs[groupby] = adata.obs[groupby].astype("category")
+        _, categories = _category_codes(adata, groupby)
+        # rsc/squidpy treat `interval` as n bin *edges* -> n-1 rings, whereas
+        # this function's own convention (and the CPU path) treats each of
+        # the n thresholds as the closing edge of a ring (the first ring
+        # being [0, thresholds[0]]). Prepending 0.0 makes squidpy's n+1
+        # edges produce exactly our n rings; storing interval[1:] (the ring
+        # *closing* edges) keeps occ's last axis and the stored thresholds
+        # the same length -- previously the stored interval had one more
+        # entry than occ had bins, breaking pl.co_occurrence_plot on every
+        # GPU result, and distances below thresholds[0] were silently
+        # dropped instead of forming the first ring.
+        rsc_interval = np.concatenate([[0.0], thresholds])
         rsc.gr.co_occurrence(
             adata,
             cluster_key=groupby,
@@ -255,8 +285,8 @@ def co_occurrence(
         result = adata.uns.pop(rsc_key)
         adata.uns[key_added] = {
             "occ": result["occ"],
-            "interval": result["interval"],
-            "groups": list(adata.obs[groupby].cat.categories),
+            "interval": np.asarray(result["interval"])[1:],
+            "groups": list(categories),
         }
         return
 
@@ -269,18 +299,15 @@ def co_occurrence(
         raise KeyError(f"obsm['{spatial_key}'] not found")
     coords = np.asarray(adata.obsm[spatial_key], dtype=np.float64)[:, :2]
 
-    if isinstance(interval, tuple) and len(interval) == 3:
-        thresholds = np.linspace(float(interval[0]), float(interval[1]), int(interval[2]))
-    else:
-        thresholds = np.asarray(interval, dtype=np.float64)
-
-    n_cells = len(coords)
-
     # Query all unique pairs within the maximum threshold
     tree = KDTree(coords)
     pairs = tree.query_pairs(float(thresholds[-1]), output_type="ndarray")  # (n_pairs, 2)
 
-    occ = np.zeros((n_types, n_types, len(thresholds)), dtype=np.float64)
+    # NaN, not 0.0: a ring with no observed neighbor pairs (or none of the
+    # conditioning type) carries no information at that scale. Filling 0.0
+    # instead read as "perfect avoidance" (ratio 0) -- squidpy yields NaN
+    # for the same case, and pl.co_occurrence_plot gaps NaN correctly.
+    occ = np.full((n_types, n_types, len(thresholds)), np.nan, dtype=np.float64)
 
     if len(pairs) > 0:
         dists = np.linalg.norm(coords[pairs[:, 0]] - coords[pairs[:, 1]], axis=1)
@@ -330,14 +357,17 @@ def co_occurrence(
             # marginal are themselves symmetric quantities here.
             ring_total = row_totals.sum()
             with np.errstate(divide="ignore", invalid="ignore"):
-                marginal_local = np.where(ring_total > 0, row_totals / ring_total, 0.0)
+                # NaN (not 0.0) wherever a ring holds no information: no
+                # pairs at all in the ring, no neighbors of the conditioning
+                # type A (row total 0), or a marginal of 0 for type B.
+                marginal_local = np.where(ring_total > 0, row_totals / ring_total, np.nan)
                 cond = np.where(
                     row_totals[:, None] > 0,
                     count_mat / row_totals[:, None],
-                    0.0,
+                    np.nan,
                 )
                 occ[:, :, k] = np.where(
-                    marginal_local[None, :] > 0, cond / marginal_local[None, :], 0.0
+                    marginal_local[None, :] > 0, cond / marginal_local[None, :], np.nan
                 )
 
     adata.uns[key_added] = {
@@ -605,7 +635,10 @@ def expression_by_distance(
             vals = mat[mask]
             mean_arr[k] = vals.mean(axis=0)
             if n_cells_arr[k] > 1:
-                se_arr[k] = vals.std(axis=0) / np.sqrt(n_cells_arr[k])
+                # ddof=1: the standard error of a mean uses the *sample*
+                # standard deviation (Bessel-corrected), not the population
+                # one -- ddof=0 understates SE, most at small bin counts.
+                se_arr[k] = vals.std(axis=0, ddof=1) / np.sqrt(n_cells_arr[k])
             else:
                 se_arr[k] = 0.0
 
@@ -635,7 +668,9 @@ def ligrec(
     layer: str | None = None,
     n_perms: int = 200,
     seed: int = 0,
-    threshold: float = 0.05,
+    expr_frac_threshold: float = 0.1,
+    report_alpha: float = 0.05,
+    corr_method: str | None = None,
     n_jobs: int = 1,
     key_added: str = "ligrec",
 ) -> None:
@@ -649,6 +684,14 @@ def ligrec(
     cross product of every cell of each type. Cell-type labels are permuted
     ``n_perms`` times to produce a null distribution and an empirical
     p-value.
+
+    Following CellPhoneDB, an LR pair is only *tested* for a given
+    (sender, receiver) pair when at least ``expr_frac_threshold`` of the
+    sender cluster's cells express the ligand **and** at least that fraction
+    of the receiver cluster's cells express the receptor (expression = any
+    nonzero value). Entries failing the gate — and cell-type pairs with no
+    spatial-graph edges at all — are ``NaN`` in both ``means`` and
+    ``pvalues``, never a fabricated 0 score or a p-value of ~1.
 
     By restricting to actual spatial neighbors the test identifies LR
     interactions that are plausible given the spatial architecture of the
@@ -688,8 +731,24 @@ def ligrec(
         final publication-quality p-values (slower).
     seed
         Random seed.
-    threshold
-        P-value threshold reported in the log summary (does not filter results).
+    expr_frac_threshold
+        CellPhoneDB expressing-fraction gate: minimum fraction of a
+        cluster's cells expressing the ligand (sender) / receptor
+        (receiver) for the pair to be tested at all; failing entries are
+        ``NaN``. ``0.1`` (default) is CellPhoneDB's own default. Forwarded
+        as ``threshold=`` to ``rsc.gr.ligrec`` on the GPU path, where it has
+        the same meaning. (An earlier version had a single ``threshold``
+        parameter that meant this gate on GPU but a report-only alpha on
+        CPU — two unrelated things under one name.)
+    report_alpha
+        P-value threshold used only in the log summary (does not filter
+        results).
+    corr_method
+        Optional multiple-testing correction (e.g. ``'fdr_bh'``,
+        ``'bonferroni'``) applied jointly across every tested
+        (LR pair × cell-type pair) p-value. ``None`` (default) skips it;
+        otherwise a ``pvalues_adj`` DataFrame (same shape as ``pvalues``)
+        is stored alongside the raw p-values.
     n_jobs
         Parallel workers for the CPU permutation loop (joblib, thread-backed
         — no extra memory copies since arrays are shared, not pickled).
@@ -707,11 +766,18 @@ def ligrec(
         :class:`pandas.DataFrame` — rows = (ligand, receptor) MultiIndex,
         columns = (sender, receiver) MultiIndex.  Values are the
         CellPhoneDB-style ``(mean(L) + mean(R)) / 2`` score over spatial
-        edges.
+        edges; ``NaN`` where the expressing-fraction gate failed or the
+        cell-type pair has no spatial edges. On the CPU path the per-edge
+        averaging weights each cell by its edge count (a spatial-graph
+        degree-weighted mean), unlike CellPhoneDB's unweighted per-cluster
+        cell mean.
     ``pvalues``
-        Same shape as ``means``; empirical p-values.
+        Same shape as ``means``; empirical p-values (``NaN`` where untested).
+    ``pvalues_adj``
+        Only when ``corr_method`` is given — corrected p-values.
     ``metadata``
-        Dict storing ``groupby``, ``n_perms``, ``threshold``.
+        Dict storing ``groupby``, ``n_perms``, ``expr_frac_threshold``,
+        ``report_alpha``, ``corr_method``, ``spatial_restricted``.
 
     Examples
     --------
@@ -748,22 +814,29 @@ def ligrec(
         # rsc.gr.ligrec expects 'source'/'target' column names
         interactions_df = lr_pairs.rename(columns={"ligand": "source", "receptor": "target"})
         with _gpu_X(adata):
+            # rsc's threshold= is the CellPhoneDB expressing-fraction gate --
+            # the same meaning as expr_frac_threshold here (the old code
+            # passed the CPU report-only alpha into it, silently gating GPU
+            # results at an unrelated value).
             rsc.gr.ligrec(
                 adata,
                 cluster_key=groupby,
                 interactions=interactions_df,
                 n_perms=n_perms,
-                threshold=threshold,
+                threshold=expr_frac_threshold,
                 key_added=key_added,
                 use_raw=False,
             )
         # Remap metadata from rsc DataFrame to astrolabe dict format
         result = adata.uns[key_added]
-        adata.uns[key_added] = {
+        out = {
             "means": result["means"],
             "pvalues": result["pvalues"],
             "metadata": {
-                "groupby": groupby, "n_perms": n_perms, "threshold": threshold,
+                "groupby": groupby, "n_perms": n_perms,
+                "expr_frac_threshold": expr_frac_threshold,
+                "report_alpha": report_alpha,
+                "corr_method": corr_method,
                 "spatial_restricted": False,
                 "note": (
                     "GPU path: non-spatial cluster-mean statistic, not "
@@ -771,6 +844,15 @@ def ligrec(
                 ),
             },
         }
+        if corr_method is not None:
+            from astrolabe.tl._spatial_stats import _adj_pvalues
+
+            pv = result["pvalues"]
+            adj = _adj_pvalues(pv.to_numpy(dtype=np.float64).ravel(), corr_method)
+            out["pvalues_adj"] = pd.DataFrame(
+                adj.reshape(pv.shape), index=pv.index, columns=pv.columns
+            )
+        adata.uns[key_added] = out
         return
 
     # Filter to genes present in adata
@@ -806,6 +888,23 @@ def ligrec(
     lig_expr = mat[np.ix_(edge_src, lig_idx)].astype(np.float64)   # (n_edges, n_lr)
     rec_expr = mat[np.ix_(edge_dst, rec_idx)].astype(np.float64)    # (n_edges, n_lr)
 
+    # CellPhoneDB expressing-fraction gate: fraction of each cluster's cells
+    # with nonzero expression of each ligand/receptor gene. Computed over
+    # *cells* (cluster membership), not edges -- it's a property of the
+    # cluster's expression, independent of the spatial graph.
+    type_counts = np.bincount(codes, minlength=n_types).astype(np.float64)
+    expr_sub = (mat[:, np.concatenate([lig_idx, rec_idx])] > 0).astype(np.float64)
+    frac = np.asarray((_one_hot(codes, n_types).T @ expr_sub))  # (n_types, 2*n_lr)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        frac = np.where(type_counts[:, None] > 0, frac / type_counts[:, None], np.nan)
+    lig_frac, rec_frac = frac[:, :n_lr], frac[:, n_lr:]
+    # tested[a*n_types+b, lr]: sender a expresses L and receiver b expresses
+    # R in at least expr_frac_threshold of their cells.
+    tested = (
+        (lig_frac[:, None, :] >= expr_frac_threshold)
+        & (rec_frac[None, :, :] >= expr_frac_threshold)
+    ).reshape(n_types * n_types, n_lr)
+
     # Cell-type pair flat index for each edge
     src_codes = codes[edge_src]
     dst_codes = codes[edge_dst]
@@ -813,13 +912,18 @@ def ligrec(
     ct_idx = src_codes * n_types + dst_codes     # (n_edges,)
 
     def _mean_component_by_ct(values: np.ndarray, ct_indices: np.ndarray) -> np.ndarray:
-        """Compute (n_ct, n_lr) mean of one component (L or R) by ct group."""
+        """Compute (n_ct, n_lr) mean of one component (L or R) by ct group.
+
+        Cell-type pairs with zero edges are NaN, not 0 -- "no spatial
+        contact observed" is absence of evidence, not a zero score
+        (squidpy's own convention is NaN too).
+        """
         scores = np.zeros((n_ct, n_lr), dtype=np.float64)
         counts = np.zeros(n_ct, dtype=np.float64)
         np.add.at(scores, ct_indices, values)
         np.add.at(counts, ct_indices, 1.0)
         with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(counts[:, None] > 0, scores / counts[:, None], 0.0)
+            return np.where(counts[:, None] > 0, scores / counts[:, None], np.nan)
 
     def _mean_by_ct(ct_indices: np.ndarray) -> np.ndarray:
         """CellPhoneDB-style score: (mean(L) + mean(R)) / 2 within each ct group."""
@@ -836,6 +940,8 @@ def ligrec(
         child_rng.shuffle(perm_codes)
         perm_ct_idx = perm_codes[edge_src] * n_types + perm_codes[edge_dst]
         perm_s = _mean_by_ct(perm_ct_idx)
+        # NaN perm scores (a permuted ct pair with zero edges) compare
+        # False -- counted as "not more extreme", the conservative choice.
         return (perm_s >= obs_scores).astype(np.float64)
 
     child_rngs = _spawn_rngs(seed, n_perms)
@@ -847,6 +953,12 @@ def ligrec(
     # (k+1)/(n+1) floor -- an exact 0 isn't a valid Monte Carlo p-value
     # estimate and breaks downstream -log10(p)/FDR steps.
     pvalues = (perm_ge + 1.0) / (n_perms + 1.0)  # (n_ct, n_lr)
+
+    # NaN out everything that was never a real test: entries failing the
+    # expressing-fraction gate, and zero-edge ct pairs (obs score NaN).
+    untested = ~tested | ~np.isfinite(obs_scores)
+    obs_scores = np.where(untested, np.nan, obs_scores)
+    pvalues = np.where(untested, np.nan, pvalues)
 
     # Build DataFrames
     lr_index = pd.MultiIndex.from_arrays(
@@ -860,22 +972,37 @@ def ligrec(
     means_df = pd.DataFrame(obs_scores.T, index=lr_index, columns=ct_index)
     pval_df = pd.DataFrame(pvalues.T, index=lr_index, columns=ct_index)
 
-    n_sig = int((pval_df < threshold).values.sum())
-    adata.uns[key_added] = {
+    result: dict = {
         "means": means_df,
         "pvalues": pval_df,
         "metadata": {
-            "groupby": groupby, "n_perms": n_perms, "threshold": threshold,
+            "groupby": groupby, "n_perms": n_perms,
+            "expr_frac_threshold": expr_frac_threshold,
+            "report_alpha": report_alpha,
+            "corr_method": corr_method,
             "spatial_restricted": True,
             "neighbors_key": neighbors_key,
         },
     }
+    if corr_method is not None:
+        from astrolabe.tl._spatial_stats import _adj_pvalues
+
+        adj = _adj_pvalues(pval_df.to_numpy(dtype=np.float64).ravel(), corr_method)
+        result["pvalues_adj"] = pd.DataFrame(
+            adj.reshape(pval_df.shape), index=lr_index, columns=ct_index
+        )
+
+    n_sig = int((pval_df < report_alpha).values.sum())
+    n_tested = int(np.isfinite(pvalues).sum())
+    adata.uns[key_added] = result
     log.info(
-        "ligrec: %d LR pairs × %d cell-type pairs; %d significant at p < %.2f.",
+        "ligrec: %d LR pairs × %d cell-type pairs (%d tested after the "
+        "expressing-fraction gate); %d significant at p < %.2f.",
         n_lr,
         n_ct,
+        n_tested,
         n_sig,
-        threshold,
+        report_alpha,
     )
 
 
@@ -937,9 +1064,14 @@ def composition(
             f"groupby and region_by must be different obs columns; both are '{groupby}'"
         )
 
+    # observed=False: declared-but-empty categories keep their row/column
+    # (as zeros) instead of being silently dropped -- matching
+    # centrality_scores, which likewise keeps a NaN row for every declared
+    # category. Routine after subsetting, since pandas/scanpy never prune
+    # unused categories automatically.
     counts = (
         adata.obs
-        .groupby([region_by, groupby], observed=True)
+        .groupby([region_by, groupby], observed=False)
         .size()
         .unstack(fill_value=0)
     )

@@ -322,11 +322,15 @@ def _extended_cat_colors(n: int, mode: Literal["light", "dark"]) -> list[str]:
 # Structured's open frame + gridlines on statistical (non-spatial) axes,
 # combined with Minimal's dot-marker legend swatches and SemiBold titles.
 #
-# A *list*, not a bare string: many astrolabe titles use symbols Inter
-# doesn't ship (nabla, times, etc.). matplotlib only does per-glyph font
-# fallback across a family *list* passed to set_fontfamily/fontfamily= --
-# a single explicit family name bypasses the font.sans-serif rcParam
-# fallback chain entirely and renders those glyphs as tofu/missing.
+# A *list*, not a bare string: matplotlib only does per-glyph font fallback
+# across a family *list* passed to set_fontfamily/fontfamily= -- a single
+# explicit family name bypasses the font.sans-serif rcParam fallback chain
+# entirely. CAVEAT: per-glyph fallback only works on raster (Agg) backends;
+# SVG output (the notebooks' save format) renders text as paths through a
+# single resolved font, so a glyph Inter lacks becomes a tofu box no matter
+# what the family list says. Rendered strings must therefore stick to
+# glyphs Inter actually ships: µ, ², ‖, R̄ are safe; ∇, ᵀ, ∈, ∝ are NOT
+# (keep those to docstrings; spell them out in titles/labels).
 TITLE_FONT = ["Inter SemiBold", "Segoe UI", "Arial", "DejaVu Sans"]
 
 
@@ -350,6 +354,9 @@ def _style_axes(ax, *, grid: bool = False) -> None:
     t = get_theme()
     if ax.get_title():
         ax.title.set_fontfamily(TITLE_FONT)
+        # weight must match the SemiBold file's internal weight (600) or
+        # findfont warns "Failed to find font weight normal" on every draw
+        ax.title.set_fontweight(600)
         ax.title.set_color(t.primary_ink)
     ax.tick_params(length=3, width=0.8)
     if grid:

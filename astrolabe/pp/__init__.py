@@ -9,15 +9,17 @@ calculate_xenium_qc_metrics
     Xenium-specific probe-type breakdown and control metrics.
 flag_controls
     Flag features as negative controls and compute per-cell control percentage.
+calculate_noise_floor
+    Estimate the panel's background noise floor from control-probe counts and flag genes at or below it.
 filter_cells
     Filter cells by QC thresholds on obs columns.
 filter_genes
     Filter genes/features by expression or type criteria.
 filter_isolated
-    Remove spatially isolated cells using a pre-computed kNN distance graph.
+    Remove spatially isolated cells based on their own outbound kNN distances.
 calculate_shape_metrics
-    Compute morphological shape metrics (area, perimeter, spans, aspect ratio, equivalent radius,
-    circularity, solidity, elongation, RNA density) from boundary polygons.
+    Compute morphological shape metrics (area, perimeter, spans, bbox axis lengths, aspect ratio,
+    equivalent radius, circularity, solidity, RNA density) from boundary polygons.
 calculate_transcript_assignment_qc
     QC metrics for transcript-to-cell assignment quality.
 normalize_total
@@ -33,7 +35,7 @@ extract_if_intensities
 load_bin_counts
     Materialize (all or part of) a lazily-referenced Visium HD bin x gene matrix.
 crop
-    Crop the spatial extent of an AnnData to a bounding box.
+    Crop an AnnData -- or every spatial modality of a MuData -- to a polygon region.
 auto_crop
     Crop to a robust, percentile-trimmed bounding box around the cells themselves -- no manual region needed.
 rotate
@@ -43,7 +45,7 @@ flip
 apply_affine
     Apply one affine transform across every modality in a MuData at once.
 add_image_filter
-    Append a pixel filter to an ImageSpec's filter_chain for lazy render-time application.
+    Append an image filter (µm-specified bandwidth) to an ImageSpec's filter_chain for lazy application.
 estimate_stain_matrix
     Re-estimate the H&E stain deconvolution matrix for an already-loaded image.
 banksy_matrix
@@ -55,6 +57,7 @@ harmony
 from astrolabe.pp._qc import (
     calculate_qc_metrics,
     calculate_xenium_qc_metrics,
+    calculate_noise_floor,
     filter_cells,
     filter_genes,
     filter_isolated,
@@ -72,6 +75,7 @@ from astrolabe.pp._harmony import harmony
 __all__ = [
     "calculate_qc_metrics",
     "calculate_xenium_qc_metrics",
+    "calculate_noise_floor",
     "flag_controls",
     "filter_cells",
     "filter_genes",

@@ -45,17 +45,23 @@ def identify_micronuclei(
     max_distance_um: float = 50.0,
     neighbors_key: str = "spatial_neighbors",
     min_primary_ratio: float = 2.0,
+    min_area_ratio: float = 3.0,
 ) -> pd.Series:
     """Identify micronuclei based on nucleus size and proximity to a primary nucleus.
 
     Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
 
-    A cell is classified as a micronucleus if:
+    A cell is classified as a micronucleus if **all** of the following hold:
 
-    1. Its ``obs['nucleus_area']`` is below *max_nucleus_area*.
-    2. Its nearest spatial-graph neighbor that is **not** itself a candidate
-       and has ``nucleus_area ≥ min_primary_ratio × max_nucleus_area`` lies
-       within *max_distance_um* µm.
+    1. Its ``obs['nucleus_area']`` is below *max_nucleus_area* (the absolute
+       size bound).
+    2. A primary within *max_distance_um* µm exists on the spatial graph,
+       where a primary is a non-candidate cell with
+       ``nucleus_area ≥ min_primary_ratio × max_nucleus_area``.
+    3. That primary is at least *min_area_ratio* times larger than the
+       candidate itself (``primary_area ≥ min_area_ratio × candidate_area``)
+       — a per-pair area gap, so a candidate just under the size bound can't
+       attach to a primary barely over it.
 
     Parameters
     ----------
@@ -63,20 +69,28 @@ def identify_micronuclei(
         :class:`~anndata.AnnData` or :class:`~mudata.MuData` (Xenium modality).
     max_nucleus_area
         Maximum nucleus area (µm²) for a cell to be a micronucleus candidate.
-        ``None`` (default) computes it as the *max_nucleus_area_percentile*-th
-        percentile of this dataset's own ``obs['nucleus_area']`` distribution,
-        instead of a fixed absolute value. A hardcoded µm² threshold doesn't
-        adapt to how nucleus size actually varies across tissue, platform, and
-        cell type -- a fixed 20.0 µm² default was measured to misclassify
-        ~15% of a normal, micronucleus-free synthetic population as
-        candidates, because 20 µm² sits well inside the bulk of a realistic
-        nucleus-area distribution rather than out in its small-nucleus tail.
-        Pass an explicit value to override.
+        Pass an **absolute biophysical bound** for real calling (micronuclei
+        are typically well under ~1/3 of a normal nucleus's area; for human
+        tissue a bound in the 10–20 µm² range is a reasonable starting
+        point, adjusted to the tissue's own nucleus-size distribution).
+        ``None`` (default) derives the bound as the
+        *max_nucleus_area_percentile*-th percentile of this dataset's own
+        ``obs['nucleus_area']`` distribution — **diagnostic-only** (see
+        below); a loud warning is emitted when this path is taken.
     max_nucleus_area_percentile
         Percentile of ``obs['nucleus_area']`` used to derive
-        *max_nucleus_area* when it is ``None``. Lower = stricter (fewer,
-        more confident candidates). Ignored when *max_nucleus_area* is given
-        explicitly.
+        *max_nucleus_area* when it is ``None``.
+
+        .. warning::
+            The percentile path is **diagnostic-only**: by construction,
+            ~*max_nucleus_area_percentile* % of cells fall below their own
+            distribution's percentile, so a similar candidate fraction is
+            flagged *even in completely micronucleus-free tissue* — the
+            flagged fraction is definitional, not evidence of micronuclei.
+            The proximity and *min_area_ratio* gates prune some of these
+            false candidates, but the size criterion itself carries a fixed
+            false-positive rate. Use it to eyeball the small-area tail, then
+            pass an explicit absolute *max_nucleus_area* for actual calling.
     max_distance_um
         Maximum centroid-to-centroid distance (µm) for assignment.
     neighbors_key
@@ -84,7 +98,13 @@ def identify_micronuclei(
         :func:`~astrolabe.tl.spatial_neighbors`.
     min_primary_ratio
         A primary nucleus must satisfy
-        ``nucleus_area ≥ min_primary_ratio × max_nucleus_area``.
+        ``nucleus_area ≥ min_primary_ratio × max_nucleus_area``
+        (global gate on who can be a primary at all).
+    min_area_ratio
+        Per-pair area gap: a candidate is only assigned to a primary whose
+        own area is at least ``min_area_ratio ×`` the *candidate's* area.
+        Default 3 — a genuine micronucleus is a small fragment of its
+        primary, not a slightly-smaller sibling.
 
     Returns
     -------
@@ -131,10 +151,15 @@ def identify_micronuclei(
                 "Pass max_nucleus_area explicitly."
             )
         max_nucleus_area = float(np.percentile(valid_area, max_nucleus_area_percentile))
-        log.info(
+        log.warning(
             "identify_micronuclei: max_nucleus_area auto-set to %.2f µm² "
-            "(the %.1fth percentile of obs['nucleus_area'])",
+            "(the %.1fth percentile of obs['nucleus_area']). This percentile "
+            "path is DIAGNOSTIC-ONLY: ~%.1f%% of cells fall below their own "
+            "distribution's %.1fth percentile by construction, so a similar "
+            "candidate fraction is flagged even in micronucleus-free tissue. "
+            "Pass an explicit absolute max_nucleus_area (µm²) for real calling.",
             max_nucleus_area, max_nucleus_area_percentile,
+            max_nucleus_area_percentile, max_nucleus_area_percentile,
         )
 
     is_candidate = nucleus_area < max_nucleus_area
@@ -143,17 +168,26 @@ def identify_micronuclei(
 
     assignment: dict[int, int] = {}
 
+    dm = dist_matrix.tocsr()
+    indptr, indices, data = dm.indptr, dm.indices, dm.data
     for cand_idx in np.where(is_candidate)[0]:
-        row = dist_matrix.getrow(int(cand_idx))
-        if row.nnz == 0:
+        start, end = indptr[cand_idx], indptr[cand_idx + 1]
+        if end <= start:
             continue
-        order = np.argsort(row.data)
+        nbr_indices = indices[start:end]
+        nbr_dists = data[start:end]
+        order = np.argsort(nbr_dists)
+        cand_area = nucleus_area[cand_idx]
         for oi in order:
-            nbr_idx = int(row.indices[oi])
-            nbr_dist = float(row.data[oi])
+            nbr_idx = int(nbr_indices[oi])
+            nbr_dist = float(nbr_dists[oi])
             if nbr_dist > max_distance_um:
                 break
             if is_candidate[nbr_idx] or not can_be_primary[nbr_idx]:
+                continue
+            # Per-pair area gap: the primary must dwarf *this* candidate,
+            # not just clear the global threshold-relative gate.
+            if nucleus_area[nbr_idx] < min_area_ratio * cand_area:
                 continue
             assignment[cand_idx] = nbr_idx
             break
@@ -196,6 +230,13 @@ def merge_micronuclei(
     * Micronuclei rows are removed.
     * ``cell_boundaries`` are expanded to the union of the primary boundary and
       all its micronuclei cell boundaries.
+    * ``obs['cell_area']`` (when present) is recomputed for merged primaries
+      as the full union area (µm², including disjoint micronucleus lobes),
+      so it stays consistent with the expanded boundaries.
+
+    Total counts are conserved by construction (each removed micronucleus
+    row reappears, summed, in its primary's row of the micronuclei
+    modality); this invariant is verified and a violation raises.
 
     This allows direct per-gene comparison::
 
@@ -221,6 +262,16 @@ def merge_micronuclei(
     Returns
     -------
     MuData or None
+
+    Raises
+    ------
+    ValueError
+        If *mapping* references obs_names that don't exist, maps the same
+        micronucleus twice, or contains a cell that appears both as a
+        micronucleus and as a primary (chained merges would silently lose
+        that cell's counts).
+    RuntimeError
+        If total-count conservation is violated (internal invariant).
     """
     import mudata as md
 
@@ -241,12 +292,43 @@ def merge_micronuclei(
     obs_names = list(adata.obs_names)
     name_to_idx: dict[str, int] = {name: i for i, name in enumerate(obs_names)}
 
+    # ------------------------------------------------------------------ #
+    # Validate the mapping before touching anything                       #
+    # ------------------------------------------------------------------ #
+    micro_names = [str(k) for k in mapping.index]
+    primary_names = [str(v) for v in mapping.values]
+    unknown = sorted(
+        {n for n in set(micro_names) | set(primary_names) if n not in name_to_idx}
+    )
+    if unknown:
+        raise ValueError(
+            f"merge_micronuclei: mapping references obs_names not present in "
+            f"mdata['{xenium_key}']: {unknown[:5]}"
+            f"{' ...' if len(unknown) > 5 else ''}"
+        )
+    if mapping.index.duplicated().any():
+        dup = sorted(set(mapping.index[mapping.index.duplicated()].astype(str)))
+        raise ValueError(
+            f"merge_micronuclei: micronuclei mapped more than once (counts "
+            f"would be double-booked): {dup[:5]}{' ...' if len(dup) > 5 else ''}"
+        )
+    chained = sorted(set(micro_names) & set(primary_names))
+    if chained:
+        raise ValueError(
+            "merge_micronuclei: these cells appear both as a micronucleus and "
+            f"as a primary: {chained[:5]}{' ...' if len(chained) > 5 else ''}. "
+            "Chained merges are not supported — a primary that is itself "
+            "absorbed would silently lose the counts merged into it. "
+            "Resolve the chain (e.g. re-map its micronuclei to the final "
+            "primary) before calling merge_micronuclei."
+        )
+
     # Build inverse: primary_name → [micro_names]
     inverse: dict[str, list[str]] = {}
     for micro_name, primary_name in mapping.items():
         inverse.setdefault(str(primary_name), []).append(str(micro_name))
 
-    micronuclei_set = {str(k) for k in mapping.index}
+    micronuclei_set = set(micro_names)
 
     # ------------------------------------------------------------------ #
     # Micronuclei count matrix (n_all × n_genes, sparse)                 #
@@ -326,7 +408,11 @@ def merge_micronuclei(
     # ------------------------------------------------------------------ #
     # Expand primary cell_boundaries to absorb micronuclei territory      #
     # ------------------------------------------------------------------ #
+    merged_cell_area: dict[str, float] = {}
     if "cell_boundaries" in adata.obsm:
+        from shapely.geometry import Polygon
+        from shapely.ops import unary_union
+
         raw = adata.obsm["cell_boundaries"]
         if isinstance(raw, ak.Array):
             primary_polys: list[np.ndarray] = [np.asarray(raw[i]) for i in range(n_all)]
@@ -334,21 +420,45 @@ def merge_micronuclei(
             primary_polys = [np.asarray(raw[i]) for i in range(n_all)]
 
         for primary_name, micro_names in inverse.items():
-            pi = name_to_idx.get(primary_name)
-            if pi is None:
-                continue
-            micro_idxs = [name_to_idx[m] for m in micro_names if m in name_to_idx]
+            pi = name_to_idx[primary_name]
+            micro_idxs = [name_to_idx[m] for m in micro_names]
             all_polys = [primary_polys[pi]] + [primary_polys[mi] for mi in micro_idxs]
             valid = [p for p in all_polys if p is not None and len(p) >= 3]
             if not valid:
                 continue
             try:
-                primary_polys[pi] = merge_polygons(valid).astype(np.float32)
+                union_geom = unary_union([Polygon(p[:, :2]) for p in valid])
+                # Full union area (includes disjoint micronucleus lobes) —
+                # keeps obs['cell_area'] consistent with the merge even
+                # though the stored boundary polygon below is limited to the
+                # largest component (one exterior ring per cell).
+                merged_cell_area[primary_name] = float(union_geom.area)
+                boundary_geom = union_geom
+                if boundary_geom.geom_type == "MultiPolygon":
+                    boundary_geom = max(boundary_geom.geoms, key=lambda g: g.area)
+                primary_polys[pi] = np.array(
+                    boundary_geom.exterior.coords, dtype=np.float32
+                )
             except Exception as exc:
                 log.debug("Primary boundary merge failed for '%s': %s", primary_name, exc)
 
         adata.obsm["cell_boundaries"] = _polys_to_ak(primary_polys)
         # _inplace_subset_obs will correctly subset this after the line below
+
+    # ------------------------------------------------------------------ #
+    # Capture micronuclei per-primary area sums BEFORE subsetting         #
+    # ------------------------------------------------------------------ #
+    micro_area_sums: dict[str, dict[str, float]] = {}
+    for area_col in ("nucleus_area", "cell_area"):
+        if area_col not in adata.obs.columns:
+            continue
+        vals = adata.obs[area_col].to_numpy(dtype=np.float64)
+        micro_area_sums[area_col] = {
+            pn: float(np.nansum([vals[name_to_idx[m]] for m in mns]))
+            for pn, mns in inverse.items()
+        }
+
+    total_counts_before = float(xi_csr.sum())
 
     # ------------------------------------------------------------------ #
     # Remove micronuclei from primary modality                            #
@@ -358,12 +468,18 @@ def merge_micronuclei(
 
     adata._inplace_subset_obs(keep_mask)
 
+    # Recompute merged primaries' cell_area from the expanded boundaries so
+    # obs stays consistent with obsm['cell_boundaries'] (full union area,
+    # including disjoint micronucleus lobes).
+    if merged_cell_area and "cell_area" in adata.obs.columns:
+        for primary_name, area in merged_cell_area.items():
+            adata.obs.at[primary_name, "cell_area"] = area
+
     # ------------------------------------------------------------------ #
     # Build micronuclei obs metadata                                      #
     # ------------------------------------------------------------------ #
     n_merged_map = {pn: len(mns) for pn, mns in inverse.items()}
 
-    # Sum micronuclei obs numeric columns (areas, etc.) for micronuclei modality
     orig_obs = mdata[xenium_key].obs  # already subsetted
     micro_obs = pd.DataFrame(index=orig_obs.index.copy())
     micro_obs.index.name = orig_obs.index.name
@@ -371,22 +487,30 @@ def merge_micronuclei(
         lambda x: n_merged_map.get(x, 0)
     ).astype(int)
 
-    # Propagate per-primary sums of micronuclei nucleus/cell areas
-    for area_col in ("nucleus_area", "cell_area"):
-        if area_col in mdata[xenium_key].obs.columns:
-            continue  # do not overwrite primary's own area
-    # Sum micronuclei areas per primary from the original (pre-subset) adata obs
-    # We need the original adata.obs before subsetting — use `inverse` + original data
-    # Note: adata.obs is already subsetted so we use the mapping directly
-    original_area_lookup: dict[str, dict[str, float]] = {"nucleus_area": {}, "cell_area": {}}
-    # Re-derive from `mdata[xenium_key].obs` is not possible post-subset.
-    # Instead, store them from `mapping.index` info in uns.
-    # (Areas of micronuclei are lost post-subset; this is acceptable.)
+    # Summed micronuclear areas per primary (0.0 for primaries that absorbed
+    # nothing), captured from the pre-subset obs above.
+    for area_col, sums in micro_area_sums.items():
+        micro_obs[area_col] = micro_obs.index.map(
+            lambda x, s=sums: s.get(x, 0.0)
+        ).astype(np.float64)
 
     # ------------------------------------------------------------------ #
     # Build micronuclei AnnData                                           #
     # ------------------------------------------------------------------ #
     micro_X_kept = micro_X_all[keep_indices]
+
+    # Total-count conservation: every removed micronucleus row must reappear,
+    # summed, in its (kept) primary's row of the micronuclei matrix. The
+    # mapping validation above makes this hold by construction; verify it
+    # anyway so any future regression fails loudly instead of silently
+    # losing counts.
+    total_counts_after = float(xi_csr[keep_indices].sum()) + float(micro_X_kept.sum())
+    if not np.isclose(total_counts_before, total_counts_after, rtol=1e-4, atol=1e-6):
+        raise RuntimeError(
+            f"merge_micronuclei: total-count conservation violated "
+            f"({total_counts_before:g} before vs {total_counts_after:g} after "
+            f"merge) — this is an internal invariant; please report."
+        )
 
     micro_adata = ad.AnnData(
         X=micro_X_kept,

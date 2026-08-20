@@ -66,18 +66,40 @@ class TestGetisOrdNJobs:
     def test_n_perms_zero_uses_analytic_null(self):
         # Regression: the n_perms=0 branch reads esda.G_Local's analytic
         # z-score off `.Zs`, not `.z_norm` (which G_Local doesn't expose) --
-        # this raised AttributeError until fixed.
+        # this raised AttributeError until fixed. Analytic values now live in
+        # their own z_norm/p_norm columns; the *_sim columns are honestly NaN
+        # when no permutations were run (they used to hold the analytic
+        # values under a permutation-implying name).
         adata = _adata_for_stats()
         result = getis_ord(adata, "gene_0", n_perms=0)
         assert len(result) == adata.n_obs
         assert not result["Gs"].isna().any()
-        assert not result["z_sim"].isna().any()
-        assert not result["p_sim"].isna().any()
+        assert not result["z_norm"].isna().any()
+        assert not result["p_norm"].isna().any()
+        assert result["z_sim"].isna().all()
+        assert result["p_sim"].isna().all()
         # n_perms=0 must still apply p_adjust_method across cells -- p_norm is
         # a legitimate per-cell p-value like p_sim, and FDR-adjusted p-values
         # are never smaller than the raw p-value for a method like fdr_bh.
         assert not result["p_adj"].isna().any()
-        assert (result["p_adj"].to_numpy() >= result["p_sim"].to_numpy() - 1e-12).all()
+        assert (result["p_adj"].to_numpy() >= result["p_norm"].to_numpy() - 1e-12).all()
+
+    def test_p_sim_is_two_sided_not_directed(self):
+        # p_sim is recomputed two-sided from the retained simulations via
+        # esda.significance.calculate_significance -- esda's own .p_sim uses
+        # the deprecated data-directed convention its docs call "uniformly
+        # too small" (~half the two-sided value). Two-sided p can never be
+        # smaller than the directed one for the same sims.
+        import esda
+        adata = _adata_for_stats()
+        result = getis_ord(adata, "gene_0", n_perms=99, seed=3)
+        w = _build_weights(adata, "spatial_neighbors", row_standardize=False)
+        y = adata.X[:, 0].astype(np.float64)
+        lG = esda.G_Local(y, w, permutations=99, transform="r", star=1, seed=3, n_jobs=1)
+        directed = np.asarray(lG.p_sim)
+        ours = result["p_sim"].to_numpy()
+        assert (ours >= directed - 1e-12).all()
+        assert (ours > directed).any()  # strictly larger somewhere
 
     def test_self_weight_is_not_one_half(self):
         # Regression: _build_weights row-standardized the graph *before*
@@ -556,3 +578,202 @@ class TestColocationQuotient:
         adata = _adata_for_stats(n=20)
         with pytest.raises(KeyError):
             colocation_quotient(adata, groupby="cell_type", categories=["nonexistent"])
+
+    def test_diagonal_expectation_hand_computable(self):
+        # Leslie & Kronenfeld (2011): on the diagonal (A == B) the expected
+        # same-type fraction is (N_A - 1)/(N - 1) -- a point is never its own
+        # neighbor -- not N_A/(N - 1). Three tight A's (each A's NN is
+        # another A) and two tight distant B's (each B's NN is the other B):
+        #   N=5, N_A=3: CLQ_AA = (3/(3*1)) / ((3-1)/(5-1)) = 1/0.5 = 2.0
+        #   N=5, N_B=2: CLQ_BB = (2/(2*1)) / ((2-1)/(5-1)) = 1/0.25 = 4.0
+        # The old N_A/(N-1) denominator gave 4/3 and 8/5 instead -- biased
+        # low by (N_A-1)/N_A, worst exactly for rare types.
+        coords = np.array(
+            [[0.0, 0.0], [1.0, 0.0], [2.1, 0.0], [100.0, 0.0], [101.0, 0.0]]
+        )
+        labels = ["A", "A", "A", "B", "B"]
+        adata = ad.AnnData(X=np.zeros((5, 1), dtype=np.float32))
+        adata.obsm["spatial"] = coords
+        adata.obs["ct"] = labels
+
+        result = colocation_quotient(adata, groupby="ct", k=1, min_count=1)
+
+        def _get(a, b):
+            return result.query(f"category_a == '{a}' and category_b == '{b}'")["clq"].iloc[0]
+
+        assert _get("A", "A") == pytest.approx(2.0)
+        assert _get("B", "B") == pytest.approx(4.0)
+        assert _get("A", "B") == pytest.approx(0.0)  # no A has a B as its NN
+
+    def test_permutation_p_is_rank_based_not_deviation_from_one(self):
+        # Two spatially separated pure blobs: same-type CLQ is maximal, so a
+        # rank-based two-sided p against the permutation distribution must be
+        # at (or near) the floor 1/(n_perms+1) * (2*0+1)... i.e. the minimum
+        # attainable, while a cross-type pair is at the opposite extreme --
+        # both tails must be detectable (the old |CLQ-1| deviation test could
+        # not flag values *below* the finite-sample null mean correctly).
+        rng = np.random.default_rng(0)
+        blob_a = rng.normal((0.0, 0.0), 2.0, (25, 2))
+        blob_b = rng.normal((1000.0, 1000.0), 2.0, (25, 2))
+        adata = ad.AnnData(X=np.zeros((50, 1), dtype=np.float32))
+        adata.obsm["spatial"] = np.vstack([blob_a, blob_b]).astype(np.float32)
+        adata.obs["ct"] = ["A"] * 25 + ["B"] * 25
+
+        n_perms = 199
+        result = colocation_quotient(
+            adata, groupby="ct", k=3, n_perms=n_perms, seed=0, min_count=1
+        )
+        aa = result.query("category_a == 'A' and category_b == 'A'")["p_value"].iloc[0]
+        ab_p = result.query("category_a == 'A' and category_b == 'B'")["p_value"].iloc[0]
+        floor = 1.0 / (n_perms + 1.0)
+        assert aa <= 3 * floor  # same-type attraction: extreme upper tail
+        assert ab_p <= 3 * floor  # cross-type avoidance: extreme lower tail
+
+    def test_multi_library_raises(self):
+        adata = _adata_for_stats(n=20)
+        adata.obs["library_id"] = ["lib_a"] * 10 + ["lib_b"] * 10
+        with pytest.raises(ValueError, match="librar"):
+            colocation_quotient(adata, groupby="cell_type")
+
+
+def _checkerboard_adata(m=12):
+    # m x m unit lattice with a perfect checkerboard gene: every cell's
+    # 4 nearest neighbors (rook-adjacent) have the OPPOSITE value -- the
+    # canonical strongly *negatively* autocorrelated pattern. gene_1 is a
+    # smooth left-right gradient (strong positive autocorrelation) as the
+    # positive control.
+    xs, ys = np.meshgrid(np.arange(m, dtype=np.float32), np.arange(m, dtype=np.float32))
+    coords = np.column_stack([xs.ravel(), ys.ravel()])
+    checker = ((xs + ys) % 2).ravel().astype(np.float32)
+    gradient = xs.ravel().astype(np.float32)
+    X = np.column_stack([checker, gradient])
+    adata = ad.AnnData(X=X, obsm={"spatial": coords})
+    adata.var_names = ["checker", "gradient"]
+    spatial_neighbors(adata, n_neighbors=4)
+    return adata
+
+
+class TestSpatiallyVariableGenesOneSided:
+    def test_checkerboard_not_significant_analytic(self):
+        # One-sided upper-tail convention: "spatially variable" means
+        # expression CLUSTERS in space. A checkerboard is strongly
+        # negatively autocorrelated -- the old two-tailed p flagged it as an
+        # SVG at genome-wide significance; one-sided it must be ~1.
+        adata = _checkerboard_adata()
+        df = spatially_variable_genes(adata, flavor="moran", n_perms=0)
+        assert df.loc["checker", "pval"] > 0.9
+        assert df.loc["gradient", "pval"] < 1e-6
+
+    def test_checkerboard_not_significant_geary(self):
+        # Geary mirror: C > 1 for the checkerboard, so the lower-tail
+        # (C < 1) p must be ~1; the gradient's C << 1 must be significant.
+        adata = _checkerboard_adata()
+        df = spatially_variable_genes(adata, flavor="geary", n_perms=0)
+        assert df.loc["checker", "pval"] > 0.9
+        assert df.loc["gradient", "pval"] < 1e-6
+
+    def test_convention_does_not_flip_with_n_perms(self):
+        # Regression: n_perms=0 used a two-tailed analytic p while n_perms>0
+        # used esda's folded one-tailed p_sim -- the same gene's p roughly
+        # halved just by turning permutations on. Both paths are one-sided
+        # now: the checkerboard must stay non-significant on both.
+        adata = _checkerboard_adata()
+        df0 = spatially_variable_genes(adata.copy(), flavor="moran", n_perms=0)
+        df1 = spatially_variable_genes(adata.copy(), flavor="moran", n_perms=99)
+        assert df0.loc["checker", "pval"] > 0.9
+        assert df1.loc["checker", "pval"] > 0.9
+        assert df1.loc["gradient", "pval"] <= 2.0 / 100.0  # at/near the floor
+
+
+class TestRipleyPerRadiusPValue:
+    def test_p_value_present_per_distance_row(self):
+        # Regression: p_value used to be a single scalar (largest radius
+        # only, one-sided for clustering) broadcast into every row of the
+        # distance-indexed column. It is now a genuinely per-radius,
+        # two-sided rank p -- so it must vary across radii.
+        adata = _adata_for_stats(n=200)
+        result = ripley_l(adata, groupby="cell_type", support=40, n_perms=99, seed=0)
+        for df in result.values():
+            p = df["p_value"].to_numpy()
+            assert len(p) == 40
+            assert np.isfinite(p).all()
+            assert len(np.unique(p)) > 1  # not one broadcast scalar
+
+    def test_p_value_nan_without_permutations(self):
+        adata = _adata_for_stats(n=50)
+        result = ripley_l(adata, groupby="cell_type", support=10, n_perms=0)
+        for df in result.values():
+            assert df["p_value"].isna().all()
+
+    def test_csr_calibration(self):
+        # Under CSR data the per-radius two-sided p should be roughly
+        # uniform: at alpha=0.1 no more than ~20% of radii should fall below
+        # 0.1 for a fixed seed (pointwise p-values at nearby radii are
+        # strongly correlated, so the tolerance is deliberately loose --
+        # this catches gross miscalibration like the old always-clustering
+        # one-sided endpoint test, not fine deviations).
+        rng = np.random.default_rng(7)
+        n = 1500
+        coords = rng.uniform(0, 1000, (n, 2)).astype(np.float32)
+        adata = ad.AnnData(X=np.zeros((n, 1), dtype=np.float32))
+        adata.obsm["spatial"] = coords
+        adata.obs["cl"] = "all"
+
+        result = ripley_l(adata, groupby="cl", support=50, n_perms=199, seed=0)
+        p = result["all"]["p_value"].to_numpy()
+        assert (p < 0.1).mean() <= 0.2
+
+    def test_dispersed_pattern_is_significant(self):
+        # Two-sided: regularity/dispersion must be detectable too (the old
+        # one-sided clustering test could never flag it). A perfect square
+        # lattice is maximally regular.
+        m = 30
+        xs, ys = np.meshgrid(np.arange(m, dtype=float) * 10, np.arange(m, dtype=float) * 10)
+        coords = np.column_stack([xs.ravel(), ys.ravel()]).astype(np.float32)
+        adata = ad.AnnData(X=np.zeros((m * m, 1), dtype=np.float32))
+        adata.obsm["spatial"] = coords
+        adata.obs["cl"] = "all"
+
+        result = ripley_l(adata, groupby="cl", support=30, n_perms=99, seed=0)
+        p = result["all"]["p_value"].to_numpy()
+        assert p.min() <= 2.0 / 100.0  # some radius flags the regularity
+
+    def test_multi_library_raises(self):
+        adata = _adata_for_stats(n=20)
+        adata.obs["library_id"] = ["lib_a"] * 10 + ["lib_b"] * 10
+        with pytest.raises(ValueError, match="librar"):
+            ripley_l(adata, groupby="cell_type", n_perms=0)
+
+
+class TestLisaQuadrantGating:
+    def test_quadrant_ungated_when_no_permutations(self):
+        # n_perms=0 runs no significance test at all. Gating everything to
+        # 'NS' would silently conflate "not tested" with "not significant"
+        # (a real notebook regression: fast-viz n_perms=0 maps rendered as
+        # all-NS). Instead the RAW quadrant labels are returned with a
+        # logged warning -- every cell gets its sign-pattern label, none NS.
+        adata = _adata_for_stats()
+        result = moran_local(adata, "gene_0", n_perms=0)
+        assert (result["quadrant"] != "NS").all()
+        assert set(result["quadrant"]) <= {"HH", "LL", "HL", "LH"}
+
+    def test_quadrant_gated_by_alpha(self):
+        # Strong two-blob structure: significant cells get HH/LL, and every
+        # non-significant cell reads NS (the old code assigned a raw
+        # quadrant to every cell and the NS label was dead code).
+        rng = np.random.default_rng(0)
+        n_half = 30
+        blob_a = rng.normal((0.0, 0.0), 2.0, (n_half, 2))
+        blob_b = rng.normal((1000.0, 1000.0), 2.0, (n_half, 2))
+        X = np.concatenate([
+            rng.normal(10.0, 0.1, n_half), rng.normal(0.0, 0.1, n_half)
+        ]).astype(np.float32).reshape(-1, 1)
+        adata = ad.AnnData(X=X, obsm={"spatial": np.vstack([blob_a, blob_b]).astype(np.float32)})
+        adata.var_names = ["gene_0"]
+        spatial_neighbors(adata, n_neighbors=6)
+
+        result = moran_local(adata, "gene_0", n_perms=199, seed=0)
+        sig = result["p_adj"] < 0.05
+        assert (result.loc[~sig, "quadrant"] == "NS").all()
+        assert set(result.loc[sig, "quadrant"]) <= {"HH", "LL", "HL", "LH"}
+        assert {"HH", "LL"} <= set(result.loc[sig, "quadrant"])

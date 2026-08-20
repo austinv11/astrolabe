@@ -15,7 +15,9 @@ mdata['cosmx']
     obsm
         spatial            : float32 (n_cells, 2)  [x_centroid, y_centroid] in µm
         cell_boundaries    : awkward (n_cells,) of (n_verts, 2) float32 polygons
-    var         : gene_name (index)
+    var         : gene_name (index),
+                  feature_type ('Gene Expression' | 'Negative Probe' | 'System Control'),
+                  is_control_probe (bool, True for NegPrb*/Negative*/SystemControl*/FalseCode*)
     uns
         spatial
             <library_id>
@@ -48,8 +50,15 @@ log = logging.getLogger(__name__)
 # CosMx pixel edge length is 120 nm = 0.12028 µm (NanoString SMI ReadMe).
 _DEFAULT_PIXEL_SIZE_UM = 0.12028
 
-# Gene names with these prefixes are negative control probes.
-_CONTROL_PREFIXES = ("NegPrb", "Negative", "SystemControl", "FalseCode")
+# CosMx ships two distinct control-probe classes, mirrored into
+# var['feature_type'] (the Xenium convention) so QC plots can color them
+# separately: negative probes (ERCC-derived sequences measuring nonspecific
+# binding) and system controls / false codes (barcodes assigned to no target,
+# measuring optical decoding errors).
+_CONTROL_TYPE_PREFIXES = (
+    ("Negative Probe", ("NegPrb", "Negative")),
+    ("System Control", ("SystemControl", "FalseCode")),
+)
 
 
 def read_cosmx(
@@ -158,17 +167,27 @@ def read_cosmx(
             log.warning("No polygons file found in %s; skipping obsm['cell_boundaries'].", path)
 
     # ------------------------------------------------------------------ #
-    # 4. Control probe flag                                               #
+    # 4. Control probe flag + per-type feature_type                       #
     # ------------------------------------------------------------------ #
-    adata.var["is_control_probe"] = np.array(
-        [any(n.startswith(p) for p in _CONTROL_PREFIXES) for n in adata.var_names],
-        dtype=bool,
-    )
+    feature_type = np.full(adata.n_vars, "Gene Expression", dtype=object)
+    for type_label, prefixes in _CONTROL_TYPE_PREFIXES:
+        mask = np.array(
+            [any(n.startswith(p) for p in prefixes) for n in adata.var_names],
+            dtype=bool,
+        )
+        feature_type[mask] = type_label
+    adata.var["feature_type"] = feature_type
+    adata.var["is_control_probe"] = feature_type != "Gene Expression"
     n_ctrl = int(adata.var["is_control_probe"].sum())
     if n_ctrl:
+        breakdown = ", ".join(
+            f"{int((feature_type == label).sum())} {label}"
+            for label, _ in _CONTROL_TYPE_PREFIXES
+            if (feature_type == label).any()
+        )
         log.info(
-            "Flagged %d / %d features as control probes (NegPrb/Negative/SystemControl/FalseCode)",
-            n_ctrl, adata.n_vars,
+            "Flagged %d / %d features as control probes (%s)",
+            n_ctrl, adata.n_vars, breakdown,
         )
 
     # ------------------------------------------------------------------ #

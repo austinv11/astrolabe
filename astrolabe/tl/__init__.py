@@ -65,18 +65,32 @@ som
     Train a SOM on any obsm embedding or X; assigns cells to BMU nodes for topology-aware clustering.
 som_gene_modules
     Cluster genes into co-expression modules by training a SOM on the gene-by-cell matrix.
-som_subcellular_domains
-    Discover recurring subcellular spatial patterns by training a SOM on intracellular transcript positions.
+som_stability
+    Reproducibility of a SOM's metacluster cut across seeds, plus Ward merge heights.
+flux
+    Per-pixel local RNA composition embedding inside each cell (Bento's RNAflux). Needs high-plex data.
+fluxmap
+    Quantize flux embeddings with a SOM into de-novo compositional subcellular domains.
+subcellular_coords
+    Place every transcript in a geometry-anchored intracellular coordinate (nucleus centre -> plasma membrane).
+subcellular_enrichment
+    Test which genes are subcellularly localized, with the cell as the unit of replication.
+subcellular_indices
+    Per-cell RNA distribution indices (Stueland PDI/DI/PI) normalized against each cell's own mask.
 expression_gradient
     Per-cell Moving Least Squares gradient of a gene or obs variable over the spatial graph.
 gradient_field
-    Interpolate per-cell gradients onto a regular grid; compute divergence and curl.
+    Grid the smoothed scalar expression field and differentiate it; compute the divergence.
 gradient_significance
-    Permutation test for gradient magnitude and directional coherence.
-compartment_flux
-    Mean projected gradient flux across cell-type label boundaries in the spatial graph.
+    Surrogate test for gradient magnitude and directional coherence.
+interface_flux
+    Boundary-normal expression derivative integrated over Voronoi facets between compartments.
+bearing_to_group
+    Per-cell bearing toward the nearest cell of a landmark group (for landmark-relative directions).
+diffuse_expression
+    Smooth per-cell values by N steps of (density-corrected) graph diffusion.
 spatial_diffusion
-    Graph-Laplacian (Coifman–Lafon) diffusion smoothing and optional spectral decomposition.
+    Graph-Laplacian (Coifman–Lafon) diffusion eigenmodes and Sepal diffusion score.
 decay_length
     Phenomenological radial decay-length fit f(r) = f₀·exp(−r/λ) from a source point.
 rebin_visium_hd
@@ -105,7 +119,13 @@ from astrolabe.tl._micronuclei import identify_micronuclei, merge_micronuclei
 from astrolabe.tl._icg import interaction_changed_genes
 from astrolabe.tl._gene_modules import spatial_gene_modules
 from astrolabe.tl._banksy_sweep import banksy_sweep
-from astrolabe.tl._som import som, som_gene_modules, som_subcellular_domains
+from astrolabe.tl._flux import flux, fluxmap
+from astrolabe.tl._som import som, som_gene_modules, som_stability
+from astrolabe.tl._subcellular import (
+    subcellular_coords,
+    subcellular_enrichment,
+    subcellular_indices,
+)
 from astrolabe.tl._neighborhood import (
     nhood_enrichment,
     co_occurrence,
@@ -115,10 +135,12 @@ from astrolabe.tl._neighborhood import (
     composition,
 )
 from astrolabe.tl._gradient import (
+    bearing_to_group,
+    diffuse_expression,
     expression_gradient,
     gradient_field,
     gradient_significance,
-    compartment_flux,
+    interface_flux,
     spatial_diffusion,
     decay_length,
 )
@@ -160,11 +182,18 @@ __all__ = [
     "banksy_sweep",
     "som",
     "som_gene_modules",
-    "som_subcellular_domains",
+    "som_stability",
+    "flux",
+    "fluxmap",
+    "subcellular_coords",
+    "subcellular_enrichment",
+    "subcellular_indices",
     "expression_gradient",
     "gradient_field",
     "gradient_significance",
-    "compartment_flux",
+    "interface_flux",
+    "bearing_to_group",
+    "diffuse_expression",
     "spatial_diffusion",
     "decay_length",
     "rebin_visium_hd",

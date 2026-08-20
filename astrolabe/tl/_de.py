@@ -26,7 +26,8 @@ def rank_genes_groups(
     groups: list[str] | Literal["all"] = "all",
     reference: str = "rest",
     method: str | None = None,
-    n_genes: int = 50,
+    n_genes: int | None = None,
+    tie_correct: bool = True,
     key_added: str = "rank_genes_groups",
     **kwargs,
 ) -> None:
@@ -59,27 +60,36 @@ def rank_genes_groups(
         non-parametric and appropriate for count-like data.  Other options:
         ``'t-test'``, ``'logreg'``, ``'t-test_overestim_var'``.
     n_genes
-        Number of top genes to report per group.
+        Number of top genes to report per group.  ``None`` (default) stores
+        the full ranking over **all** genes — required for a meaningful
+        volcano plot (the null cloud and down-regulated arm live in the
+        non-top genes).  Cap at plot/inspection time instead.
+    tie_correct
+        Apply the tie correction to the Wilcoxon z-statistic (default
+        ``True``, deliberately diverging from scanpy's ``False``): spatial
+        panels are sparse count data with massive zero-ties per gene, and
+        the uncorrected variance is anti-conservative there.  Only affects
+        ``method='wilcoxon'``.
     key_added
         Key under ``uns`` for results.
     **kwargs
         Additional arguments forwarded to ``sc.tl.rank_genes_groups``.
+
+    Notes
+    -----
+    There is deliberately no GPU route: ``rapids_singlecell`` only provides
+    ``rank_genes_groups_logreg`` (a different statistic with no p-values),
+    so with GPU acceleration enabled this function still runs scanpy's CPU
+    implementation and logs a note.
     """
     method = method or "wilcoxon"
     if gpu_enabled():
-        rsc = _require_rapids()
-        with _gpu_X(adata):
-            rsc.tl.rank_genes_groups(
-                adata,
-                groupby=groupby,
-                groups=groups,
-                reference=reference,
-                method=method,
-                n_genes=n_genes,
-                key_added=key_added,
-                **kwargs,
-            )
-        return
+        log.info(
+            "rank_genes_groups: no GPU route for method=%r "
+            "(rapids_singlecell only implements logreg, a different statistic "
+            "with no p-values); using scanpy's CPU implementation.",
+            method,
+        )
     sc.tl.rank_genes_groups(
         adata,
         groupby=groupby,
@@ -87,6 +97,7 @@ def rank_genes_groups(
         reference=reference,
         method=method,
         n_genes=n_genes,
+        tie_correct=tie_correct,
         key_added=key_added,
         **kwargs,
     )
@@ -127,7 +138,8 @@ def score_genes(
         Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
     gene_list
         Genes in the signature to score.  Genes absent from ``var_names``
-        are silently ignored by scanpy.
+        are dropped with a scanpy warning (a ``ValueError`` is raised only
+        if none remain).
     ctrl_size
         Number of control genes sampled per expression bin for background
         estimation.
@@ -136,6 +148,14 @@ def score_genes(
         genes in ``var_names``.
     n_bins
         Number of expression bins for background control matching.
+
+        .. note::
+            The ``ctrl_size=50`` / ``n_bins=25`` defaults are tuned for
+            whole-transcriptome data.  On targeted spatial panels (a few
+            hundred genes) the bins degenerate to a handful of genes each
+            and the control set can end up nearly identical to the panel —
+            reduce both (e.g. ``ctrl_size=len(gene_list)``, ``n_bins=5``)
+            or interpret scores as relative only.
     score_name
         Name of the ``obs`` column written with per-cell scores.
     random_state
@@ -211,12 +231,17 @@ def annotate_clusters(
         ``obs`` column containing cluster labels (e.g. ``'leiden'``).
     annotation
         Mapping of cluster label → cell type name.  Clusters absent from
-        the dict receive *unknown_label*.
+        the dict receive *unknown_label*.  Keys that match no cluster in
+        ``obs[groupby]`` (typos, stale labels after re-clustering) trigger
+        a ``WARNING`` listing the unmatched keys.
     key_added
         ``obs`` column name for the annotation.  Defaults to
         ``'{groupby}_annotation'``.
     unknown_label
-        Label assigned to clusters not present in *annotation*.
+        Label assigned to clusters not present in *annotation*.  If a value
+        of *annotation* collides with this label, the logged
+        annotated/unknown counts treat only truly-unmapped clusters as
+        unknown.
 
     Examples
     --------
@@ -238,16 +263,21 @@ def annotate_clusters(
             "Run ab.tl.cluster() first, or pass the correct groupby= key."
         )
 
-    adata.obs[key_added] = (
-        adata.obs[groupby]
-        .astype(str)
-        .map(annotation)
-        .fillna(unknown_label)
-        .astype("category")
-    )
+    labels = adata.obs[groupby].astype(str)
+    unmatched = sorted(set(annotation) - set(labels.unique()))
+    if unmatched:
+        log.warning(
+            "annotate_clusters: %d annotation key(s) match no cluster in "
+            "obs['%s'] and will be ignored: %r",
+            len(unmatched), groupby, unmatched,
+        )
 
-    n_annotated = (adata.obs[key_added] != unknown_label).sum()
-    n_unknown = (adata.obs[key_added] == unknown_label).sum()
+    mapped = labels.map(annotation)
+    # Count unmapped clusters BEFORE fillna so a legitimate cell type that
+    # happens to be named like unknown_label isn't miscounted as unknown.
+    n_unknown = int(mapped.isna().sum())
+    n_annotated = len(mapped) - n_unknown
+    adata.obs[key_added] = mapped.fillna(unknown_label).astype("category")
     log.info(
         "annotate_clusters: wrote obs['%s'] — %d annotated, %d '%s'",
         key_added,

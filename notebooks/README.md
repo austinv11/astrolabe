@@ -18,7 +18,7 @@ annotate clusters, then save/reload the result. Read this one first — every
 other notebook assumes you've seen its conventions (and several reference it
 directly as "the baseline").
 
-The remaining notebooks (`02`–`09`) are independent showcases of more
+The remaining notebooks (`02`–`13`) are independent showcases of more
 advanced or specialized features. Read them in any order, based on whatever
 question you actually have.
 
@@ -30,13 +30,15 @@ question you actually have.
 | [`03_neighborhood_analysis.ipynb`](03_neighborhood_analysis.ipynb) | Which cell types sit next to which, does that look meaningful, and does contact actually change either one's biology? Neighborhood enrichment, co-occurrence, centrality, expression-by-distance, ligand-receptor signaling, regional composition, and interaction-changed genes. |
 | [`04_if_and_he_images.ipynb`](04_if_and_he_images.ipynb) | My data isn't just transcripts — how do I bring in protein (IF) or histology (H&E) imagery and get per-cell values out of it? Reading OME-TIFF/H&E images, per-cell intensity extraction, H&E stain deconvolution, and image filters. |
 | [`05_segmentation_and_crop.ipynb`](05_segmentation_and_crop.ipynb) | What if I only care about one region, or the shipped segmentation is wrong? Drawing and cropping to an ROI, rotate/flip, Voronoi resegmentation, optional Cellpose/StarDist segmentation, transcript reassignment, and segmentation evaluation. |
-| [`06_trajectory_and_gene_modules.ipynb`](06_trajectory_and_gene_modules.ipynb) | Some clusters might be a continuum, not discrete bins — and are there gene programs that vary together in space? PAGA connectivity, diffusion pseudotime, and spatial gene modules. |
+| [`06_trajectory_and_gene_modules.ipynb`](06_trajectory_and_gene_modules.ipynb) | Some clusters might be a continuum, not discrete bins — and are there gene programs that vary together in space? PAGA connectivity, diffusion pseudotime, cospatial trajectories via `blend_neighbors`, trajectory-associated genes (late-vs-early DE + volcano), and spatial gene modules ranked by Moran's I of their scores. |
 | [`07_banksy_spatial_domains.ipynb`](07_banksy_spatial_domains.ipynb) | What if I want clusters that bake in spatial context directly, instead of checking for spatial structure after the fact? BANKSY feature augmentation, built by hand once and then via the `banksy_sweep` convenience. |
 | [`08_multi_sample_and_persistence.ipynb`](08_multi_sample_and_persistence.ipynb) | I have more than one Xenium run — how do I analyze them together without mixing up incompatible coordinate systems? `concat_samples`, the library's built-in single-library plotting guard, and a deeper save/load round-trip. |
 | [`09_merscope_and_cosmx.ipynb`](09_merscope_and_cosmx.ipynb) | Does the same playbook work if my data didn't come from Xenium? The same load → QC/filter → normalize shape repeated on Vizgen MERSCOPE and NanoString CosMx data, with what's identical and what's platform-specific called out explicitly. |
-| [`10_gradient_and_flux.ipynb`](10_gradient_and_flux.ipynb) | Beyond *whether* a gene is spatially clustered, which way is it flowing? Per-cell MLS expression gradients, gridded streamlines and divergence, permutation-based directional significance, cross-compartment flux between Leiden clusters, Coifman–Lafon graph-Laplacian diffusion and spectral eigenmodes, and phenomenological decay-length fitting. |
+| [`10_gradient_and_flux.ipynb`](10_gradient_and_flux.ipynb) | Beyond *whether* a gene is spatially clustered, which way does it climb — and relative to what? Per-cell MLS expression gradients with landmark-relative direction roses (`bearing_to_group`), gridded streamlines and divergence (with reading guides), surrogate-based directional significance, expression-by-distance profiles refined by interface flux, `diffuse_expression` graph smoothing with parameter intuition, and decay-length fitting with its built-in diagnostic plot. |
 | [`11_parameter_deep_dive.ipynb`](11_parameter_deep_dive.ipynb) | Every other notebook picks one reasonable value per parameter and moves on — when should I actually trust that default, and when does my data demand something else? Sweeps single parameters (KNN/radius/Delaunay graph settings, Leiden resolution, BANKSY λ, diffusion steps, and more) across a representative range and shows the qualitative and quantitative effect on the downstream result. |
 | [`12_visium_hd.ipynb`](12_visium_hd.ipynb) | My data is Visium HD, not imaging-based — there's no segmentation out of the box, and the bin matrix is huge. How do I load it lazily, convert resolution, and get real cells out of it? Loading native 2µm bins lazily, materializing a region on demand, bespoke 8µm/16µm rebinning, native Space Ranger segmentation vs. the bin2cell nucleus-segmentation-and-bin-assignment path (with its PCA-transcriptional-similarity tie-break), then the standard downstream pipeline on the resulting cells. |
+| [`13_self_organizing_maps.ipynb`](13_self_organizing_maps.ipynb) | What is a SOM, why use one on 100k+ spatial cells, and how do I tell whether its map is trustworthy? FlowSOM-style cell-state clustering with the U-matrix / hit-map / topology triad (the topology statistic is deliberately *local*), metacluster stability across seeds, a matched-k quantitative comparison against Leiden scored by three external criteria, component planes, and SOM gene co-expression modules with a coherence table that separates real programs from the noise-floor residual class. Requires the `minisom` extra. |
+| [`14_subcellular_localization.ipynb`](14_subcellular_localization.ipynb) | Imaging platforms record where every transcript sits inside its cell — how do I turn that into a claim I can defend? A geometry-anchored intracellular coordinate built from the real cell and nucleus polygons, a per-cell probability-integral-transform null, named compartments (nucleus / nuclear edge / cytoplasm / cell edge), a per-gene table whose unit of replication is the cell, Stueland distribution indices, cell-type-specific localization via `groupby=`, a label-permutation control that returns nothing when there is nothing, and — separately — compositional subcellular domains (`tl.flux`/`tl.fluxmap`, Bento's RNAflux) made workable on a targeted panel by computing the composition over gene modules, with the seed-reproducibility and permutation controls that say how far the result may be pushed. Requires the `minisom` extra. |
 
 ## Conventions shared by every notebook
 
@@ -46,8 +48,15 @@ question you actually have.
   progress messages are visible.
 - Any cell that needs an optional dependency (`cellpose`, `stardist`,
   `harmonypy`, `napari`) is wrapped in a `try`/`except ImportError` that
-  prints a one-line install hint and skips gracefully — every notebook runs
+  prints a one-line install hint and skips gracefully — so every notebook runs
   top-to-bottom on a base `uv sync`, with no extras installed.
+  **Two documented exceptions**: `13_self_organizing_maps.ipynb` and
+  `14_subcellular_localization.ipynb` import `minisom` in their preamble like
+  any other import and fail fast without it. Guarding them was self-defeating —
+  every substantive cell in both notebooks needs the SOM, so on a base `uv sync`
+  the notebooks "ran" while producing nothing, and the guard's `if` indentation
+  silently swallowed the display of any cell whose last statement was a
+  DataFrame. Install with `uv add "astrolabe[som]"`.
 - The first time a `pl.points()`-style call appears in a notebook, it shows
   that nothing renders until `.show()`, plus one `+` (overlay) and one `|`
   (side-by-side) composition.

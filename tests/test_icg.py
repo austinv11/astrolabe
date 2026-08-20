@@ -101,7 +101,7 @@ class TestMannWhitneyTieCorrection:
         X_b = rng.poisson(0.35, size=(n2, n_genes)).astype(np.float64)
         assert (X_a == 0).mean() > 0.6  # confirm meaningfully zero-inflated
 
-        _, pvals = _wilcoxon_vectorized(X_a, X_b)
+        _, _, pvals = _wilcoxon_vectorized(X_a, X_b)
         for j in range(n_genes):
             _, expected_p = mannwhitneyu(
                 X_a[:, j], X_b[:, j], alternative="two-sided", method="asymptotic"
@@ -126,7 +126,7 @@ class TestMannWhitneyTieCorrection:
         X_a = rng.poisson(0.4, size=(n1, n_genes)).astype(np.float64)
         X_b = rng.poisson(0.4, size=(n2, n_genes)).astype(np.float64)
 
-        _, fixed_pvals = _wilcoxon_vectorized(X_a, X_b)
+        _, _, fixed_pvals = _wilcoxon_vectorized(X_a, X_b)
 
         # Reproduce the old (buggy: no tie correction, no continuity
         # correction) computation directly.
@@ -217,6 +217,127 @@ class TestICGFDRScope:
             default_result["pval_adj"].reset_index(drop=True),
             pair_result["pval_adj"].reset_index(drop=True),
         )
+
+
+def _planted_icg_adata(n_a=60, n_b=30, n_genes=6, n_contacted=30, seed=0):
+    """Planted contact-dependent signal.
+
+    gene_0 in type-A cells is upregulated iff the cell has a B neighbor
+    (the planted ICG); all other genes are iid noise in every cell.
+    """
+    rng = np.random.default_rng(seed)
+    n = n_a + n_b
+    contacted = np.arange(n_contacted)          # A cells 0..n_contacted-1
+    b_start = n_a
+
+    X = np.log1p(rng.poisson(1.0, size=(n, n_genes)).astype(np.float64))
+    X[:, 0] = np.log1p(rng.poisson(0.5, size=n).astype(np.float64))
+    X[contacted, 0] = np.log1p(rng.poisson(6.0, size=n_contacted).astype(np.float64))
+
+    adata = ad.AnnData(X=X.astype(np.float32))
+    adata.var_names = [f"gene_{i}" for i in range(n_genes)]
+    adata.obs["cell_type"] = ["A"] * n_a + ["B"] * n_b
+
+    adj = np.zeros((n, n), dtype=np.float32)
+    for i in range(n_contacted):
+        b = b_start + (i % n_b)
+        adj[i, b] = 1.0
+        adj[b, i] = 1.0
+    adata.obsp["spatial_neighbors_connectivities"] = sp.csr_matrix(adj)
+    adata.uns["spatial_neighbors"] = {"connectivities_key": "spatial_neighbors_connectivities"}
+    return adata
+
+
+class TestICGPermutationNull:
+    def test_planted_gene_recovered_null_gene_not(self):
+        # Planted ground truth: gene_0 is contact-dependent by construction;
+        # every other gene is iid noise. Under the permutation null the
+        # planted gene must clear BH < 0.05 in the (A, B) pair while the
+        # null genes stay non-significant.
+        adata = _planted_icg_adata()
+        result = interaction_changed_genes(
+            adata, groupby="cell_type", n_perms=199, seed=0
+        )
+        ab_rows = result[(result["cell_type"] == "A") & (result["neighbor_type"] == "B")]
+        assert len(ab_rows) > 0
+
+        planted = ab_rows[ab_rows["gene"] == "gene_0"].iloc[0]
+        assert planted["pval_adj"] < 0.05, f"planted gene not recovered: {planted}"
+
+        nulls = ab_rows[ab_rows["gene"] != "gene_0"]
+        assert (nulls["pval_adj"] > 0.05).all(), (
+            f"null genes spuriously significant:\n{nulls[nulls['pval_adj'] <= 0.05]}"
+        )
+
+    def test_p_asymptotic_column_present_and_pval_is_permutation(self):
+        adata = _planted_icg_adata(seed=1)
+        result = interaction_changed_genes(
+            adata, groupby="cell_type", n_perms=49, seed=0
+        )
+        assert "p_asymptotic" in result.columns
+        assert "pval" in result.columns
+        # Permutation p-values are discrete with resolution 1/(n_valid+1) and
+        # can never be exactly 0.
+        assert (result["pval"] > 0).all()
+        assert (result["pval"] >= 1.0 / 50.0 - 1e-12).all()
+
+    def test_n_perms_zero_falls_back_to_asymptotic(self):
+        adata = _planted_icg_adata(seed=2)
+        result = interaction_changed_genes(
+            adata, groupby="cell_type", n_perms=0
+        )
+        assert np.allclose(result["pval"], result["p_asymptotic"])
+
+    def test_permutation_reproducible_across_n_jobs(self):
+        adata = _planted_icg_adata(seed=3)
+        r1 = interaction_changed_genes(
+            adata.copy(), groupby="cell_type", n_perms=25, seed=7, n_jobs=1
+        )
+        r2 = interaction_changed_genes(
+            adata.copy(), groupby="cell_type", n_perms=25, seed=7, n_jobs=2
+        )
+        pd.testing.assert_frame_equal(r1, r2)
+
+
+class TestICGSkipSelfPairs:
+    def _adata_with_self_contacts(self):
+        # A cells 0..9 form 5 A-A contact pairs; A cells 10..29 have no A
+        # neighbors. B exists so cross pairs are also testable.
+        n_a, n_b = 30, 15
+        n = n_a + n_b
+        rng = np.random.default_rng(0)
+        X = np.log1p(rng.poisson(1.0, size=(n, 4)).astype(np.float64))
+        adata = ad.AnnData(X=X.astype(np.float32))
+        adata.var_names = [f"g{i}" for i in range(4)]
+        adata.obs["cell_type"] = ["A"] * n_a + ["B"] * n_b
+        adj = np.zeros((n, n), dtype=np.float32)
+        for i in range(0, 10, 2):
+            adj[i, i + 1] = 1.0
+            adj[i + 1, i] = 1.0
+        for i in range(5):  # a few A-B contacts too
+            adj[20 + i, n_a + i] = 1.0
+            adj[n_a + i, 20 + i] = 1.0
+        adata.obsp["spatial_neighbors_connectivities"] = sp.csr_matrix(adj)
+        adata.uns["spatial_neighbors"] = {"connectivities_key": "spatial_neighbors_connectivities"}
+        return adata
+
+    def test_self_pairs_skipped_by_default(self):
+        adata = self._adata_with_self_contacts()
+        result = interaction_changed_genes(
+            adata, groupby="cell_type", min_cells=2, n_perms=0
+        )
+        assert len(result) > 0
+        assert (result["cell_type"] != result["neighbor_type"]).all()
+
+    def test_self_pairs_included_when_disabled(self):
+        adata = self._adata_with_self_contacts()
+        result = interaction_changed_genes(
+            adata, groupby="cell_type", min_cells=2, n_perms=0,
+            skip_self_pairs=False,
+        )
+        self_rows = result[result["cell_type"] == result["neighbor_type"]]
+        assert len(self_rows) > 0
+        assert set(self_rows["cell_type"]) == {"A"}
 
 
 class TestICGCategoryOrder:

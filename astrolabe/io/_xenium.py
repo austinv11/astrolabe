@@ -58,7 +58,12 @@ import scanpy as sc
 import scipy.sparse as sp
 import copy
 
-from astrolabe._constants import SCHEMA_VERSION, UNS_SCHEMA_VERSION_KEY, UNS_DEFAULT_MODALITY_KEY
+from astrolabe._constants import (
+    SCHEMA_VERSION,
+    UNS_SCHEMA_VERSION_KEY,
+    UNS_DEFAULT_MODALITY_KEY,
+    UNS_XENIUM_SEGMENTATION_KEY,
+)
 from astrolabe.io._ome_tiff import _extract_image_spec
 
 __all__ = [
@@ -256,6 +261,12 @@ def read_xenium(
     if load_boundaries:
         _attach_boundaries(adata, path, _BOUNDARIES_CANDIDATES, "cell_boundaries")
         _attach_boundaries(adata, path, _NUCLEUS_BOUNDARIES_CANDIDATES, "nucleus_boundaries")
+        # These boundaries are the unmodified Xenium originals — the same
+        # segmentation the transcript table's overlaps_nucleus/cell_id
+        # columns refer to. seg.create_compartment_layers gates its
+        # Xenium-native fast path on this flag; anything that replaces the
+        # segmentation (e.g. seg.voronoi_resegment) clears it.
+        adata.uns[UNS_XENIUM_SEGMENTATION_KEY] = True
 
     # ------------------------------------------------------------------ #
     # 5. uns['spatial']                                                   #

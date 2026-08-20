@@ -4,10 +4,12 @@ QC and expression distribution plots.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import anndata as ad
 import matplotlib.axes
+import matplotlib.collections
 import matplotlib.colors as mcolors
 import matplotlib.figure
 import matplotlib.pyplot as plt
@@ -22,6 +24,7 @@ from astrolabe.pl._theme import (
     TITLE_FONT,
     _extended_cat_colors,
     _legend_handles,
+    _oklch_to_hex,
     _style_axes,
     _style_colorbar,
     _style_legend,
@@ -59,14 +62,25 @@ __all__ = [
     "som_umatrix",
     "som_component_plane",
     "som_hits",
-    "som_subcellular_plot",
+    "som_quality_plot",
+    "som_stability_plot",
 ]
+
+log = logging.getLogger(__name__)
+
 
 def _feature_type_palette() -> dict[str, str]:
     """Default colors for known feature types, from the active theme's core palette.
 
     Gene Expression (the expected/background category) gets the theme's
     muted gray so controls read as the visually distinct ones.
+
+    CosMx/MERSCOPE control labels share the hue of their Xenium conceptual
+    analog, so the same failure mode is the same color on every platform:
+    nonspecific-binding probes (Negative Probe ↔ Negative Control Probe),
+    decoding-error codes (System Control ↔ Negative Control Codeword), and
+    probe-less codewords (Blank Barcode ↔ Unassigned Codeword). The platforms
+    never co-occur in one plot, so reuse costs nothing within a panel.
     """
     t = get_theme()
     return {
@@ -76,6 +90,11 @@ def _feature_type_palette() -> dict[str, str]:
         "Unassigned Codeword": t.cat_core[0],
         "Deprecated Codeword": t.cat_core[2],
         "Genomic Control": t.cat_core[6],
+        # CosMx (read_cosmx)
+        "Negative Probe": t.cat_core[7],
+        "System Control": t.cat_core[1],
+        # MERSCOPE (read_merscope)
+        "Blank Barcode": t.cat_core[0],
     }
 
 
@@ -97,6 +116,40 @@ def _categorical_colors(cmap: str | None, n: int) -> list:
     cmap_obj = plt.get_cmap(cmap)
     n_colors = cmap_obj.N if hasattr(cmap_obj, "N") else 10
     return [cmap_obj(i % n_colors) for i in range(n)]
+
+
+def _validate_groupby_against_result(
+    adata: ad.AnnData,
+    groupby: str,
+    stored_groups,
+    func_name: str,
+) -> None:
+    """Warn when *groupby* doesn't plausibly describe a stored result.
+
+    The neighborhood-analysis plot functions take ``groupby`` for labeling
+    only — the values plotted come from the stored ``uns`` result. A wrong
+    ``groupby`` therefore silently mislabels the figure. This checks that
+    the obs column exists and that its categories cover the stored groups,
+    logging a warning (never raising) on mismatch.
+    """
+    if groupby not in adata.obs.columns:
+        log.warning(
+            "%s: obs column '%s' not found — groupby only labels the figure "
+            "here, but make sure it names the column the stored result was "
+            "computed from.",
+            func_name, groupby,
+        )
+        return
+    if stored_groups is None:
+        return
+    obs_groups = set(map(str, pd.unique(adata.obs[groupby])))
+    missing = [g for g in map(str, stored_groups) if g not in obs_groups]
+    if missing:
+        log.warning(
+            "%s: stored result contains group(s) %s not present in "
+            "obs['%s'] — was the result computed with a different groupby?",
+            func_name, missing, groupby,
+        )
 
 
 @with_adata
@@ -170,8 +223,20 @@ def violin(
         **kwargs,
     )
     panel = FigurePanel.from_obj(result)
+    if stripplot and adata.n_obs > 5_000:
+        # Density-scaled jitter transparency: at 10^5 cells the solid-black
+        # stripplot dots fully occlude the violin bodies for large groups.
+        # Scale alpha down with cell count (floor 0.02) so dense groups read
+        # as a translucent cloud instead of a black bar.
+        jitter_alpha = float(np.clip(5_000.0 / adata.n_obs, 0.02, 1.0))
+        for ax_ in panel.figure.axes:
+            for coll in ax_.collections:
+                if isinstance(coll, matplotlib.collections.PathCollection):
+                    coll.set_alpha(jitter_alpha)
     for ax_ in panel.figure.axes:
         _style_axes(ax_)
+    if ax is None:
+        plt.close(panel.figure)
     return panel
 
 
@@ -218,8 +283,9 @@ def dotplot(
     log
         Log-transform expression values before plotting.
     num_categories
-        Maximum number of categories shown on the groupby axis before
-        labels are truncated.
+        Only used when the *groupby* column is **not** categorical: the
+        continuous column is subdivided into this many bins (scanpy
+        semantics).  Ignored for categorical columns.
     figsize
         ``(width, height)`` in inches.  ``None`` lets scanpy auto-size.
     **kwargs
@@ -255,6 +321,7 @@ def dotplot(
     panel = FigurePanel.from_obj(dp)
     for ax_ in panel.figure.axes:
         _style_axes(ax_)
+    plt.close(panel.figure)
     return panel
 
 
@@ -303,7 +370,9 @@ def expression_heatmap(
     log
         Log-transform expression values before plotting.
     num_categories
-        Maximum number of categories shown before labels are truncated.
+        Only used when the *groupby* column is **not** categorical: the
+        continuous column is subdivided into this many bins (scanpy
+        semantics).  Ignored for categorical columns.
     figsize
         ``(width, height)`` in inches.  ``None`` lets scanpy auto-size.
     swap_axes
@@ -346,6 +415,7 @@ def expression_heatmap(
     panel = FigurePanel.from_obj(plt.gcf())
     for ax_ in panel.figure.axes:
         _style_axes(ax_)
+    plt.close(panel.figure)
     return panel
 
 
@@ -418,10 +488,58 @@ def embedding_scatter(
     # scanpy's embedding() takes basis without the 'X_' prefix
     basis = obsm_key[2:] if obsm_key.startswith("X_") else obsm_key
 
+    # Default categorical colors must match pl.points()' category→color
+    # assignment (theme palette over natural-sorted categories) — otherwise a
+    # composed `embedding_scatter(...) | points(...)` figure colors the SAME
+    # cluster differently in its two panels, defeating cross-referencing.
+    if palette is None:
+        from astrolabe.pl._spatial import _build_cat_colors, _sorted_categories
+
+        _color_keys = color if isinstance(color, (list, tuple)) else [color]
+        _pal: dict[str, Any] = {}
+        for _ck in _color_keys:
+            if _ck is None or _ck not in adata.obs.columns:
+                continue
+            _col = adata.obs[_ck]
+            if not isinstance(_col.dtype, pd.CategoricalDtype):
+                continue
+            _cats = _sorted_categories(list(_col.cat.categories))
+            _pal.update(_build_cat_colors(_cats, None, "lightgray"))
+        if _pal:
+            palette = _pal
+
     # sc.pl.embedding has no figsize param in current scanpy; create the
     # axes ourselves so figsize is honored instead of leaking into **kwargs
     # (where it would reach Axes.scatter() and raise an AttributeError).
+    # Exception: a multi-entry color list makes scanpy draw one sub-panel
+    # per color, which a single pre-created axes cannot hold -- let scanpy
+    # build its own multi-panel figure then (figsize is ignored there).
+    multi_color = isinstance(color, (list, tuple)) and len(color) > 1
     made_ax = ax is None
+    if made_ax and multi_color:
+        if figsize is not None:
+            log.debug(
+                "embedding_scatter: figsize is ignored when color is a list "
+                "(scanpy sizes its own multi-panel figure)."
+            )
+        result = sc.pl.embedding(
+            adata,
+            basis=basis,
+            color=color,
+            title=title,
+            palette=palette,
+            **({"size": size} if size is not None else {}),
+            alpha=alpha,
+            frameon=frameon,
+            show=False,
+            **kwargs,
+        )
+        fig = FigurePanel.from_obj(result).figure
+        for ax_ in fig.axes:
+            _style_axes(ax_)
+        plt.close(fig)
+        return FigurePanel(fig)
+
     if made_ax:
         fig, ax = plt.subplots(figsize=figsize)
 
@@ -442,7 +560,10 @@ def embedding_scatter(
     fig = ax.get_figure() if not made_ax else FigurePanel.from_obj(result).figure
     for ax_ in fig.axes:
         _style_axes(ax_)
-    plt.close(fig)
+    if made_ax:
+        # Only close a figure this function itself created -- closing a
+        # caller-supplied axes' figure mid-composition breaks the caller.
+        plt.close(fig)
     return FigurePanel(fig)
 
 
@@ -487,7 +608,9 @@ def volcano_plot(
         ``uns`` key written by :func:`~astrolabe.tl.rank_genes_groups`.
     pval_col
         Column to use for significance: ``'pvals_adj'`` (default) or
-        ``'pvals'``.
+        ``'pvals'``.  A :class:`KeyError` is raised if the column is missing
+        from the stored results — raw p-values are never substituted
+        silently.
     lfc_col
         Column containing log₂ fold changes.
     pval_threshold
@@ -541,8 +664,24 @@ def volcano_plot(
     genes = np.array(rgg["names"][group]).astype(str)
     lfc = np.array(rgg[lfc_col][group], dtype=np.float64)
 
-    pval_source = pval_col if pval_col in rgg else "pvals"
-    pvals_raw = np.array(rgg[pval_source][group], dtype=np.float64)
+    if len(genes) < adata.n_vars:
+        log.warning(
+            "volcano_plot: uns['%s'] holds %d genes but adata has %d — the "
+            "volcano is truncated (tl.rank_genes_groups was run with a "
+            "limited n_genes). Re-run with n_genes=adata.n_vars for a full "
+            "volcano.",
+            key, len(genes), adata.n_vars,
+        )
+
+    if pval_col not in rgg:
+        raise KeyError(
+            f"'{pval_col}' not found in uns['{key}'] "
+            f"(available: {sorted(k for k in rgg if not k.startswith('_'))}). "
+            "Multiple-testing-adjusted p-values are the default significance "
+            "source; pass pval_col='pvals' explicitly to plot raw p-values "
+            "instead."
+        )
+    pvals_raw = np.array(rgg[pval_col][group], dtype=np.float64)
     pvals_raw = np.clip(pvals_raw, 1e-300, 1.0)
     neg_log_p = -np.log10(pvals_raw)
 
@@ -593,7 +732,8 @@ def volcano_plot(
     _label_top(sig_down, top_n)
 
     ax.set_xlabel("log₂ fold change", fontsize=9)
-    ax.set_ylabel("−log₁₀(p-value)", fontsize=9)
+    ylabel = "−log₁₀(adjusted p)" if pval_col == "pvals_adj" else f"−log₁₀({pval_col})"
+    ax.set_ylabel(ylabel, fontsize=9)
     ax.set_title(title or f"Volcano — group {group}", fontsize=10)
 
     handles = _legend_handles(
@@ -685,9 +825,13 @@ def ripley_plot(
 ) -> FigurePanel:
     """Ripley's L function plot (L(d) − d vs. distance).
 
-    Visualizes the output of :func:`~astrolabe.tl.ripley_l`.  Values above
-    zero indicate spatial clustering; values below indicate regularity.  A
-    dashed reference line at zero marks complete spatial randomness (CSR).
+    Visualizes the output of :func:`~astrolabe.tl.ripley_l`.  Each cell
+    type's stored CSR expectation ``L_exp`` (the simulated null mean, which
+    bows below zero at large *d* because the estimator applies no edge
+    correction) is drawn as a dashed reference in the same color — read
+    clustering/dispersion as ``L_obs`` above/below *that* curve, not above
+    or below zero.  A dashed line at zero is drawn only as a fallback when
+    no simulations were run (``n_perms=0``, ``L_exp`` all-NaN).
 
     Parameters
     ----------
@@ -700,7 +844,8 @@ def ripley_plot(
     cell_types
         Cell types to plot.  ``None`` plots all available.
     cmap
-        Colormap name or instance used to cycle line colors.  Default ``"tab10"``.
+        Colormap name or instance used to cycle line colors.  ``None``
+        (default) uses the active theme's categorical palette.
     title
         Axes title.
     ax
@@ -733,6 +878,7 @@ def ripley_plot(
         fig = ax.get_figure()
 
     colors = _categorical_colors(cmap, len(cell_types))
+    drew_l_exp = False
     for i, ct in enumerate(cell_types):
         if ct not in result:
             continue
@@ -747,22 +893,38 @@ def ripley_plot(
             stats = entry.get("stats")
             l_vals = stats["L"].to_numpy(dtype=float) if hasattr(stats, "columns") else np.asarray(stats, dtype=float)
 
-        # entry's L_obs/L_hi/L_lo columns (`_ripley_l_kdtree`'s `_l()`) are
-        # already the detrended L(d) - d quantity plotted here (L_exp is a
-        # constant 0 for exactly this reason) -- do not subtract `bins`
-        # again, that produces L(d) - 2d and fabricates a runaway decline
-        # even under pure CSR (verified: a synthetic CSR-labeled dataset
-        # showed real L(d)-d ~ -56 at d=800 but plotted as ~ -856).
+        # entry's L_obs/L_exp/L_hi/L_lo columns (`_ripley_l_kdtree`'s `_l()`)
+        # are already the detrended L(d) - d quantity plotted here -- do not
+        # subtract `bins` again, that produces L(d) - 2d and fabricates a
+        # runaway decline even under pure CSR (verified: a synthetic
+        # CSR-labeled dataset showed real L(d)-d ~ -56 at d=800 but plotted
+        # as ~ -856).
         l_d = l_vals
         color = colors[i]
         ax.plot(bins[:len(l_d)], l_d, label=ct, color=color)
+        if hasattr(entry, "columns") and "L_exp" in entry.columns:
+            # The stored CSR expectation is the simulated null mean, NOT a
+            # constant 0: with no edge correction the null curve bows below
+            # zero at large d, and judging L_obs against y=0 there inverts
+            # the clustered-vs-dispersed read.
+            l_exp = entry["L_exp"].to_numpy(dtype=float)
+            if np.isfinite(l_exp).any():
+                ax.plot(
+                    bins[:len(l_exp)], l_exp,
+                    color=color, linestyle="--", linewidth=0.9, alpha=0.7,
+                    label=f"_{ct}_L_exp",
+                )
+                drew_l_exp = True
         # Draw simulation envelope if available
         if hasattr(entry, "columns") and "L_hi" in entry.columns and "L_lo" in entry.columns:
             l_hi = entry["L_hi"].to_numpy(dtype=float)
             l_lo = entry["L_lo"].to_numpy(dtype=float)
             ax.fill_between(bins[:len(l_d)], l_lo, l_hi, alpha=0.15, color=color)
 
-    ax.axhline(0, color=get_theme().muted, linestyle="--", linewidth=0.8)
+    if not drew_l_exp:
+        # n_perms=0 stores an all-NaN L_exp; fall back to the naive y=0 CSR
+        # reference (with the no-edge-correction caveat in the docstring).
+        ax.axhline(0, color=get_theme().muted, linestyle="--", linewidth=0.8)
     ax.set_xlabel("Distance d (µm)", fontsize=9)
     ax.set_ylabel("L(d) − d", fontsize=9)
     ax.set_title(title or "Ripley's L", fontsize=10)
@@ -808,11 +970,16 @@ def gene_qv_scatter(
     .. note::
         ``read_xenium``'s default auto-loaded ``uns['transcripts']`` includes
         control-probe transcripts (``include_controls=True``), so control
-        feature types get a real Q-score by default. If a control type still
-        shows no points, check whether it was later removed from ``var`` by
-        ``pp.filter_genes(exclude_controls=True)``/``pipeline.filter_xenium``
-        — that also drops its rows from ``uns['transcripts']`` — or whether
-        ``uns['transcripts']`` was reloaded with ``include_controls=False``.
+        feature types get a real Q-score by default. Control rows whose
+        ``var`` QC columns are NaN (``pp.calculate_qc_metrics`` computes
+        per-gene metrics on non-control genes only) are backfilled from the
+        ``uns['control_probe_summary']`` stash or recomputed directly from
+        ``X`` (with a warning), so controls always render while still
+        present. If a control type shows no points, its **Q-scores** are
+        missing: ``uns['transcripts']`` was reloaded with
+        ``include_controls=False``, or the controls were removed by
+        ``pipeline.filter_xenium`` before
+        ``pp.calculate_xenium_qc_metrics`` could stash them.
 
     Parameters
     ----------
@@ -931,7 +1098,9 @@ def gene_qv_scatter(
     ctrl_stash = adata.uns.get('control_probe_summary', {})
     if ctrl_stash and 'total_counts' in ctrl_stash:
         name_key = next(
-            k for k in ctrl_stash if k not in ('feature_type', 'total_counts', 'mean_qv')
+            k for k in ctrl_stash
+            if k not in ('feature_type', 'total_counts', 'mean_qv',
+                         'n_cells_by_counts', 'n_obs')
         )
         ctrl_names = np.asarray(ctrl_stash[name_key], dtype=object)
         ctrl_counts = np.array(ctrl_stash['total_counts'], dtype=np.float64) + 1
@@ -953,6 +1122,22 @@ def gene_qv_scatter(
         counts = np.concatenate([counts, ctrl_counts[removed]])
         mean_qv = np.concatenate([mean_qv, ctrl_qv[removed]])
         feature_types = np.concatenate([feature_types, ctrl_types[removed]])
+
+    # Last-resort backfill straight from X: with no stash (only
+    # calculate_qc_metrics ran, which leaves control rows' total_counts NaN
+    # by design), the finite filter would otherwise silently drop every
+    # control point from the plot.
+    nan_counts = ~np.isfinite(counts[: adata.n_vars])
+    if nan_counts.any():
+        col_sums = np.asarray(adata.X[:, nan_counts].sum(axis=0)).ravel()
+        counts[: adata.n_vars][nan_counts] = col_sums + 1
+        log.warning(
+            "gene_qv_scatter: var['%s'] was NaN for %d gene(s) — typically "
+            "control probes, which pp.calculate_qc_metrics(exclude_controls="
+            "True) skips by design. Their counts were recomputed from X so "
+            "they still render.",
+            total_counts_key, int(nan_counts.sum()),
+        )
 
     # --- resolve palette ---
     effective_palette = {**_feature_type_palette(), **(palette or {})}
@@ -994,6 +1179,7 @@ def gene_detection_scatter(
     palette: dict[str, str] | None = None,
     size: float = 10.0,
     alpha: float = 0.7,
+    show_noise_floor: bool = True,
     title: str = "Gene detection rate vs. transcript abundance",
     ax: matplotlib.axes.Axes | None = None,
     figsize: tuple[float, float] = (7, 5),
@@ -1009,10 +1195,13 @@ def gene_detection_scatter(
     Requires :func:`~astrolabe.pp.calculate_qc_metrics` to have been called
     first (provides ``var['total_counts']`` and ``var['pct_dropout_by_counts']``).
 
-    Works on all platforms:
-
-    - **Xenium** — colored by ``var['feature_type']`` (full control-type palette)
-    - **CosMx / MERSCOPE** — colored by ``var['is_control_probe']`` (boolean)
+    Works on all platforms. ``read_xenium``, ``read_cosmx``, and
+    ``read_merscope`` all write ``var['feature_type']``, so points are colored
+    by control type everywhere (Xenium's probe/codeword classes; CosMx's
+    Negative Probe vs. System Control; MERSCOPE's Blank Barcode). For data
+    without a ``feature_type`` column (e.g. a custom reader +
+    :func:`~astrolabe.pp.flag_controls`), coloring falls back to the boolean
+    *control_key* column as a single "Control Probe" class.
 
     Parameters
     ----------
@@ -1040,6 +1229,12 @@ def gene_detection_scatter(
         Marker size in points².
     alpha
         Marker opacity.
+    show_noise_floor
+        If ``True`` (default) and ``uns['noise_floor']`` is present (written
+        by :func:`~astrolabe.pp.calculate_noise_floor`), draw the
+        control-derived noise-floor threshold as a dashed vertical line —
+        genes left of it are statistically indistinguishable from background.
+        Silently skipped when the threshold has not been computed.
     title
         Axes title.
     ax
@@ -1073,20 +1268,55 @@ def gene_detection_scatter(
     dropout, _ = _resolve_field(adata, pct_dropout_key, axis="var")
     detection_rate = 1.0 - dropout / 100.0
 
+    # Backfill NaN rows straight from X: pp.calculate_qc_metrics
+    # (exclude_controls=True, the default) deliberately leaves control rows'
+    # per-gene metrics NaN, and the finite filter downstream would then drop
+    # every control point — the exact population this plot exists to show.
+    nan_rows = ~(np.isfinite(counts) & np.isfinite(detection_rate))
+    if nan_rows.any():
+        X_sub = adata.X[:, nan_rows]
+        col_sums = np.asarray(X_sub.sum(axis=0)).ravel()
+        n_cells_pos = np.asarray((X_sub > 0).sum(axis=0)).ravel()
+        counts[nan_rows] = col_sums + 1
+        detection_rate[nan_rows] = n_cells_pos / max(adata.n_obs, 1)
+        log.info(
+            "gene_detection_scatter: recomputed counts/detection rate from X "
+            "for %d gene(s) whose QC columns were NaN (controls are excluded "
+            "from pp.calculate_qc_metrics per-gene metrics by design).",
+            int(nan_rows.sum()),
+        )
+
     # --- resolve feature labels ---
     if feature_type_key in adata.var.columns:
         feature_types, _ = _resolve_field(adata, feature_type_key, axis="var")
         effective_palette = {**_feature_type_palette(), **(palette or {})}
 
-        # Restore stashed controls (Xenium: after calculate_xenium_qc_metrics + filter_genes)
+        # Restore stashed controls (Xenium: after calculate_xenium_qc_metrics
+        # + filter_genes). Only genes already REMOVED from var are appended —
+        # controls still present were backfilled in place above, and
+        # appending them again would draw every control point twice.
         ctrl_stash = adata.uns.get("control_probe_summary", {})
         if ctrl_stash and "total_counts" in ctrl_stash:
+            name_key = next(
+                k for k in ctrl_stash
+                if k not in ("feature_type", "total_counts", "mean_qv",
+                             "n_cells_by_counts", "n_obs")
+            )
+            ctrl_names = np.asarray(ctrl_stash[name_key], dtype=object)
             ctrl_counts = np.array(ctrl_stash["total_counts"], dtype=np.float64) + 1
             ctrl_types = np.array(ctrl_stash["feature_type"])
-            ctrl_detection = np.full(len(ctrl_counts), np.nan)
-            counts = np.concatenate([counts, ctrl_counts])
-            detection_rate = np.concatenate([detection_rate, ctrl_detection])
-            feature_types = np.concatenate([feature_types, ctrl_types])
+            if "n_cells_by_counts" in ctrl_stash and ctrl_stash.get("n_obs"):
+                ctrl_detection = (
+                    np.array(ctrl_stash["n_cells_by_counts"], dtype=np.float64)
+                    / float(ctrl_stash["n_obs"])
+                )
+            else:
+                ctrl_detection = np.full(len(ctrl_counts), np.nan)
+            var_set = set(adata.var_names)
+            removed = np.array([n not in var_set for n in ctrl_names])
+            counts = np.concatenate([counts, ctrl_counts[removed]])
+            detection_rate = np.concatenate([detection_rate, ctrl_detection[removed]])
+            feature_types = np.concatenate([feature_types, ctrl_types[removed]])
     else:
         _ctrl_col = control_key if control_key in adata.var.columns else "is_control_probe"
         if _ctrl_col in adata.var.columns:
@@ -1119,7 +1349,25 @@ def gene_detection_scatter(
         xlabel="total transcripts + 1", ylabel="Detection rate (fraction of cells)",
         title=title, ax=ax, figsize=figsize, **scatter_kwargs,
     )
-    panel.figure.axes[0].set_ylim(-0.05, 1.05)
+    # With a caller-supplied ax, figure.axes[0] may be a *different* axes of
+    # a multi-panel figure — target the axes actually drawn into.
+    ax_plot = ax if ax is not None else panel.figure.axes[0]
+    ax_plot.set_ylim(-0.05, 1.05)
+
+    noise_floor = adata.uns.get("noise_floor") or {}
+    if show_noise_floor and "threshold_mean_counts" in noise_floor:
+        # The threshold is a mean-counts-per-cell statistic; this x-axis is
+        # total counts (+1), so convert through the current cell count.
+        x_thr = noise_floor["threshold_mean_counts"] * adata.n_obs + 1
+        t = get_theme()
+        ax_plot.axvline(
+            x_thr, color=t.muted, linestyle="--", linewidth=1.0, zorder=1.5
+        )
+        ax_plot.text(
+            x_thr, 0.97, " noise floor",
+            transform=ax_plot.get_xaxis_transform(),
+            ha="left", va="top", fontsize=8, color=t.muted,
+        )
     return panel
 
 
@@ -1138,6 +1386,8 @@ def mean_variance_plot(
     palette: dict[str, str] | None = None,
     size: float = 8.0,
     alpha: float = 0.6,
+    log_x: bool = True,
+    log_y: bool = True,
     title: str = "Mean-variance relationship",
     ax: "matplotlib.axes.Axes | None" = None,
     figsize: tuple[float, float] = (6, 5),
@@ -1169,8 +1419,10 @@ def mean_variance_plot(
         Layer holding raw counts.  ``None`` reads ``X`` directly — only
         correct if ``X`` has not yet been normalized/log-transformed.
     feature_type_key
-        ``var`` column containing feature-type labels (e.g. ``'feature_type'``
-        from :func:`~astrolabe.io.read_xenium`).  Used to color points by
+        ``var`` column containing feature-type labels (``'feature_type'``,
+        set by :func:`~astrolabe.io.read_xenium`,
+        :func:`~astrolabe.io.read_cosmx`, and
+        :func:`~astrolabe.io.read_merscope`).  Used to color points by
         probe type.  Falls back to *control_key* when absent.
     control_key
         ``var`` boolean column set by :func:`~astrolabe.pp.flag_controls`
@@ -1182,6 +1434,11 @@ def mean_variance_plot(
         Marker size in points².
     alpha
         Marker opacity.
+    log_x, log_y
+        Log-scale the mean / variance axis (both default ``True``).  Genes
+        with zero mean or zero variance cannot be drawn on a log axis; a
+        warning reports how many were dropped (and how many of those are
+        controls).  Pass ``False`` to show them on a linear axis instead.
     title
         Axes title.
     ax
@@ -1231,14 +1488,32 @@ def mean_variance_plot(
     # Gene Expression first (background), controls on top
     draw_order = ["Gene Expression"] + [ft for ft in unique_types if ft != "Gene Expression"]
 
+    # Report what the log-log finite filter is about to drop: zero-mean /
+    # zero-variance genes are disproportionately the very control probes
+    # this plot exists to show. The statistic itself is unchanged.
+    dropped_mask = np.zeros(len(mean), dtype=bool)
+    if log_x:
+        dropped_mask |= ~(mean > 0)
+    if log_y:
+        dropped_mask |= ~(variance > 0)
+    if dropped_mask.any():
+        n_ctrl_dropped = int((np.asarray(feature_types)[dropped_mask] != "Gene Expression").sum())
+        log.warning(
+            "mean_variance_plot: %d gene(s) with zero mean or zero variance "
+            "cannot be drawn on the log axes and were dropped (%d of them "
+            "control probes/codewords). Pass log_x=False/log_y=False to show "
+            "them on linear axes.",
+            int(dropped_mask.sum()), n_ctrl_dropped,
+        )
+
     panel = _generic_scatter(
         adata, x=mean, y=variance, color=feature_types, axis="var",
         palette=effective_palette, category_order=draw_order,
-        log_x=True, log_y=True, size=size, alpha=alpha,
+        log_x=log_x, log_y=log_y, size=size, alpha=alpha,
         xlabel="Mean expression (counts per cell)", ylabel="Variance",
         title=title, ax=ax, figsize=figsize, **scatter_kwargs,
     )
-    ax_plot = panel.figure.axes[0]
+    ax_plot = ax if ax is not None else panel.figure.axes[0]
 
     # Poisson reference line: variance = mean  (y = x on log-log).
     # Uses primary_ink rather than muted -- muted is also "Gene Expression"'s
@@ -1632,8 +1907,8 @@ def transcripts_vs_area_scatter(
 
 _SHAPE_METRIC_SUFFIXES: frozenset[str] = frozenset({
     "area", "perimeter", "span_x", "span_y", "equivalent_radius",
-    "major_axis_length", "minor_axis_length", "aspect_ratio", "rna_density",
-    "circularity", "solidity", "elongation",
+    "bbox_major_axis_length", "bbox_minor_axis_length", "aspect_ratio", "rna_density",
+    "circularity", "solidity",
 })
 
 
@@ -1829,7 +2104,7 @@ def shape_ratio_plot(
     ...     pairs=[
     ...         ("cell_area", "cell_perimeter"),
     ...         ("cell_span_x", "cell_span_y"),
-    ...         ("cell_major_axis_length", "cell_minor_axis_length"),
+    ...         ("cell_bbox_major_axis_length", "cell_bbox_minor_axis_length"),
     ...     ],
     ... ).show()
     """
@@ -1974,12 +2249,9 @@ def intensity_histogram(
     all_vlines: list[tuple[float, str]] = []
 
     if otsu and len(finite) > 1:
-        try:
-            from skimage.filters import threshold_otsu
-            thresh = float(threshold_otsu(finite))
+        thresh = _otsu_threshold(finite, log=log)
+        if thresh is not None:
             all_vlines.append((thresh, f"Otsu = {thresh:.1f}"))
-        except Exception:
-            pass
 
     for v in (vlines or []):
         all_vlines.append((v, f"{v:.1f}"))
@@ -2080,12 +2352,9 @@ def intensity_histograms(
 
         panel_vlines: list[tuple[float, str]] = []
         if otsu and len(finite) > 1:
-            try:
-                from skimage.filters import threshold_otsu
-                thresh = float(threshold_otsu(finite))
+            thresh = _otsu_threshold(finite, log=log)
+            if thresh is not None:
                 panel_vlines.append((thresh, f"Otsu={thresh:.1f}"))
-            except Exception:
-                pass
         for v in (vlines or []):
             panel_vlines.append((v, f"{v:.1f}"))
         for v, label in panel_vlines:
@@ -2126,10 +2395,32 @@ def _density_values(xv: np.ndarray, yv: np.ndarray, bins: int) -> np.ndarray:
     return h[xi, yi]
 
 
-def _otsu_or_none(values: np.ndarray) -> float | None:
+def _otsu_threshold(values: np.ndarray, *, log: bool = False) -> float | None:
+    """Otsu threshold matched to how the axis will be displayed.
+
+    When the axis is log-scaled, the between-class-variance optimum must be
+    found in log10 space (``10**threshold_otsu(log10(x))``) — Otsu on the
+    linear values of a log-normal-ish intensity distribution lands the gate
+    far into the right tail of what the viewer actually sees.  On linear
+    axes, the values are percentile-clipped (0.1–99.9) first so a handful of
+    extreme outliers can't drag the optimum.  Returns ``None`` when a
+    threshold can't be computed (missing skimage, constant data, ...).
+    """
     try:
         from skimage.filters import threshold_otsu
-        return float(threshold_otsu(values[np.isfinite(values)]))
+    except ImportError:
+        return None
+    finite = values[np.isfinite(values)]
+    if finite.size < 2:
+        return None
+    try:
+        if log:
+            pos = finite[finite > 0]
+            if pos.size < 2:
+                return None
+            return float(10 ** threshold_otsu(np.log10(pos)))
+        lo, hi = np.percentile(finite, [0.1, 99.9])
+        return float(threshold_otsu(np.clip(finite, lo, hi)))
     except Exception:
         return None
 
@@ -2232,9 +2523,9 @@ def scatter_gate(
     # Gates                                                               #
     # ------------------------------------------------------------------ #
     if gate_x is None and otsu:
-        gate_x = _otsu_or_none(xf)
+        gate_x = _otsu_threshold(xf, log=log_x)
     if gate_y is None and otsu:
-        gate_y = _otsu_or_none(yf)
+        gate_y = _otsu_threshold(yf, log=log_y)
 
     # ------------------------------------------------------------------ #
     # Point colors                                                       #
@@ -2312,16 +2603,19 @@ def scatter_gate(
     t = get_theme()
     marginal_color = t.cat_core[0]
 
-    def _marginal_bins(vals, n):
-        if log_x or log_y:
+    def _marginal_bin_edges(vals, n, use_log):
+        # Per-axis: log-spaced bins only for the axis actually drawn on a
+        # log scale — one shared predicate put log-spaced bins on a linear
+        # marginal axis whenever log_x != log_y.
+        if use_log:
             pos = vals[vals > 0]
             if len(pos) > 1:
                 return np.logspace(np.log10(pos.min()), np.log10(pos.max()), n + 1)
         return n
 
-    ax_top.hist(xf, bins=_marginal_bins(xf, marginal_bins),
+    ax_top.hist(xf, bins=_marginal_bin_edges(xf, marginal_bins, log_x),
                 color=marginal_color, edgecolor="none")
-    ax_right.hist(yf, bins=_marginal_bins(yf, marginal_bins),
+    ax_right.hist(yf, bins=_marginal_bin_edges(yf, marginal_bins, log_y),
                   color=marginal_color, edgecolor="none",
                   orientation="horizontal")
 
@@ -2396,7 +2690,7 @@ def scatter_gate(
 
     _style_axes(ax_main)
     if title:
-        fig.suptitle(title, y=1.01, fontsize=10, fontfamily=TITLE_FONT, color=t.primary_ink)
+        fig.suptitle(title, y=1.01, fontsize=10, fontfamily=TITLE_FONT, fontweight=600, color=t.primary_ink)
 
     fig.tight_layout()
     plt.close(fig)
@@ -2446,6 +2740,9 @@ def moran_plot(
     moran_key
         ``uns`` key of pre-computed :func:`~astrolabe.tl.moran` results;
         used to read the global I value.  ``None`` computes it on the fly.
+        No provenance is stored with the result — make sure the stored run
+        used the same *neighbors_key* as this plot, or the slope line will
+        not match the scatter.
     lisa_key
         ``uns`` key of pre-computed :func:`~astrolabe.tl.moran_local`
         results for quadrant coloring.  ``None`` = no coloring.
@@ -2511,7 +2808,12 @@ def moran_plot(
     if lisa_key is not None and lisa_key in adata.uns:
         lisa_df = adata.uns[lisa_key]
         try:
-            quad_arr = lisa_df.loc[key]["quadrant"].to_numpy(dtype=str)
+            # Align by obs_names, not position: the stored LISA frame keeps
+            # the full run's cell index, which desyncs positionally once the
+            # AnnData has been subset after tl.moran_local ran. Cells absent
+            # from the stored result get the neutral no-quadrant color.
+            quad_series = lisa_df.loc[key]["quadrant"].reindex(adata.obs_names)
+            quad_arr = quad_series.fillna("NS").to_numpy(dtype=str)
         except (KeyError, TypeError):
             pass
 
@@ -2552,8 +2854,9 @@ def moran_plot(
     ax_plot.set_title(title or f"Moran plot — {key}", fontsize=10)
 
     _style_axes(ax_plot)
-    fig.tight_layout()
-    plt.close(fig)
+    if ax is None:
+        fig.tight_layout()
+        plt.close(fig)
     return FigurePanel(fig)
 
 
@@ -2571,7 +2874,7 @@ def nhood_enrichment_plot(
     *,
     key: str = "nhood_enrichment",
     metric: str = "zscore",
-    cmap: str = _DIVNORM_CMAP,
+    cmap: str | None = None,
     vmax: float | None = None,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
@@ -2594,11 +2897,16 @@ def nhood_enrichment_plot(
     key
         ``uns`` key written by :func:`~astrolabe.tl.nhood_enrichment`.
     metric
-        ``'zscore'`` (default) or ``'counts'``.
+        ``'zscore'`` (default) or ``'counts'``.  Z-scores are drawn on a
+        zero-centered diverging scale; counts (non-negative) on a
+        sequential ``Normalize(0, max)`` scale with integer annotations.
     cmap
-        Diverging colormap for the heatmap.  Default ``"RdBu_r"``.
+        Colormap for the heatmap.  ``None`` (default) uses the theme's
+        diverging colormap for ``'zscore'`` and its sequential colormap for
+        ``'counts'``.
     vmax
-        Color-scale maximum.  Defaults to ``max(|values|)``.
+        Color-scale maximum.  Defaults to ``max(|values|)`` (zscore) or
+        ``max(values)`` (counts).
     figsize
         Figure size.
     title
@@ -2613,43 +2921,65 @@ def nhood_enrichment_plot(
     groups = result["groups"]
     mat = result[metric].astype(float)
     n = len(groups)
+    _validate_groupby_against_result(adata, groupby, groups, "nhood_enrichment_plot")
 
     if figsize is None:
         figsize = (max(4.0, n * 0.7 + 1.5), max(3.5, n * 0.7 + 1.0))
 
-    if ax is None:
+    own_fig = ax is None
+    if own_fig:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
 
-    v = float(vmax) if vmax is not None else float(np.abs(mat).max())
-    if v == 0:
-        v = 1.0
-    norm = mcolors.TwoSlopeNorm(vcenter=0, vmin=-v, vmax=v)
-    im = ax.imshow(mat, cmap=cmap, norm=norm, aspect="auto")
+    if metric == "zscore":
+        # Signed statistic: zero-centered diverging scale.
+        v = float(vmax) if vmax is not None else float(np.abs(mat).max())
+        if v == 0:
+            v = 1.0
+        norm: mcolors.Normalize = mcolors.TwoSlopeNorm(vcenter=0, vmin=-v, vmax=v)
+        cmap_used = cmap if cmap is not None else _DIVNORM_CMAP
+        fmt = "{:.1f}"
+        strength = lambda val: abs(val) / v  # noqa: E731
+    else:
+        # Non-negative counts: a diverging map centered on 0 wastes half its
+        # range and washes every cell into the warm half — use a sequential
+        # scale anchored at 0, with integer annotations.
+        v = float(vmax) if vmax is not None else float(np.nanmax(mat))
+        if v == 0:
+            v = 1.0
+        norm = mcolors.Normalize(vmin=0.0, vmax=v)
+        cmap_used = cmap if cmap is not None else _DEFAULT_CONTINUOUS_CMAP
+        fmt = "{:.0f}"
+        strength = lambda val: val / v  # noqa: E731
+
+    im = ax.imshow(mat, cmap=cmap_used, norm=norm, aspect="auto")
 
     fs = max(5, min(9, 80 // max(n, 1)))
     for i in range(n):
         for j in range(n):
             val = mat[i, j]
             ax.text(
-                j, i, f"{val:.1f}",
+                j, i, fmt.format(val),
                 ha="center", va="center", fontsize=fs,
-                color="white" if abs(val) > 0.6 * v else "black",
+                color="white" if strength(val) > 0.6 else "black",
             )
 
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
     ax.set_xticklabels(groups, rotation=45, ha="right", fontsize=8)
     ax.set_yticklabels(groups, fontsize=8)
-    ax.set_xlabel("Receiver")
-    ax.set_ylabel("Sender")
+    # The matrix is symmetric — "Sender"/"Receiver" implied a directionality
+    # it doesn't have. Both axes are simply the cell-type grouping.
+    ax.set_xlabel(groupby)
+    ax.set_ylabel(groupby)
     ax.set_title(title or f"Neighborhood enrichment ({metric})", fontsize=10)
     _style_colorbar(fig.colorbar(im, ax=ax, shrink=0.7, label=metric))
 
     _style_axes(ax)
-    fig.tight_layout()
-    plt.close(fig)
+    if own_fig:
+        fig.tight_layout()
+        plt.close(fig)
     return FigurePanel(fig)
 
 
@@ -2687,7 +3017,8 @@ def co_occurrence_plot(
     target_groups
         Target cell types to show.  ``None`` shows all.
     cmap
-        Colormap name or instance used to cycle line colors.  Default ``"tab20"``.
+        Colormap name or instance used to cycle line colors.  ``None``
+        (default) uses the active theme's categorical palette.
     figsize
         Figure size.
     title
@@ -2700,13 +3031,24 @@ def co_occurrence_plot(
 
     result = adata.uns[key]
     occ = result["occ"]
-    interval = result["interval"]
+    interval = np.asarray(result["interval"], dtype=float)
     groups = result["groups"]
+    _validate_groupby_against_result(adata, groupby, groups, "co_occurrence_plot")
+
+    # x positions: when the stored interval has one more entry than the occ
+    # curves (edges, the GPU/squidpy convention of n edges -> n-1 bins), plot
+    # each ring at its midpoint instead of raising a length-mismatch error.
+    n_rings = occ.shape[2]
+    if len(interval) == n_rings + 1:
+        x_vals = (interval[:-1] + interval[1:]) / 2.0
+    else:
+        x_vals = interval
 
     src_idx = [groups.index(g) for g in source_groups] if source_groups is not None else range(len(groups))
     tgt_idx = [groups.index(g) for g in target_groups] if target_groups is not None else range(len(groups))
 
-    if ax is None:
+    own_fig = ax is None
+    if own_fig:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
@@ -2714,7 +3056,7 @@ def co_occurrence_plot(
     pairs = [(a, b) for a in src_idx for b in tgt_idx]
     colors = _categorical_colors(cmap, len(pairs))
     for line_i, (a, b) in enumerate(pairs):
-        ax.plot(interval, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=colors[line_i])
+        ax.plot(x_vals, occ[a, b], label=f"{groups[a]} → {groups[b]}", color=colors[line_i])
 
     ax.axhline(1.0, color=get_theme().muted, linestyle="--", linewidth=0.8, zorder=0)
     ax.set_xlabel("Distance (µm)")
@@ -2725,8 +3067,9 @@ def co_occurrence_plot(
         _style_legend(ax.legend(fontsize=7, loc="upper right", framealpha=0.7))
 
     _style_axes(ax)
-    fig.tight_layout()
-    plt.close(fig)
+    if own_fig:
+        fig.tight_layout()
+        plt.close(fig)
     return FigurePanel(fig)
 
 
@@ -2759,7 +3102,8 @@ def centrality_scores_plot(
     metrics
         Columns to plot.  ``None`` uses all non-NaN columns.
     cmap
-        Colormap name or instance for bar colors.  Default ``"tab10"``.
+        Colormap name or instance for bar colors.  ``None`` (default) uses
+        the active theme's categorical palette.
     figsize
         Figure size.
     title
@@ -2773,6 +3117,9 @@ def centrality_scores_plot(
     df: pd.DataFrame = adata.uns[key]
     if metrics is None:
         metrics = [c for c in df.columns if not df[c].isna().all()]
+    _validate_groupby_against_result(
+        adata, groupby, df.index.tolist(), "centrality_scores_plot"
+    )
 
     n_metrics = len(metrics)
     n_groups = len(df)
@@ -2784,17 +3131,33 @@ def centrality_scores_plot(
         axes = [axes]
 
     colors = _categorical_colors(cmap, n_groups)
+    cats = df.index.tolist()
+    muted = get_theme().muted
     for ax, metric in zip(axes, metrics):
-        vals = df[metric].fillna(0).to_numpy()
-        cats = df.index.tolist()
+        # NaN scores stay NaN: matplotlib draws no bar for them, and an
+        # explicit 'n/a' marks the absence. fillna(0) rendered a missing
+        # score as a real zero — indistinguishable from a true 0.0.
+        vals = df[metric].to_numpy(dtype=float)
         ax.barh(cats, vals, color=colors)
+        for yi, v in enumerate(vals):
+            if not np.isfinite(v):
+                ax.text(
+                    0.02, yi, "n/a",
+                    transform=ax.get_yaxis_transform(),
+                    va="center", ha="left", fontsize=6, color=muted,
+                )
         ax.set_xlabel(metric.replace("_", " ").title(), fontsize=8)
-        ax.invert_yaxis()
         ax.tick_params(labelsize=7)
         _style_axes(ax)
 
+    # Invert exactly once, outside the loop: the axes share their y-axis
+    # (sharey=True), so per-axes inversion inside the loop flipped the
+    # shared axis back and forth — final ordering depended on whether the
+    # metric count was odd or even.
+    axes[0].invert_yaxis()
+
     if title:
-        fig.suptitle(title, fontsize=10, fontfamily=TITLE_FONT, color=get_theme().primary_ink)
+        fig.suptitle(title, fontsize=10, fontfamily=TITLE_FONT, fontweight=600, color=get_theme().primary_ink)
 
     fig.tight_layout()
     plt.close(fig)
@@ -2828,7 +3191,8 @@ def expression_by_distance_plot(
         ``uns`` key written by
         :func:`~astrolabe.tl.expression_by_distance`.
     cmap
-        Colormap name or instance used to cycle line colors.  Default ``"tab10"``.
+        Colormap name or instance used to cycle line colors.  ``None``
+        (default) uses the active theme's categorical palette.
     figsize
         Figure size.
     title
@@ -2854,7 +3218,8 @@ def expression_by_distance_plot(
 
     distances = mean_df.index.to_numpy(dtype=float)
 
-    if ax is None:
+    own_fig = ax is None
+    if own_fig:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
@@ -2867,15 +3232,20 @@ def expression_by_distance_plot(
         ax.plot(distances, mean, label=gene, color=color)
         ax.fill_between(distances, mean - se, mean + se, alpha=0.2, color=color)
 
-    ax.set_xlabel(f"Distance to {anchor_key}={anchor_groups} (µm)")
+    if isinstance(anchor_groups, str):
+        anchor_label = anchor_groups
+    else:
+        anchor_label = ", ".join(str(g) for g in anchor_groups)
+    ax.set_xlabel(f"Distance to {anchor_key} = {anchor_label} (µm)")
     ax.set_ylabel("Mean expression")
     ax.set_title(title or "Expression by distance", fontsize=10)
     if len(plot_genes) <= 12:
         _style_legend(ax.legend(fontsize=8, framealpha=0.7))
 
     _style_axes(ax)
-    fig.tight_layout()
-    plt.close(fig)
+    if own_fig:
+        fig.tight_layout()
+        plt.close(fig)
     return FigurePanel(fig)
 
 
@@ -2916,7 +3286,9 @@ def ligrec_plot(
     top_n
         Maximum rows to display (ranked by minimum p-value).
     cmap
-        Colormap for dot color (encodes −log₁₀ p-value).  Default ``"Reds"``.
+        Colormap for dot color (encodes −log₁₀ p-value, clipped at the
+        permutation resolution ``1/(n_perms+1)``).  Defaults to the active
+        theme's sequential colormap.
     figsize
         Figure size.  Auto-sized if ``None``.
     title
@@ -2980,7 +3352,14 @@ def ligrec_plot(
 
     score_vals = means_plot.values.astype(float)
     max_score = float(score_vals.max()) or 1.0
-    log_pval = -np.log10(pval_plot.values.astype(float) + 1e-10)
+    # Clip p at the permutation resolution 1/(n_perms + 1) — the smallest
+    # empirical p the stored test can actually produce — so the color scale
+    # reflects real resolution rather than an arbitrary 1e-10 floor. The
+    # colorbar then shows RAW −log10(p) with true vmin/vmax (0 to the
+    # clipped maximum), not values silently normalized to the per-figure max.
+    n_perms = result.get("metadata", {}).get("n_perms")
+    p_floor = 1.0 / (float(n_perms) + 1.0) if n_perms else 1e-10
+    log_pval = -np.log10(np.clip(pval_plot.values.astype(float), p_floor, 1.0))
     max_log_pval = float(log_pval.max()) or 1.0
 
     xs, ys, sizes, colors = [], [], [], []
@@ -2989,13 +3368,13 @@ def ligrec_plot(
             xs.append(j)
             ys.append(i)
             sizes.append(300 * score_vals[i, j] / max_score)
-            colors.append(log_pval[i, j] / max_log_pval)
+            colors.append(log_pval[i, j])
 
     t = get_theme()
     sc_plot = ax.scatter(
         xs, ys,
         s=sizes, c=colors,
-        cmap=cmap, vmin=0, vmax=1,
+        cmap=cmap, vmin=0.0, vmax=max_log_pval,
         edgecolors=t.muted, linewidths=0.3, alpha=0.9,
     )
 
@@ -3009,7 +3388,8 @@ def ligrec_plot(
     ax.set_title(title or "Ligand–receptor interactions", fontsize=10)
 
     cbar = fig.colorbar(sc_plot, ax=ax, shrink=0.5, pad=0.01)
-    cbar.set_label("-log₁₀(p)", fontsize=7)
+    floor_note = f", floor 1/(n_perms+1) = {p_floor:.2g}" if n_perms else ""
+    cbar.set_label(f"−log₁₀(p){floor_note}", fontsize=7)
     cbar.ax.tick_params(labelsize=6)
     _style_colorbar(cbar)
 
@@ -3032,15 +3412,23 @@ def som_umatrix(
     *,
     key: str = "som",
     cmap: str = _DEFAULT_CONTINUOUS_CMAP,
-    annotate: bool = True,
+    annotate: bool = False,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
 ) -> FigurePanel:
     """Plot the SOM unified distance matrix (U-matrix).
 
     High U-matrix values indicate cluster boundaries (nodes whose weights are
-    dissimilar to their neighbors); low values mark cluster centers. Use this
-    to identify natural cluster structure in the SOM without external labels.
+    dissimilar to their neighbors); low values mark cluster centers.
+
+    The plotted values are **unnormalized** mean codebook distances to the
+    8-connected grid neighbors, in the training feature space (z-scored units
+    when the SOM was trained with ``scale=True``). A min-max-normalized
+    U-matrix (minisom's ``distance_map()`` convention) always has a maximum
+    of exactly 1.0, which makes a collapsed, over-smoothed codebook visually
+    indistinguishable from a well-separated one — real units keep that
+    difference visible. The title reports the map's quantization and
+    topographic error when available.
 
     Parameters
     ----------
@@ -3055,7 +3443,9 @@ def som_umatrix(
         Colormap. Defaults to the active theme's sequential colormap
         (``'astrolabe_seq'``).
     annotate
-        Overlay ``"{col}_{row}"`` node labels on each cell.
+        Overlay ``"{col}_{row}"`` node labels on each cell. Off by default —
+        hundreds of labels on a 20×20+ grid are unreadable; turn on for small
+        maps (e.g. the 5×5 subcellular grid).
     figsize
         Figure size. Auto-computed if ``None``.
     title
@@ -3068,11 +3458,13 @@ def som_umatrix(
     sx, sy = umatrix.shape
 
     if figsize is None:
-        figsize = (max(4.0, sy * 0.6), max(3.5, sx * 0.6))
+        figsize = (max(4.0, sx * 0.6), max(3.5, sy * 0.6))
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(umatrix.T, cmap=cmap, origin="upper", aspect="equal")
-    _style_colorbar(fig.colorbar(im, ax=ax, shrink=0.8, label="U-matrix distance"))
+    _style_colorbar(
+        fig.colorbar(im, ax=ax, shrink=0.8, label="mean neighbor codebook distance")
+    )
 
     if annotate:
         for xi in range(sx):
@@ -3087,7 +3479,13 @@ def som_umatrix(
     ax.set_ylabel("SOM row")
     ax.set_xticks(range(sx))
     ax.set_yticks(range(sy))
-    ax.set_title(title or "SOM U-matrix", fontsize=10)
+    if title is None:
+        params = adata.uns[key].get("params", {})
+        qe, te = params.get("quantization_error"), params.get("topographic_error")
+        title = "SOM U-matrix"
+        if qe is not None and te is not None:
+            title += f"  (QE={qe:.3f}, TE={te:.3f})"
+    ax.set_title(title, fontsize=10)
 
     _style_axes(ax)
     fig.tight_layout()
@@ -3111,6 +3509,11 @@ def som_component_plane(
     Shows how strongly each SOM node is activated by a single gene — the weight
     value for that gene across all nodes. Nodes where the gene has high weight
     are those whose prototype vector includes high expression of that gene.
+
+    When the SOM was trained with ``scale=True`` (the default), weights live
+    in per-feature z-scored space, so plane amplitudes are directly
+    comparable across genes rather than being dominated by each gene's raw
+    expression magnitude.
 
     Parameters
     ----------
@@ -3151,7 +3554,7 @@ def som_component_plane(
     plane = weights[:, :, gene_idx]
 
     if figsize is None:
-        figsize = (max(4.0, sy * 0.6), max(3.5, sx * 0.6))
+        figsize = (max(4.0, sx * 0.6), max(3.5, sy * 0.6))
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(plane.T, cmap=cmap, origin="upper", aspect="equal")
@@ -3183,7 +3586,7 @@ def som_hits(
     *,
     key: str = "som",
     cmap: str = _DEFAULT_CONTINUOUS_CMAP,
-    annotate: bool = True,
+    annotate: bool = False,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
 ) -> FigurePanel:
@@ -3206,7 +3609,8 @@ def som_hits(
         Colormap. Defaults to the active theme's sequential colormap
         (``'astrolabe_seq'``).
     annotate
-        Overlay cell count in each node.
+        Overlay cell count in each node. Off by default — unreadable on
+        large grids; turn on for small maps.
     figsize
         Figure size. Auto-computed if ``None``.
     title
@@ -3219,7 +3623,7 @@ def som_hits(
     sx, sy = hit_counts.shape
 
     if figsize is None:
-        figsize = (max(4.0, sy * 0.6), max(3.5, sx * 0.6))
+        figsize = (max(4.0, sx * 0.6), max(3.5, sy * 0.6))
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(hit_counts.T, cmap=cmap, origin="upper", aspect="equal")
@@ -3248,150 +3652,263 @@ def som_hits(
 
 
 @with_adata
-def som_subcellular_plot(
+def som_quality_plot(
     adata: ad.AnnData,
-    transcript_domains: pd.DataFrame,
     *,
-    max_cells: int = 200,
-    key: str = "som_subcellular",
-    palette: dict | None = None,
-    cell_boundaries_key: str = "cell_boundaries",
-    spatial_key: str = "spatial",
-    point_size: float = 2.0,
-    figsize: tuple[float, float] | None = None,
+    key: str = "som",
+    local_radius: float = 3.0,
+    max_pairs: int = 50_000,
+    seed: int = 0,
+    figsize: tuple[float, float] = (5.5, 5.0),
     title: str | None = None,
 ) -> FigurePanel:
-    """Render subcellular domain patterns by drawing transcript positions within cell outlines.
+    """Topology-preservation diagnostic: grid distance vs. codebook distance.
 
-    For each sampled cell, draws the boundary polygon as a thin outline and
-    scatters its transcript positions colored by their SOM domain label. The
-    result shows whether the SOM domains correspond to recognisable intracellular
-    structures (nuclear regions, peripheral rings, polar accumulations, etc.).
+    For pairs of SOM nodes, plots the distance between the nodes on the grid
+    against the Euclidean distance between their codebook vectors.
 
-    For a tissue-level spatial overview of dominant domains, use
-    ``ab.pl.points(mdata, color='som_subcellular_dominant')`` or
-    ``ab.pl.boundaries(mdata, color='som_subcellular_dominant')`` instead.
+    **The headline statistic is deliberately local.** Topology preservation is
+    a claim about *neighbourhoods* — that adjacent nodes hold similar cells —
+    and a Spearman correlation over all node pairs cannot test it: the global
+    trend dominates, so even a badly folded map scores 0.7–0.9 simply because
+    opposite corners really are far apart in feature space. The reported
+    ``rho_local`` is therefore restricted to pairs within *local_radius* grid
+    steps, which is the range the U-matrix, hit map and component planes
+    actually rely on. The global value is shown alongside for reference, and a
+    large gap between them (global high, local low) is the signature of a
+    folded map.
+
+    Also reported are **trustworthiness** and **continuity** at that radius
+    (Venna & Kaski 2001, ICANN) — the standard pair of local
+    neighbourhood-preservation measures. Trustworthiness penalises nodes that
+    are grid-neighbours but not codebook-neighbours (false adjacency, the
+    failure that makes a map figure lie); continuity penalises the reverse
+    (codebook-neighbours torn apart on the grid). Both run 0–1, higher better.
+
+    A near-zero codebook-distance band across all grid distances means the
+    codebook collapsed (over-smoothed, e.g. a neighbourhood radius that never
+    annealed) — the failure the U-matrix alone can hide.
 
     Parameters
     ----------
     data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with subcellular
-        SOM results from :func:`~astrolabe.tl.som_subcellular_domains`.
-    transcript_domains
-        DataFrame returned by :func:`~astrolabe.tl.som_subcellular_domains`
-        with columns ``cell_id``, ``x``, ``y``, ``gene``, ``domain``.
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with SOM results
+        from :func:`~astrolabe.tl.som` (or the other SOM functions).
     modality
         Modality key when *data* is a MuData.
-    max_cells
-        Maximum number of cells to render (random sample, reproducible).
     key
-        ``uns`` key written by :func:`~astrolabe.tl.som_subcellular_domains`.
-    palette
-        Dict mapping domain label → color. Auto-assigned from the active
-        theme's categorical palette if ``None``.
-    cell_boundaries_key
-        ``obsm`` key holding cell boundary polygons (awkward array).
-    spatial_key
-        ``obsm`` key for cell centroids.
-    point_size
-        Scatter point size in points².
+        ``uns`` key written by the SOM function.
+    local_radius
+        Grid-distance cutoff defining "local" for ``rho_local``,
+        trustworthiness and continuity. The default 3 covers the 8-connected
+        neighbourhood plus two rings.
+    max_pairs
+        Maximum node pairs to sample (seeded) for the scatter and the global
+        rho. The local statistics always use every pair within *local_radius*.
+    seed
+        Random seed for pair sampling.
     figsize
-        Figure size. Auto-computed if ``None``.
+        ``(width, height)`` in inches.
     title
-        Axes title.
+        Axes title. Auto-generated with the statistics when ``None``.
+
+    References
+    ----------
+    Venna & Kaski (2001) Neighborhood preservation in nonlinear projection
+    methods, ICANN 2001, 485-491.
     """
-    import awkward as ak
-    import matplotlib.patches as mp_patches
-    import matplotlib.collections as mc
+    from scipy.stats import spearmanr
 
     if key not in adata.uns:
-        raise KeyError(f"uns['{key}'] not found. Run ab.tl.som_subcellular_domains() first")
-    if cell_boundaries_key not in adata.obsm:
-        raise KeyError(f"obsm['{cell_boundaries_key}'] not found")
-
-    domain_names: list[str] = adata.uns[key]["domain_names"]
-    n_domains = len(domain_names)
-
-    t = get_theme()
-    if palette is None:
-        domain_colors = (
-            t.cat_core if n_domains <= 8 else _extended_cat_colors(n_domains, t.name)
+        raise KeyError(f"uns['{key}'] not found. Run ab.tl.som() first")
+    if "weights" not in adata.uns[key]:
+        raise KeyError(
+            f"no 'weights' stored under uns['{key}'] — this result predates "
+            "the codebook being saved; re-run the tl function that wrote it"
         )
-        palette = {d: domain_colors[i] for i, d in enumerate(domain_names)}
 
-    obs_index = {cid: i for i, cid in enumerate(adata.obs_names)}
-    boundaries_ak = adata.obsm[cell_boundaries_key]
+    weights: np.ndarray = adata.uns[key]["weights"]
+    sx, sy, n_feat = weights.shape
+    codebook = weights.reshape(-1, n_feat).astype(np.float64)
+    grid = np.array([(i, j) for i in range(sx) for j in range(sy)], dtype=np.float64)
+    n_nodes = len(codebook)
 
-    cells_with_tx = transcript_domains["cell_id"].astype(str).unique()
-    cells_with_tx = [c for c in cells_with_tx if c in obs_index]
-    rng = np.random.default_rng(0)
-    sampled = rng.choice(
-        cells_with_tx,
-        size=min(max_cells, len(cells_with_tx)),
-        replace=False,
+    rng = np.random.default_rng(seed)
+    n_all = n_nodes * (n_nodes - 1) // 2
+    if n_all <= max_pairs:
+        ii, jj = np.triu_indices(n_nodes, k=1)
+    else:
+        ii = rng.integers(0, n_nodes, max_pairs)
+        jj = rng.integers(0, n_nodes, max_pairs)
+        keep = ii != jj
+        ii, jj = ii[keep], jj[keep]
+
+    grid_d = np.linalg.norm(grid[ii] - grid[jj], axis=1)
+    code_d = np.linalg.norm(codebook[ii] - codebook[jj], axis=1)
+    rho_global = spearmanr(grid_d, code_d).statistic
+    near = grid_d <= local_radius
+    rho_local = (
+        spearmanr(grid_d[near], code_d[near]).statistic if near.sum() > 2 else np.nan
     )
-    sampled_set = set(sampled.tolist())
 
-    centroids = np.asarray(adata.obsm[spatial_key], dtype=np.float32)
-    cell_indices = [obs_index[c] for c in sampled]
-    cx_vals = centroids[cell_indices, 0]
-    cy_vals = centroids[cell_indices, 1]
-    pad = 20.0
-    xlim = (float(cx_vals.min()) - pad, float(cx_vals.max()) + pad)
-    ylim = (float(cy_vals.min()) - pad, float(cy_vals.max()) + pad)
+    # ---- trustworthiness / continuity at k = the local neighbourhood size ---
+    # Full pairwise ranks on the node set (a few thousand nodes at most, so a
+    # dense (n_nodes, n_nodes) matrix is fine here even though it never would be
+    # on cells).
+    from astrolabe.tl._som import _self_dists
+    gd = _self_dists(grid)
+    cd = _self_dists(codebook)
+    np.fill_diagonal(gd, np.inf)
+    np.fill_diagonal(cd, np.inf)
+    k = max(1, int(np.median((gd <= local_radius).sum(axis=1))))
+    k = min(k, n_nodes - 2)
+    rank_g = np.argsort(np.argsort(gd, axis=1), axis=1)
+    rank_c = np.argsort(np.argsort(cd, axis=1), axis=1)
+    knn_g = rank_g < k
+    knn_c = rank_c < k
+    norm = n_nodes * k * (2 * n_nodes - 3 * k - 1) / 2.0
+    trust = 1.0 - 2.0 * np.clip(rank_c[knn_g] - k, 0, None).sum() / norm
+    cont = 1.0 - 2.0 * np.clip(rank_g[knn_c] - k, 0, None).sum() / norm
 
-    if figsize is None:
-        w = max(6.0, min(12.0, (xlim[1] - xlim[0]) / 50))
-        h = max(5.0, min(10.0, (ylim[1] - ylim[0]) / 50))
-        figsize = (w, h)
+    params = adata.uns[key].get("params", {})
+    qe, te = params.get("quantization_error"), params.get("topographic_error")
 
     fig, ax = plt.subplots(figsize=figsize)
-
-    poly_patches = []
-    for cid in sampled:
-        ci = obs_index[cid]
-        try:
-            verts = np.asarray(ak.to_regular(boundaries_ak[ci]))
-        except Exception:
-            try:
-                verts = np.asarray(boundaries_ak[ci])
-            except Exception:
-                continue
-        if verts.ndim == 2 and verts.shape[1] == 2:
-            poly_patches.append(mp_patches.Polygon(verts, closed=True, fill=False))
-
-    if poly_patches:
-        ax.add_collection(mc.PatchCollection(
-            poly_patches, match_original=True,
-            edgecolors=t.muted, linewidths=0.5, facecolors="none",
-        ))
-
-    tx_sub = transcript_domains[transcript_domains["cell_id"].astype(str).isin(sampled_set)]
-    for domain in domain_names:
-        mask = tx_sub["domain"] == domain
-        if mask.any():
-            sub = tx_sub[mask]
-            ax.scatter(
-                sub["x"].to_numpy(dtype=np.float32),
-                sub["y"].to_numpy(dtype=np.float32),
-                s=point_size, c=[palette[domain]], label=domain,
-                linewidths=0, alpha=0.7, zorder=2,
-            )
-
-    ax.set_xlim(xlim)
-    ax.set_ylim(ylim)
-    ax.set_aspect("equal")
-    ax.set_xlabel("x (µm)")
-    ax.set_ylabel("y (µm)")
-    ax.set_title(title or f"Subcellular domains ({len(sampled)} cells sampled)", fontsize=10)
-
-    if n_domains <= 20:
-        _style_legend(ax.legend(
-            title="Domain", fontsize=6, title_fontsize=7,
-            loc="upper right", framealpha=0.7, markerscale=2.0,
-        ))
+    t = get_theme()
+    ax.scatter(grid_d[~near], code_d[~near], s=4, alpha=0.10, color=t.muted,
+               edgecolors="none", rasterized=True, label="distant pairs")
+    ax.scatter(grid_d[near], code_d[near], s=6, alpha=0.25, color=t.cat_core[0],
+               edgecolors="none", rasterized=True,
+               label=f"pairs within {local_radius:g} nodes")
+    ax.axvline(local_radius, color=t.primary_ink, lw=1.0, ls="--", alpha=0.5)
+    ax.set_xlabel("grid distance (nodes)")
+    ax.set_ylabel("codebook distance")
+    leg = ax.legend(loc="lower right", fontsize=8, frameon=False, markerscale=2.0)
+    _style_legend(leg)
+    if title is None:
+        title = (
+            f"SOM topology: local rho = {rho_local:.2f} "
+            f"(global {rho_global:.2f})\n"
+            f"trustworthiness {trust:.3f}, continuity {cont:.3f}  (k={k})"
+        )
+        if qe is not None and te is not None:
+            title += f"\nQE={qe:.3f}, TE={te:.3f}"
+    ax.set_title(title, fontsize=9)
 
     _style_axes(ax)
+    fig.tight_layout()
+    plt.close(fig)
+    return FigurePanel(fig)
+
+
+@with_adata
+def som_stability_plot(
+    adata: ad.AnnData,
+    *,
+    key: str = "som_stability",
+    figsize: tuple[float, float] = (9.5, 4.0),
+    title: str | None = None,
+) -> FigurePanel:
+    """How many metaclusters does the map actually support?
+
+    Draws the two curves that decide whether a reported cluster count is a
+    finding or an arbitrary cut, from :func:`~astrolabe.tl.som_stability`:
+
+    * **Left — reproducibility.** Mean pairwise adjusted Rand index between
+      independently seeded SOM runs, per ``n_metaclusters``, with the ``k`` the
+      run actually reports ringed and the flat region shaded. The curve almost
+      always **declines** with ``k`` and then flattens -- more pieces means more
+      boundaries the data does not fix -- so its maximum sits at the smallest
+      ``k`` tested and carries no information. Read instead the ARI at your
+      chosen ``k`` (is the partition you are about to quote reproducible?) and
+      where the curve stops changing (beyond which extra clusters buy nothing
+      stable).
+    * **Right — Ward merge heights.** The variance cost of each successive
+      merge of the node codebook. A pronounced jump means the merge below it
+      joined genuinely distinct prototypes, so the count just above the jump is
+      a natural stopping point; a smooth curve means the codebook is a
+      continuum and no ``k`` is privileged — which is itself worth knowing
+      before quoting one.
+
+    Nothing in the SOM literature makes a single Ward cut self-justifying;
+    FlowSOM's own protocol (Quintelier et al. 2021, *Nat Protoc*) inspects a
+    range of ``k`` for exactly this reason.
+
+    Parameters
+    ----------
+    data
+        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+    modality
+        Modality key when *data* is a MuData.
+    key
+        ``uns`` key written by :func:`~astrolabe.tl.som_stability`.
+    figsize
+        ``(width, height)`` in inches.
+    title
+        Suptitle. Auto-generated when ``None``.
+
+    Returns
+    -------
+    FigurePanel
+
+    Examples
+    --------
+    >>> ab.tl.som_stability(mdata, k_range=range(5, 26), n_seeds=3)
+    >>> ab.pl.som_stability_plot(mdata).show()
+    """
+    if key not in adata.uns:
+        raise KeyError(
+            f"uns['{key}'] not found. Run ab.tl.som_stability() first"
+        )
+    st = adata.uns[key]
+    ks = np.asarray(st["k"], dtype=float)
+    ari = np.asarray(st["mean_ari"], dtype=float)
+    ari_sd = np.asarray(st.get("sd_ari", np.zeros_like(ari)), dtype=float)
+    merge_k = np.asarray(st["merge_k"], dtype=float)
+    heights = np.asarray(st["merge_heights"], dtype=float)
+
+    t = get_theme()
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    ax = axes[0]
+    ax.errorbar(ks, ari, yerr=ari_sd, marker="o", ms=4, lw=1.6, capsize=2,
+                color=t.cat_core[0])
+    flat_a, flat_b = st.get("flat_from"), st.get("flat_to")
+    if flat_a is not None and flat_b is not None and flat_b > flat_a:
+        ax.axvspan(flat_a, flat_b, color=t.cat_core[0], alpha=0.08, lw=0,
+                   label=f"flat: k={int(flat_a)}-{int(flat_b)}")
+    ref_k, ref_ari = st.get("reference_k"), st.get("ari_at_reference_k")
+    if ref_k is not None and ref_ari is not None and np.isfinite(ref_ari):
+        # mark the k the run actually reports, so the figure answers the reader's
+        # question instead of one about where the curve peaks
+        ax.axvline(ref_k, color=t.primary_ink, lw=1.0, ls="--", alpha=0.55)
+        ax.plot([ref_k], [ref_ari], marker="o", ms=9, mfc="none",
+                mec=t.primary_ink, mew=1.5, zorder=5,
+                label=f"reported k={int(ref_k)}: ARI {ref_ari:.2f}")
+    if ax.get_legend_handles_labels()[1]:
+        _style_legend(ax.legend(loc="upper right", fontsize=7.5, frameon=False))
+    ax.set_xlabel("n_metaclusters")
+    ax.set_ylabel("mean pairwise ARI across seeds")
+    ax.set_ylim(0, 1.02)
+    ax.set_title("Reproducibility of the cut", fontsize=10)
+    _style_axes(ax, grid=True)
+
+    ax = axes[1]
+    kmax = (int(ks.max()) + 5) if len(ks) else int(merge_k.max())
+    show = merge_k <= kmax
+    ax.plot(merge_k[show], heights[show], marker="o", ms=3, lw=1.4,
+            color=t.cat_core[1])
+    ax.set_xlabel("clusters remaining after the merge")
+    ax.set_ylabel("Ward merge height")
+    ax.set_title("Cost of each merge", fontsize=10)
+    _style_axes(ax, grid=True)
+
+    if title is None:
+        title = "SOM metacluster stability"
+        ref_k, ref_ari = st.get("reference_k"), st.get("ari_at_reference_k")
+        if ref_k is not None and ref_ari is not None and np.isfinite(ref_ari):
+            title += f"  —  ARI {ref_ari:.2f} at the reported k = {int(ref_k)}"
+    fig.suptitle(title, fontsize=11)
     fig.tight_layout()
     plt.close(fig)
     return FigurePanel(fig)
