@@ -130,7 +130,7 @@ def _icg_mdata():
 
 def test_integration_interaction_changed_genes_mirrors_to_mudata():
     mdata = _icg_mdata()
-    result = interaction_changed_genes(mdata, groupby="cell_type", min_cells=1)
+    result = interaction_changed_genes(mdata, groupby="cell_type", min_cells=1, expression_scale="log1p")
     assert "icg" in mdata.uns
     mirrored = mdata.uns["icg"]["xenium"]
     pd.testing.assert_frame_equal(mirrored, mdata["xenium"].uns["icg"])

@@ -583,14 +583,27 @@ def save(
             n_specs, dest_dir,
         )
 
-    if _SPECS_REGISTERED:
-        mdata.write_h5mu(str(path))
-    else:
-        mdata_copy = mdata.copy()
+    import tempfile
+    from astrolabe.io._tables import encode_tables
+
+    mdata_copy = mdata.copy()
+    mdata_copy.uns = encode_tables(dict(mdata_copy.uns))
+    for adata in mdata_copy.mod.values():
+        adata.uns = encode_tables(dict(adata.uns))
+    if not _SPECS_REGISTERED:
         mdata_copy.uns.update(_replace_specs(dict(mdata_copy.uns), dest_dir))
         for adata in mdata_copy.mod.values():
             adata.uns.update(_replace_specs(dict(adata.uns), dest_dir))
-        mdata_copy.write_h5mu(str(path))
+    fd, temporary = tempfile.mkstemp(prefix=path.stem + ".", suffix=".h5mu", dir=dest_dir)
+    os.close(fd)
+    try:
+        mdata_copy.write_h5mu(temporary)
+        if path.exists() and not overwrite:
+            raise FileExistsError(path)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
     log.info("save: wrote %s", path)
 
@@ -639,6 +652,10 @@ def load(
 
     log.info("load: reading %s", path)
     mdata = md.read_h5mu(str(path))
+    from astrolabe.io._tables import decode_tables
+    mdata.uns = decode_tables(dict(mdata.uns))
+    for adata in mdata.mod.values():
+        adata.uns = decode_tables(dict(adata.uns))
 
     if not _SPECS_REGISTERED:
         mdata.uns.update(_restore_specs(dict(mdata.uns)))

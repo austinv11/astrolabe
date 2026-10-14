@@ -187,6 +187,62 @@ def _build_flip_matrix(
     )
 
 
+def _transform_uns_coordinates(uns, M, seen=None):
+    """Move Arrow transcripts and GeoDataFrame annotations, once per object."""
+    import pyarrow as pa
+    import geopandas as gpd
+    from shapely.affinity import affine_transform
+    seen = {} if seen is None else seen
+    for key, value in list(uns.items()):
+        if id(value) in seen:
+            uns[key] = seen[id(value)]
+        elif isinstance(value, pa.Table) and {"x_location", "y_location"}.issubset(value.column_names):
+            xy = np.column_stack([value["x_location"].to_numpy(), value["y_location"].to_numpy()])
+            xy = _transform_coords(xy, M)
+            moved = value
+            for i, col in enumerate(("x_location", "y_location")):
+                moved = moved.set_column(moved.schema.get_field_index(col), col, pa.array(xy[:, i]))
+            seen[id(value)] = moved
+            uns[key] = moved
+        elif isinstance(value, gpd.GeoDataFrame):
+            moved = value.copy()
+            coefficients = [M[0, 0], M[0, 1], M[1, 0], M[1, 1], M[0, 2], M[1, 2]]
+            moved.geometry = value.geometry.map(lambda g: affine_transform(g, coefficients) if g is not None else None)
+            seen[id(value)] = moved
+            uns[key] = moved
+        elif isinstance(value, dict):
+            _transform_uns_coordinates(value, M, seen)
+
+
+def _invalidate_spatial(adata):
+    """Discard derived spatial outputs after moving their source geometry."""
+    for entry in adata.uns.pop("_astrolabe_spatial_results", {}).values():
+        for attr, keys in entry.items():
+            for key in keys:
+                if key in getattr(adata, attr):
+                    del getattr(adata, attr)[key]
+    for key, value in list(adata.uns.items()):
+        if isinstance(value, dict) and value.get("params", {}).get("spatial_key") is not None:
+            for name in ("connectivities_key", "distances_key"):
+                adata.obsp.pop(value.get(name, ""), None)
+            adata.uns.pop(key, None)
+    for key in list(adata.obsm):
+        if key.startswith(("gradient_", "niche_")):
+            del adata.obsm[key]
+    for key in list(adata.obs):
+        if key.startswith("gradient_"):
+            del adata.obs[key]
+    # Also cover loaded/pre-existing SVG columns that predate the registry.
+    for key in ("sv_score", "sv_pval", "sv_pval_adj", "sv_spatially_variable",
+                "sv_flavor", "sv_n_valid", "sv_p_min", "sv_resolution_limited"):
+        if key in adata.var:
+            del adata.var[key]
+    for key in ("gradient_params", "gradient_significance", "moran", "moran_local", "moran_bv",
+                "moran_local_bv", "getis_ord", "geary_c", "ripley_l", "ligrec", "nhood_enrichment",
+                "co_occurrence", "interaction_changed_genes", "spatially_variable_genes"):
+        adata.uns.pop(key, None)
+
+
 def _apply_coord_transform(
     adata: ad.AnnData,
     M: np.ndarray,
@@ -194,10 +250,12 @@ def _apply_coord_transform(
     boundaries_keys: list[str],
 ) -> None:
     """Transform cell centroids and boundary arrays in *adata* by affine *M*."""
+    _transform_uns_coordinates(adata.uns, M)
+    _invalidate_spatial(adata)
     coords = adata.obsm[spatial_key].astype(np.float64)
-    adata.obsm[spatial_key] = _transform_coords(coords, M).astype(
-        adata.obsm[spatial_key].dtype
-    )
+    source_dtype = adata.obsm[spatial_key].dtype
+    output_dtype = source_dtype if np.issubdtype(source_dtype, np.floating) else np.float64
+    adata.obsm[spatial_key] = _transform_coords(coords, M).astype(output_dtype)
     for bkey in boundaries_keys:
         if bkey in adata.obsm:
             adata.obsm[bkey] = _transform_boundary_obsm(adata.obsm[bkey], M)
@@ -342,6 +400,15 @@ def crop(
                     _crop_transcripts_uns(
                         mod.uns, region, transcripts_x_col, transcripts_y_col
                     )
+                if not mask.all():
+                    derived = {name for entry in mod.uns.get("_astrolabe_spatial_results", {}).values()
+                               for name in entry.get("uns", [])}
+                    for name in derived:
+                        if isinstance(target.uns.get(name), dict) and key in target.uns[name]:
+                            del target.uns[name][key]
+                            if not target.uns[name]:
+                                del target.uns[name]
+                    _invalidate_spatial(mod)
                 mod._inplace_subset_obs(mask)
                 mod.uns["spatial_bounds"] = dict(bounds)
             elif "spatial" in mod.uns:
@@ -363,6 +430,9 @@ def crop(
         # (pull_on_update=False is set globally, so this is index bookkeeping
         # only — see pipeline.py for the same pattern).
         target.update()
+        if crop_transcripts and "transcripts" in target.uns:
+            _crop_transcripts_uns(target.uns, region, transcripts_x_col, transcripts_y_col)
+        target.uns["spatial_bounds"] = dict(bounds)
         return None if inplace else target
 
     adata = data
@@ -380,10 +450,14 @@ def crop(
         adata.uns["spatial_bounds"] = bounds
         if crop_transcripts and "transcripts" in adata.uns:
             _crop_transcripts_uns(adata.uns, region, transcripts_x_col, transcripts_y_col)
+        if not mask.all():
+            _invalidate_spatial(adata)
         adata._inplace_subset_obs(mask)
         return None
     else:
         subset = adata[mask].copy()
+        if not mask.all():
+            _invalidate_spatial(subset)
         subset.uns["spatial_bounds"] = bounds
         if crop_transcripts and "transcripts" in subset.uns:
             _crop_transcripts_uns(subset.uns, region, transcripts_x_col, transcripts_y_col)
@@ -654,12 +728,34 @@ def apply_affine(
     if matrix.shape != (3, 3):
         raise ValueError(f"matrix must be a (3, 3) homogeneous 2D matrix, got shape {matrix.shape}")
 
+    if not np.isfinite(matrix).all() or not np.allclose(matrix[2], [0, 0, 1]) or np.linalg.det(matrix[:2, :2]) == 0:
+        raise ValueError("matrix must be a finite invertible affine")
     target = mdata if inplace else mdata.copy()
-    for adata in target.mod.values():
-        if spatial_key in adata.obsm:
-            _apply_coord_transform(adata, matrix, spatial_key, list(boundaries_keys))
-        _append_image_transform(adata, matrix)
-        _transform_spatial_bounds(adata, matrix)
+    for modality, obj in target.mod.items():
+        derived_keys = {key for entry in obj.uns.get("_astrolabe_spatial_results", {}).values()
+                        for key in entry.get("uns", [])}
+        for key in derived_keys:
+            if isinstance(target.uns.get(key), dict) and modality in target.uns[key]:
+                del target.uns[key][modality]
+                if not target.uns[key]:
+                    del target.uns[key]
+    seen = {}
+    image_seen = set()
+    for obj in [target, *target.mod.values()]:
+        _transform_uns_coordinates(obj.uns, matrix, seen)
+        for lib in obj.uns.get("spatial", {}).values():
+            for spec in lib.get("images", {}).values():
+                if isinstance(spec, ImageSpec) and id(spec) not in image_seen:
+                    spec.transform_chain.append(matrix)
+                    image_seen.add(id(spec))
+        if spatial_key in obj.obsm:
+            obj.obsm[spatial_key] = _transform_coords(np.asarray(obj.obsm[spatial_key]), matrix)
+        if isinstance(obj, ad.AnnData):
+            for bkey in boundaries_keys:
+                if bkey in obj.obsm:
+                    obj.obsm[bkey] = _transform_boundary_obsm(obj.obsm[bkey], matrix)
+            _invalidate_spatial(obj)
+        _transform_spatial_bounds(obj, matrix)
 
     return None if inplace else target
 

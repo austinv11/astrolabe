@@ -658,7 +658,29 @@ def with_adata(
         @functools.wraps(fn)
         def wrapper(data: ad.AnnData | md.MuData, *args, modality: str | None = None, **kwargs):
             adata, resolved_modality = _resolve_adata_and_modality(data, modality)
+            spatial_modules = {"_spatial_stats", "_neighborhood", "_icg", "_gradient", "_niches", "_regions",
+                               "_communication", "_image_features", "_gene_modules", "_flux", "_subcellular"}
+            spatial_result = fn.__module__.rsplit(".", 1)[-1] in spatial_modules
+            before = {attr: set(getattr(adata, attr)) for attr in ("uns", "obs", "var", "obsm", "obsp")} if spatial_result else {}
+            old_obs, old_var = adata.obs_names.copy(), adata.var_names.copy()
             result = fn(adata, *args, **kwargs)
+            if resolved_modality is not None and (
+                not old_obs.equals(adata.obs_names) or not old_var.equals(adata.var_names)
+            ):
+                data.update()
+
+            if spatial_result:
+                registry = adata.uns.setdefault("_astrolabe_spatial_results", {})
+                changed = {attr: sorted(set(getattr(adata, attr)) - before[attr])
+                           for attr in ("uns", "obs", "var", "obsm", "obsp")}
+                changed["uns"] = [key for key in changed["uns"] if key != "_astrolabe_spatial_results"]
+                if mirror_uns is not None:
+                    key = _resolve_mirror_key(adata, args, kwargs)
+                    if key in adata.uns and key not in changed["uns"]:
+                        changed["uns"].append(key)
+                prior = registry.get(fn.__name__, {})
+                registry[fn.__name__] = {attr: sorted(set(prior.get(attr, [])) | set(keys))
+                                        for attr, keys in changed.items()}
 
             if mirror_uns is not None and resolved_modality is not None:
                 uns_key = _resolve_mirror_key(adata, args, kwargs)

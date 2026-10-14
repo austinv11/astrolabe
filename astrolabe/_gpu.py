@@ -115,15 +115,21 @@ class gpu:
         global _GPU_ENABLED
         self._prev_state = _GPU_ENABLED
         _GPU_ENABLED = True
-        if self._auto_transfer and self._data is not None:
-            to_gpu(self._data, modality=self._modality)
+        try:
+            if self._auto_transfer and self._data is not None:
+                to_gpu(self._data, modality=self._modality)
+        except BaseException:
+            _GPU_ENABLED = self._prev_state
+            raise
         return self
 
     def __exit__(self, *_):
         global _GPU_ENABLED
-        if self._auto_transfer and self._data is not None:
-            to_cpu(self._data, modality=self._modality)
-        _GPU_ENABLED = self._prev_state
+        try:
+            if self._auto_transfer and self._data is not None:
+                to_cpu(self._data, modality=self._modality)
+        finally:
+            _GPU_ENABLED = self._prev_state
 
 
 def to_gpu(data, modality=None, convert_all: bool = False) -> None:

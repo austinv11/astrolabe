@@ -78,11 +78,8 @@ class TestGetisOrdNJobs:
         assert not result["p_norm"].isna().any()
         assert result["z_sim"].isna().all()
         assert result["p_sim"].isna().all()
-        # n_perms=0 must still apply p_adjust_method across cells -- p_norm is
-        # a legitimate per-cell p-value like p_sim, and FDR-adjusted p-values
-        # are never smaller than the raw p-value for a method like fdr_bh.
-        assert not result["p_adj"].isna().any()
-        assert (result["p_adj"].to_numpy() >= result["p_norm"].to_numpy() - 1e-12).all()
+        assert result["p_adj"].isna().all()
+        assert (result["type"] == "not_tested").all()
 
     def test_p_sim_is_two_sided_not_directed(self):
         # p_sim is recomputed two-sided from the retained simulations via
@@ -746,16 +743,11 @@ class TestRipleyPerRadiusPValue:
 
 
 class TestLisaQuadrantGating:
-    def test_quadrant_ungated_when_no_permutations(self):
-        # n_perms=0 runs no significance test at all. Gating everything to
-        # 'NS' would silently conflate "not tested" with "not significant"
-        # (a real notebook regression: fast-viz n_perms=0 maps rendered as
-        # all-NS). Instead the RAW quadrant labels are returned with a
-        # logged warning -- every cell gets its sign-pattern label, none NS.
+    def test_quadrant_not_tested_when_no_permutations(self):
         adata = _adata_for_stats()
         result = moran_local(adata, "gene_0", n_perms=0)
-        assert (result["quadrant"] != "NS").all()
-        assert set(result["quadrant"]) <= {"HH", "LL", "HL", "LH"}
+        assert set(result["quadrant"]) == {"not_tested"}
+        assert set(result["quadrant_raw"]) <= {"HH", "LL", "HL", "LH"}
 
     def test_quadrant_gated_by_alpha(self):
         # Strong two-blob structure: significant cells get HH/LL, and every

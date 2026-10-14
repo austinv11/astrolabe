@@ -56,6 +56,8 @@ Repository    = "https://github.com/austinv11/astrolabe"
 "Bug Tracker" = "https://github.com/austinv11/astrolabe/issues"
 
 [project.optional-dependencies]
+cohort = ["pydeseq2>=0.5.4,<0.6"]
+communication = ["liana>=1.10,<2"]
 napari   = ["napari>=0.5.0"]
 cellpose = ["cellpose"]
 stardist = ["stardist", "tensorflow"]
@@ -72,7 +74,7 @@ dev      = [
     "pytest>=8",
 ]
 # gpu is intentionally absent from 'all': install rapids-singlecell-cu12 or -cu13 directly
-all      = ["astrolabe[napari,cellpose,stardist,harmony,som]"]
+all      = ["astrolabe[napari,cellpose,stardist,harmony,som,cohort,communication]"]
 
 [tool.hatch.version]
 source = "vcs"
@@ -84,3 +86,6 @@ artifacts = ["astrolabe/pl/_fonts/*.ttf"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The optional Napari plugin adds Qt/session fixtures these tests do not use
+# and can hold the runner open after completion.
+addopts = "-p no:napari"

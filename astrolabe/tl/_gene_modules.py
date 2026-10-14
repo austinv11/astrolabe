@@ -387,9 +387,10 @@ def spatial_gene_modules(
 
     # ── Expression matrix ──────────────────────────────────────────────────────
     X = adata.layers[layer] if layer is not None else adata.X
+    X = X[:, gene_idx]
     if sp.issparse(X):
         X = X.toarray()
-    X = np.asarray(X, dtype=np.float64)[:, gene_idx]  # (n_cells, n_genes)
+    X = np.asarray(X, dtype=np.float64)  # (n_cells, n_genes)
 
     # Standardise: zero mean, unit variance per gene. Zero-variance
     # (undetected/constant) genes are excluded from clustering entirely,

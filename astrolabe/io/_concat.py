@@ -277,6 +277,10 @@ def concat_samples(
     # ------------------------------------------------------------------
     # Restore uns
     # ------------------------------------------------------------------
+    concat_adata.uns["measured_features"] = pd.DataFrame(
+        {lib: concat_adata.var_names.isin(features) for lib, features in zip(id_to_mdata, gene_sets)},
+        index=concat_adata.var_names,
+    )
     concat_adata.uns["spatial"] = spatial_uns_merged
     concat_adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 

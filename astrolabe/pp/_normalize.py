@@ -31,7 +31,7 @@ def normalize_total(
     key_added: str | None = "total_counts_norm",
     layer: str | None = None,
     inplace: bool = True,
-) -> ad.AnnData | None:
+) -> dict | None:
     """Normalize each cell to the same total count.
 
     Delegates to :func:`scanpy.pp.normalize_total` with astrolabe-idiomatic
@@ -65,7 +65,9 @@ def normalize_total(
 
     Returns
     -------
-    None or AnnData
+    None or dict
+        With ``inplace=False``, Scanpy returns the normalized matrix and
+        normalization factors in a dictionary; the input is retained.
     """
     if gpu_enabled():
         rsc = _require_rapids()

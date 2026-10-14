@@ -3,11 +3,13 @@ revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin'",
     "(python_full_version >= '3.14' and platform_machine == 'arm64') or (python_full_version >= '3.14' and sys_platform != 'darwin')",
-    "(python_full_version == '3.13.*' and platform_machine == 'arm64') or (python_full_version == '3.13.*' and sys_platform != 'darwin')",
+    "python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
     "python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin'",
-    "(python_full_version < '3.13' and platform_machine == 'arm64') or (python_full_version < '3.13' and sys_platform != 'darwin')",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "(python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
 ]
 
 [[package]]
@@ -209,13 +211,21 @@ dependencies = [
 all = [
     { name = "cellpose" },
     { name = "harmonypy" },
+    { name = "liana" },
     { name = "minisom" },
     { name = "napari" },
+    { name = "pydeseq2" },
     { name = "stardist" },
     { name = "tensorflow" },
 ]
 cellpose = [
     { name = "cellpose" },
+]
+cohort = [
+    { name = "pydeseq2" },
+]
+communication = [
+    { name = "liana" },
 ]
 dev = [
     { name = "ipykernel" },
@@ -254,6 +264,8 @@ requires-dist = [
     { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
     { name = "jupyterlab", marker = "extra == 'dev'", specifier = ">=4.6.1" },
     { name = "leidenalg", specifier = ">=0.10.2" },
+    { name = "liana", marker = "extra == 'all'", specifier = ">=1.10,<2" },
+    { name = "liana", marker = "extra == 'communication'", specifier = ">=1.10,<2" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "minisom", marker = "extra == 'all'", specifier = ">=2.3.5,<3" },
     { name = "minisom", marker = "extra == 'som'", specifier = ">=2.3.5,<3" },
@@ -262,6 +274,8 @@ requires-dist = [
     { name = "napari", marker = "extra == 'napari'", specifier = ">=0.5.0" },
     { name = "nbconvert", specifier = ">=7.17.1" },
     { name = "pyarrow", specifier = ">=24.0.0" },
+    { name = "pydeseq2", marker = "extra == 'all'", specifier = ">=0.5.4,<0.6" },
+    { name = "pydeseq2", marker = "extra == 'cohort'", specifier = ">=0.5.4,<0.6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "python-igraph", specifier = ">=1.0.0" },
     { name = "scanpy", specifier = ">=1.12.1" },
@@ -275,7 +289,7 @@ requires-dist = [
     { name = "tensorflow", marker = "extra == 'stardist'" },
     { name = "tifffile", specifier = ">=2024.1.1" },
 ]
-provides-extras = ["all", "cellpose", "dev", "harmony", "napari", "som", "stardist"]
+provides-extras = ["all", "cellpose", "cohort", "communication", "dev", "harmony", "napari", "som", "stardist"]
 
 [[package]]
 name = "asttokens"
@@ -870,6 +884,15 @@ wheels = [
 ]
 
 [[package]]
+name = "docrep"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/8e/250fab1cafeea43f4eb11f1d64cd6313f639965ff62cb0d9da3883655781/docrep-0.3.2.tar.gz", hash = "sha256:ed8a17e201abd829ef8da78a0b6f4d51fb99a4cbd0554adbed3309297f964314", size = 33197, upload-time = "2021-02-16T09:01:50.183Z" }
+
+[[package]]
 name = "docstring-parser"
 version = "0.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1115,6 +1138,39 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/34/3b/214dcc19ee31d3d38fb5ad2755c11ef0514e5dc300bbaf41c0b69f393799/fonttools-4.63.0-cp314-cp314t-win32.whl", hash = "sha256:948428a275741f0b64b113c955425a953314f4b9ab9997f73a72c83e68e569c8", size = 2359326, upload-time = "2026-05-14T12:04:24.22Z" },
     { url = "https://files.pythonhosted.org/packages/dd/1e/3ff1a9b523058c2eeb6a9d50f5574e2a738200d0d94107d5bc4105e8da3f/fonttools-4.63.0-cp314-cp314t-win_amd64.whl", hash = "sha256:6d4741eb179121cab9eea4cb2393d24492373a260d7945006358c08cfbf45419", size = 2425829, upload-time = "2026-05-14T12:04:26.829Z" },
     { url = "https://files.pythonhosted.org/packages/2c/47/c99d5268f354002ce80f8d029cd9d7d872969da1de8b93d32de4dc56d6f4/fonttools-4.63.0-py3-none-any.whl", hash = "sha256:445af2eab030a16b9171ea8bdda7ebf7d96bda2df88ee182a464252f6e05e20d", size = 1164562, upload-time = "2026-05-14T12:04:29.092Z" },
+]
+
+[[package]]
+name = "formulaic"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "interface-meta" },
+    { name = "narwhals" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'arm64' and sys_platform == 'darwin'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/87/e7b9b39d218793f159d7425e264c0ac196da07f1decc333001502fac02fb/formulaic-1.2.2.tar.gz", hash = "sha256:c99e8f11ff7d327eaecaf63855ca69b7fa0da100ad6c0041ef80912fbac667e6", size = 657522, upload-time = "2026-06-02T18:24:42.632Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/75/0576b03f7889ad25b5385b4f6c69e0543713425a6f193b056c9b0a2e65ce/formulaic-1.2.2-py3-none-any.whl", hash = "sha256:0f84ff49e3fc9dc0e68ab08a0a9427874021aa6c558e66b44dc634a35739b09b", size = 118939, upload-time = "2026-06-02T18:24:41.344Z" },
+]
+
+[[package]]
+name = "formulaic-contrasts"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "formulaic" },
+    { name = "pandas" },
+    { name = "session-info" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/e6/4850976c248746062cfaa08628b3ec5ba3dfcab3d6ecd0d3886c36c04681/formulaic_contrasts-1.0.0.tar.gz", hash = "sha256:0a575a810bf1fba28938259d86a3ae2ae90cb9826fca84b9409085170862f701", size = 123794, upload-time = "2024-12-15T13:44:06.844Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/7b/639411281256c84e8111bf6cb9676c44dbf5d8ad4cb042f4359b7e7b9e74/formulaic_contrasts-1.0.0-py3-none-any.whl", hash = "sha256:e1220d315cf446bdec9385375ca4da43896e4ba68114ebea1b2a37efa5d097f5", size = 10054, upload-time = "2024-12-15T13:44:05.454Z" },
 ]
 
 [[package]]
@@ -1433,6 +1489,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "interface-meta"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/5b/202a48a1ccdef721a95357fbe263c54ef87c18c4972df1ab5c22fe0f33d5/interface_meta-2.0.1.tar.gz", hash = "sha256:902bd9a95a12f195f15753a1080075d4eca7a2cb934fac7ac03c9e362b50796a", size = 15281, upload-time = "2026-04-30T22:35:36.882Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/d3/20a61a248feb1249cd81f83ce731f0bdf5170ed96a08a298f7081cda9e90/interface_meta-2.0.1-py3-none-any.whl", hash = "sha256:f38016bef9a4429b6d0792d809be7b65e9781820c674bf7f463999086b6e6323", size = 15330, upload-time = "2026-04-30T22:35:35.201Z" },
 ]
 
 [[package]]
@@ -1981,6 +2046,28 @@ wheels = [
 ]
 
 [[package]]
+name = "liana"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anndata" },
+    { name = "docrep" },
+    { name = "mudata" },
+    { name = "numba", version = "0.62.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'arm64' and sys_platform == 'darwin'" },
+    { name = "numba", version = "0.65.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
+    { name = "pandas" },
+    { name = "plotnine", version = "0.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and sys_platform == 'emscripten'" },
+    { name = "plotnine", version = "0.15.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' or sys_platform != 'emscripten'" },
+    { name = "scanpy" },
+    { name = "session-info2" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/32/99/2d65808a09ae69fa26fbd42f100db550bfb8574176b5a1cf47fa2a2ce00f/liana-1.10.0.tar.gz", hash = "sha256:8a7701bfa6a584589ebb492ac67feb98434aa9d8f87371f3347c00d70ef7a20a", size = 42150974, upload-time = "2026-08-27T09:24:26.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/4f/fee3708c82d18f4e570b692dca2b6ce3ec492b63734ec8fe423231c78fac/liana-1.10.0-py3-none-any.whl", hash = "sha256:f32393dfc5388462aa414b4068cb72965d9227baa9d9e83bdbd54d30a13c2e7e", size = 601584, upload-time = "2026-08-27T09:24:23.373Z" },
+]
+
+[[package]]
 name = "libclang"
 version = "18.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2043,8 +2130,10 @@ version = "0.47.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(python_full_version >= '3.14' and platform_machine == 'arm64') or (python_full_version >= '3.14' and sys_platform != 'darwin')",
-    "(python_full_version == '3.13.*' and platform_machine == 'arm64') or (python_full_version == '3.13.*' and sys_platform != 'darwin')",
-    "(python_full_version < '3.13' and platform_machine == 'arm64') or (python_full_version < '3.13' and sys_platform != 'darwin')",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "(python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/01/88/a8952b6d5c21e74cbf158515b779666f692846502623e9e3c39d8e8ba25f/llvmlite-0.47.0.tar.gz", hash = "sha256:62031ce968ec74e95092184d4b0e857e444f8fdff0b8f9213707699570c33ccc", size = 193614, upload-time = "2026-03-31T18:29:53.497Z" }
 wheels = [
@@ -2255,6 +2344,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ca/84/620cc3f7e3adf6f5067e10f4dbae71295d8f9e16d5d3f9ef97c40f2f592c/mistune-3.2.1.tar.gz", hash = "sha256:7c8e5501d38bac1582e067e46c8343f17d57ea1aaa735823f3aba1fd59c88a28", size = 98003, upload-time = "2026-05-03T14:33:22.312Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/7f/a946aa4f8752b37102b41e64dca18a1976ac705c3a0d1dfe74d820a02552/mistune-3.2.1-py3-none-any.whl", hash = "sha256:78cdb0ba5e938053ccf63651b352508d2efa9411dc8810bfb05f2dc5140c0048", size = 53749, upload-time = "2026-05-03T14:33:20.551Z" },
+]
+
+[[package]]
+name = "mizani"
+version = "0.14.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'arm64' and sys_platform == 'darwin'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/74/e03c87e8884a486909f9f254a9d0d6b34395a7379e6bf2331bbc8453b1d4/mizani-0.14.6.tar.gz", hash = "sha256:5b37ec00adb30420f18272844688b91137297068c707f18d6fd32673aed58a23", size = 774581, upload-time = "2026-09-07T16:14:38.634Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/a8/4463130becffe3e091feed0f459008aeebc806998dff53166cc12063f6b0/mizani-0.14.6-py3-none-any.whl", hash = "sha256:a3d3ec364018efaa0e259d530303576156bac7741faa66167c9b50aaf19c3d73", size = 134163, upload-time = "2026-09-07T16:14:36.791Z" },
 ]
 
 [[package]]
@@ -2584,8 +2689,10 @@ version = "0.65.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(python_full_version >= '3.14' and platform_machine == 'arm64') or (python_full_version >= '3.14' and sys_platform != 'darwin')",
-    "(python_full_version == '3.13.*' and platform_machine == 'arm64') or (python_full_version == '3.13.*' and sys_platform != 'darwin')",
-    "(python_full_version < '3.13' and platform_machine == 'arm64') or (python_full_version < '3.13' and sys_platform != 'darwin')",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "(python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
 ]
 dependencies = [
     { name = "llvmlite", version = "0.47.0", source = { registry = "https://pypi.org/simple" } },
@@ -2678,8 +2785,10 @@ version = "2.4.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(python_full_version >= '3.14' and platform_machine == 'arm64') or (python_full_version >= '3.14' and sys_platform != 'darwin')",
-    "(python_full_version == '3.13.*' and platform_machine == 'arm64') or (python_full_version == '3.13.*' and sys_platform != 'darwin')",
-    "(python_full_version < '3.13' and platform_machine == 'arm64') or (python_full_version < '3.13' and sys_platform != 'darwin')",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "(python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "(python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/ad/fed0499ce6a338d2a03ebae59cd15093910c8875328855781952abf6c2fe/numpy-2.4.6.tar.gz", hash = "sha256:f3a3570c4a2a16746ac2c31a7c7c7b0c186b95ce902e33db6f28094ed7387dda", size = 20735807, upload-time = "2026-05-18T23:37:14.07Z" }
 wheels = [
@@ -3201,6 +3310,53 @@ wheels = [
 ]
 
 [[package]]
+name = "plotnine"
+version = "0.15.3"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+]
+dependencies = [
+    { name = "matplotlib" },
+    { name = "mizani" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "statsmodels" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/d5/4eeed62b101aa879b87e9bbc9d0650700b5ebd1ffa743902286b039135a2/plotnine-0.15.3.tar.gz", hash = "sha256:2e8130db4673e0daccb1fd1dfc9f2a6cd2e7843b14f861f4ab861dde1639045f", size = 6788365, upload-time = "2026-01-28T16:35:34.708Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/79/eb59d10e13b151a514a8af3b1dcefb5e998b6c8c26bf0cf82d2b98f02c23/plotnine-0.15.3-py3-none-any.whl", hash = "sha256:39fd2ab8b6465275c8a283ce20d4b743dd865e94c74ae7d7d6f21a7eb31f62c1", size = 1332831, upload-time = "2026-01-28T16:35:32.241Z" },
+]
+
+[[package]]
+name = "plotnine"
+version = "0.15.8"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version >= '3.14' and platform_machine == 'arm64') or (python_full_version >= '3.14' and sys_platform != 'darwin')",
+    "python_full_version == '3.13.*' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version == '3.13.*' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
+    "python_full_version < '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "(python_full_version < '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'emscripten')",
+]
+dependencies = [
+    { name = "matplotlib" },
+    { name = "mizani" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'arm64' and sys_platform == 'darwin'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "statsmodels" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/5d/3471689cf15cf2b6ebb6ebdebc7e33831fb35d85e2323875b5a0e150505d/plotnine-0.15.8.tar.gz", hash = "sha256:d3859997c3abd6edff6dee376d912716e75bbe0b0099b7054176d84fe11e8e20", size = 6863148, upload-time = "2026-08-14T16:27:49.399Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/37/7a0275ea8143f0f0a2b27db73656d7ea3459e9cf8f869e292e450b357d1e/plotnine-0.15.8-py3-none-any.whl", hash = "sha256:b8a17fbccdf331f0474ff59ea03186c07d96586eb0ebe70121b03fbf131881a9", size = 1573224, upload-time = "2026-08-14T16:27:47.601Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3506,6 +3662,26 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/71/dba38ee2651f84f7842206adbd2233d8bbdb59fb85e9fa14232486a8c471/pydantic_extra_types-2.11.1.tar.gz", hash = "sha256:46792d2307383859e923d8fcefa82108b1a141f8a9c0198982b3832ab5ef1049", size = 172002, upload-time = "2026-03-16T08:08:03.92Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/c1/3226e6d7f5a4f736f38ac11a6fbb262d701889802595cdb0f53a885ac2e0/pydantic_extra_types-2.11.1-py3-none-any.whl", hash = "sha256:1722ea2bddae5628ace25f2aa685b69978ef533123e5638cfbddb999e0100ec1", size = 79526, upload-time = "2026-03-16T08:08:02.533Z" },
+]
+
+[[package]]
+name = "pydeseq2"
+version = "0.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anndata" },
+    { name = "formulaic" },
+    { name = "formulaic-contrasts" },
+    { name = "matplotlib" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'arm64' and sys_platform == 'darwin'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'arm64' or sys_platform != 'darwin'" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4a/70/5086491c13dd298501707c43a4c03758959a574662bfd9dcd1d379e388aa/pydeseq2-0.5.4.tar.gz", hash = "sha256:49d6f47840b5444ea2b69be7857c6c4e58f369066a0fb24bc52f7d3a62bbd92c", size = 790481, upload-time = "2026-01-23T14:18:51.439Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/ff/94bc1aea7cba8bd6559469732408d6699c71077a495068141fcf9eb1f0dc/pydeseq2-0.5.4-py3-none-any.whl", hash = "sha256:690458824f1c4df0d13dbf7e5bdc1298f6dfb444b04a6e2aef9e7d3f21ba30dd", size = 45617, upload-time = "2026-01-23T14:18:49.658Z" },
 ]
 
 [[package]]
@@ -4357,6 +4533,18 @@ wheels = [
 ]
 
 [[package]]
+name = "session-info"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "stdlib-list" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f5/dc/4a0c85aee2034be368d3ca293a563128122dde6db6e1bc9ca9ef3472c731/session_info-1.0.1.tar.gz", hash = "sha256:d71950d5a8ce7f7f7d5e86aa208c148c4e50b5440b77d5544d422b48e4f3ed41", size = 24663, upload-time = "2025-04-11T16:08:43.504Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/c4/f6b7c0ec5241a2bde90c7ba1eca6ba44f8488bcedafe9072c79593015ec0/session_info-1.0.1-py3-none-any.whl", hash = "sha256:451d191e51816070b9f21a6ff3f6eb5d6015ae2738e8db63ac4e6398260a5838", size = 9119, upload-time = "2025-04-11T16:08:42.612Z" },
+]
+
+[[package]]
 name = "session-info2"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4615,6 +4803,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/34/0e/2408735aca9e764643196212f9069912100151414dd617d39ffc72d77eee/statsmodels-0.14.6-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3414e40c073d725007a6603a18247ab7af3467e1af4a5e5a24e4c27bc26673b4", size = 10337587, upload-time = "2025-12-05T23:13:37.597Z" },
     { url = "https://files.pythonhosted.org/packages/0f/36/4d44f7035ab3c0b2b6a4c4ebb98dedf36246ccbc1b3e2f51ebcd7ac83abb/statsmodels-0.14.6-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:a518d3f9889ef920116f9fa56d0338069e110f823926356946dae83bc9e33e19", size = 10363350, upload-time = "2025-12-05T23:13:53.08Z" },
     { url = "https://files.pythonhosted.org/packages/26/33/f1652d0c59fa51de18492ee2345b65372550501ad061daa38f950be390b6/statsmodels-0.14.6-cp314-cp314-win_amd64.whl", hash = "sha256:151b73e29f01fe619dbce7f66d61a356e9d1fe5e906529b78807df9189c37721", size = 9588010, upload-time = "2025-12-05T23:14:07.28Z" },
+]
+
+[[package]]
+name = "stdlib-list"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/25/f1540879c8815387980e56f973e54605bd924612399ace31487f7444171c/stdlib_list-0.12.0.tar.gz", hash = "sha256:517824f27ee89e591d8ae7c1dd9ff34f672eae50ee886ea31bb8816d77535675", size = 60923, upload-time = "2025-10-24T19:21:22.849Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/3d/2970b27a11ae17fb2d353e7a179763a2fe6f37d6d2a9f4d40104a2f132e9/stdlib_list-0.12.0-py3-none-any.whl", hash = "sha256:df2d11e97f53812a1756fb5510393a11e3b389ebd9239dc831c7f349957f62f2", size = 87615, upload-time = "2025-10-24T19:21:20.619Z" },
 ]
 
 [[package]]

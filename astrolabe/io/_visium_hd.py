@@ -569,7 +569,7 @@ def _attach_native_boundaries(cells_adata: ad.AnnData, geojson_path: Path, *, pi
         )
 
     n_cells = cells_adata.n_obs
-    spatial = np.zeros((n_cells, 2), dtype=np.float32)
+    spatial = np.full((n_cells, 2), np.nan, dtype=np.float32)
     boundaries: list[np.ndarray] = [np.zeros((0, 2), dtype=np.float32) for _ in range(n_cells)]
 
     valid = matrix_pos.notna()
@@ -577,7 +577,8 @@ def _attach_native_boundaries(cells_adata: ad.AnnData, geojson_path: Path, *, pi
         geom = gdf.geometry.loc[gi]
         coords = np.asarray(geom.exterior.coords, dtype=np.float64) * pixel_size_um
         boundaries[mi] = coords.astype(np.float32)
-        spatial[mi] = coords.mean(axis=0)
+        spatial[mi] = np.array([geom.centroid.x, geom.centroid.y]) * pixel_size_um
 
+    cells_adata.obs["spatial_valid"] = np.isfinite(spatial).all(axis=1)
     cells_adata.obsm["spatial"] = spatial
     cells_adata.obsm["cell_boundaries"] = ak.Array(boundaries)

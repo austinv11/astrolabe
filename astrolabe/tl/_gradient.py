@@ -58,6 +58,7 @@ import scipy.sparse as sp
 from joblib import Parallel, delayed
 from scipy.stats import false_discovery_control
 
+from astrolabe._statistics import permutation_p, adjust_p, annotate_permutation_resolution
 from astrolabe._utils import _check_single_library, _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _extract_values
 
@@ -78,6 +79,23 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _source_fingerprint(adata, key, layer, spatial_key, neighbors_key, groupby=None):
+    """Hash the actual source values, coordinates, graph and row identity."""
+    import hashlib
+    digest = hashlib.sha256()
+    digest.update("\0".join(adata.obs_names).encode())
+    for values in (np.asarray(adata.obsm[spatial_key], dtype=np.float64),
+                   np.asarray(_extract_values(adata, key, layer), dtype=np.float64)):
+        digest.update(np.ascontiguousarray(values).tobytes())
+    conn_key, _ = _get_neighbors_keys(adata, neighbors_key)
+    conn = adata.obsp[conn_key].tocsr()
+    for values in (conn.data, conn.indices, conn.indptr):
+        digest.update(np.ascontiguousarray(values).tobytes())
+    if groupby is not None:
+        digest.update("\0".join(adata.obs[groupby].astype(str)).encode())
+    return digest.hexdigest()
 
 
 def _get_neighbors_keys(adata: ad.AnnData, neighbors_key: str) -> tuple[str, str]:
@@ -749,6 +767,7 @@ def expression_gradient(
         base = f"{key_added}_{key}" if key_added else f"gradient_{key}"
         params_store[base] = {
             "key": key,
+            "source_fingerprint": _source_fingerprint(adata, key, layer, spatial_key, neighbors_key, groupby),
             "layer": layer,
             "spatial_key": spatial_key,
             "neighbors_key": neighbors_key,
@@ -996,8 +1015,8 @@ def gradient_significance(
     adata: ad.AnnData,
     keys: str | list[str],
     *,
-    spatial_key: str = "spatial",
-    neighbors_key: str = "spatial_neighbors",
+    spatial_key: str | None = None,
+    neighbors_key: str | None = None,
     layer: str | None = None,
     null: Literal["smooth", "csr"] = "smooth",
     n_perms: int = 200,
@@ -1131,6 +1150,36 @@ def gradient_significance(
     if isinstance(keys, str):
         keys = [keys]
 
+    if n_perms < 0:
+        raise ValueError("n_perms must be nonnegative")
+    all_params = adata.uns.get("gradient_params", {})
+    provenance = []
+    for key in keys:
+        base = f"{gradient_key_added}_{key}" if gradient_key_added else f"gradient_{key}"
+        if base not in all_params:
+            raise ValueError("gradient provenance is missing; recompute expression_gradient")
+        provenance.append(all_params[base])
+    def resolve(name, requested, default):
+        stored = [p.get(name, default) for p in provenance]
+        if name == "groups":
+            stored = [None if value is None else list(value) for value in stored]
+            requested = None if requested is None else list(requested)
+        if any(value != stored[0] for value in stored[1:]):
+            raise ValueError(f"requested gradients have different {name} provenance; test separately")
+        if requested is not None and requested != stored[0]:
+            raise ValueError(f"{name} conflicts with fitted gradient provenance")
+        return stored[0]
+    neighbors_key = resolve("neighbors_key", neighbors_key, "spatial_neighbors")
+    spatial_key = resolve("spatial_key", spatial_key, "spatial")
+    groupby = resolve("groupby", groupby, None)
+    groups = resolve("groups", groups, None)
+    for key, parameters in zip(keys, provenance):
+        if layer is not None and layer != parameters.get("layer"):
+            raise ValueError("layer conflicts with fitted gradient provenance")
+        actual = _source_fingerprint(adata, key, parameters.get("layer"), spatial_key, neighbors_key, groupby)
+        if parameters.get("source_fingerprint") != actual:
+            raise ValueError("gradient source changed; recompute expression_gradient before significance")
+
     conn_key, _dist_key = _get_neighbors_keys(adata, neighbors_key)
     conn_mat = adata.obsp[conn_key]
     coords = adata.obsm[spatial_key][:, :2].astype(np.float64)
@@ -1203,7 +1252,12 @@ def gradient_significance(
             coords, adata, conn_key, weight_by_distance, conn_mat=conn_mat
         )
 
-        f = _extract_values(adata, key, layer)
+        stored_layer = key_params.get("layer")
+        if layer is not None and layer != stored_layer:
+            raise ValueError("layer conflicts with fitted gradient provenance")
+        if key_params.get("neighbors_key", neighbors_key) != neighbors_key:
+            raise ValueError("neighbors_key conflicts with fitted gradient provenance")
+        f = _extract_values(adata, key, stored_layer)
         if null == "smooth":
             n_smooth = _calibrate_surrogate_smoothing(f, conn_mat, rng)
             log.info(
@@ -1259,10 +1313,8 @@ def gradient_significance(
         # two-sided (steeper OR shallower than the matched null is a
         # deviation); coherence is one-sided (only "more aligned" is the
         # alternative of interest).
-        p_mag_hi = (int((null_magnitudes >= obs_magnitude).sum()) + 1.0) / (n_perms + 1.0)
-        p_mag_lo = (int((null_magnitudes <= obs_magnitude).sum()) + 1.0) / (n_perms + 1.0)
-        p_mag = min(1.0, 2.0 * min(p_mag_hi, p_mag_lo))
-        p_coh = (int((null_coherences >= obs_coherence).sum()) + 1.0) / (n_perms + 1.0)
+        p_mag, n_mag = permutation_p(np.asarray(obs_magnitude), null_magnitudes)
+        p_coh, n_coh = permutation_p(np.asarray(obs_coherence), null_coherences, alternative="greater")
         rows.append(
             {
                 "key": key,
@@ -1270,9 +1322,11 @@ def gradient_significance(
                 "n_cells": int(scope.sum()),
                 "magnitude": obs_magnitude,
                 "coherence": obs_coherence,
-                "coherence_null_mean": float(np.nanmean(null_coherences)),
-                "p_magnitude": p_mag,
-                "p_coherence": p_coh,
+                "coherence_null_mean": (float(np.nanmean(null_coherences)) if np.isfinite(null_coherences).any() else np.nan),
+                "p_magnitude": float(p_mag),
+                "p_coherence": float(p_coh),
+                "n_valid_coherence": int(n_coh),
+                "n_valid_magnitude": int(n_mag),
                 "null": null,
                 "null_smoothing_steps": n_smooth,
             }
@@ -1282,10 +1336,10 @@ def gradient_significance(
             "coherence=%.3f vs null mean %.3f (p=%.3f)",
             key,
             obs_magnitude,
-            p_mag,
+            float(p_mag),
             obs_coherence,
-            float(np.nanmean(null_coherences)),
-            p_coh,
+            (float(np.nanmean(null_coherences)) if np.isfinite(null_coherences).any() else np.nan),
+            float(p_coh),
         )
 
     if not rows:
@@ -1296,12 +1350,16 @@ def gradient_significance(
     # with groups the (key, group) pair is the unit, so a plain 'key' index
     # would carry duplicates
     result = result.set_index(["key", "group"] if groupby is not None else "key")
-    result["p_magnitude_adj"] = false_discovery_control(
-        result["p_magnitude"].to_numpy(), method="bh"
+    result["p_magnitude_adj"] = adjust_p(
+        result["p_magnitude"].to_numpy()
     )
-    result["p_coherence_adj"] = false_discovery_control(
-        result["p_coherence"].to_numpy(), method="bh"
+    result["p_coherence_adj"] = adjust_p(
+        result["p_coherence"].to_numpy()
     )
+    annotate_permutation_resolution(result, "p_magnitude", "n_valid_magnitude",
+        label="gradient magnitude", suffix="_magnitude")
+    annotate_permutation_resolution(result, "p_coherence", "n_valid_coherence",
+        alternative="greater", label="gradient coherence", suffix="_coherence")
     adata.uns[key_added] = result
 
 

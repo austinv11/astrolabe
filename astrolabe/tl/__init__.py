@@ -198,3 +198,10 @@ __all__ = [
     "decay_length",
     "rebin_visium_hd",
 ]
+from astrolabe.tl._niches import niche_composition, niches
+from astrolabe.tl._regions import assign_regions, distance_to_region, region_summary
+from astrolabe.tl._cohort import rank_genes_pseudobulk, diff_nhood_enrichment
+from astrolabe.tl._communication import import_ligrec_resource, ligrec_local
+
+__all__ += ["niche_composition", "niches", "assign_regions", "distance_to_region", "region_summary",
+            "rank_genes_pseudobulk", "diff_nhood_enrichment", "import_ligrec_resource", "ligrec_local"]

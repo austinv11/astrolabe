@@ -48,6 +48,7 @@ def spatial_neighbors(
     spatial_key: str = "spatial",
     key_added: str = "spatial_neighbors",
     set_diag: bool = False,
+    library_key: str | None = "library_id",
 ) -> None:
     """Build a spatial neighborhood graph from cell centroids.
 
@@ -137,6 +138,10 @@ def spatial_neighbors(
             "coord_type must be one of 'generic', 'grid', or 'delaunay'; "
             f"got {coord_type!r}"
         )
+    if n_neighbors is not None and (not isinstance(n_neighbors, (int, np.integer)) or n_neighbors < 1):
+        raise ValueError("n_neighbors must be a positive integer")
+    if radius is not None and (not np.isfinite(radius) or radius <= 0):
+        raise ValueError("radius must be finite and positive")
     if spatial_key not in adata.obsm:
         raise KeyError(
             f"obsm['{spatial_key}'] not found.  "
@@ -144,6 +149,35 @@ def spatial_neighbors(
         )
 
     coords = adata.obsm[spatial_key].astype(np.float64)  # (n_cells, 2)
+    if coords.ndim != 2 or coords.shape[1] != 2 or not np.isfinite(coords).all():
+        raise ValueError("spatial coordinates must be finite 2-D (n_cells, 2)")
+    if library_key is not None and library_key in adata.obs:
+        labels = adata.obs[library_key]
+        if labels.isna().any():
+            raise ValueError("library labels must not be missing")
+        if labels.nunique() > 1:
+            row_parts, col_parts, distance_parts = [], [], []
+            for label in labels.unique():
+                idx = np.flatnonzero(labels.to_numpy() == label)
+                subset = adata[idx].copy()
+                spatial_neighbors(subset, n_neighbors=n_neighbors, radius=radius,
+                                  coord_type=coord_type, delaunay_max_dist=delaunay_max_dist,
+                                  spatial_key=spatial_key, key_added=key_added,
+                                  set_diag=set_diag, library_key=None)
+                conn = subset.obsp[key_added + "_connectivities"].tocoo()
+                distances = subset.obsp[key_added + "_distances"].tocsr()
+                row_parts.append(idx[conn.row]); col_parts.append(idx[conn.col])
+                distance_parts.append(np.asarray(distances[conn.row, conn.col]).ravel())
+            rows, cols = np.concatenate(row_parts), np.concatenate(col_parts)
+            adata.obsp[key_added + "_connectivities"] = sp.csr_matrix(
+                (np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(adata.n_obs, adata.n_obs))
+            adata.obsp[key_added + "_distances"] = sp.csr_matrix(
+                (np.concatenate(distance_parts), (rows, cols)), shape=(adata.n_obs, adata.n_obs))
+            adata.uns[key_added] = dict(subset.uns[key_added])
+            adata.uns[key_added]["params"]["library_key"] = library_key
+            return
+    elif library_key is not None and len(adata.uns.get("spatial", {})) > 1:
+        raise ValueError("Multiple coordinate frames require obs library labels")
     n_cells = coords.shape[0]
     metric = "chebyshev" if coord_type == "grid" else "euclidean"
 
@@ -282,6 +316,7 @@ def spatial_neighbors(
             "coord_type": coord_type,
             "delaunay_max_dist": delaunay_max_dist,
             "spatial_key": spatial_key,
+            "library_key": library_key,
             "metric": metric,
             # Honest provenance: how this graph was actually constructed.
             "astrolabe_method": astrolabe_method,

@@ -1,0 +1,21 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.12', '3.13']
+        extras: [dev, 'dev,cohort,communication']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --extra dev
+        if: matrix.extras == 'dev'
+      - run: uv sync --extra dev --extra cohort --extra communication
+        if: matrix.extras != 'dev'
+      - run: uv run --no-sync pytest -q

@@ -4,14 +4,15 @@ Interaction Changed Genes (ICGs).
 For every ordered cell-type pair (receiver A, neighbor B), split A-cells
 into "contacted" (≥1 spatial neighbor of type B) vs "non-contacted" and
 run a two-group DE test across all genes simultaneously, with a
-label-permutation null as the default significance path.
+within-receiver-type contact-flag permutation null.
 
 Reference
 ---------
 Dries, R., Zhu, Q., Dong, R. et al. *Giotto: a toolbox for integrative
 analysis and visualization of spatial expression data.* Genome Biology 22,
 78 (2021). doi:10.1186/s13059-021-02286-0 — the ``findInteractionChangedGenes``
-method that originated this analysis, including its label-permutation null.
+method that motivated this analysis. Astrolabe's within-type contact-flag
+association test is its own estimand, not an exact implementation of Giotto.
 """
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ import pandas as pd
 import scipy.sparse as sp
 from joblib import Parallel, delayed
 
+from astrolabe._statistics import (permutation_p, adjust_p, permutation_resolution,
+                                   annotate_permutation_resolution)
 from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._neighborhood import _category_codes
 
@@ -32,16 +35,8 @@ __all__ = ["interaction_changed_genes"]
 log = logging.getLogger(__name__)
 
 
-def _bh_correct(pvals: np.ndarray) -> np.ndarray:
-    n = len(pvals)
-    if n == 0:
-        return pvals.copy()
-    order = np.argsort(pvals)
-    adjusted = pvals[order] * n / (np.arange(1, n + 1, dtype=np.float64))
-    adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
-    result = np.empty(n)
-    result[order] = np.minimum(adjusted, 1.0)
-    return result
+def _bh_correct(pvals):
+    return adjust_p(pvals)
 
 
 def _tie_correction(combined: np.ndarray) -> np.ndarray:
@@ -127,14 +122,16 @@ def _ttest_vectorized(
     se = np.sqrt(se2)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        t_stats = np.where(se > 0, (mean1 - mean2) / se, 0.0)
+        t_stats = np.where(se > 0, (mean1 - mean2) / se,
+                           np.where((se == 0) & (mean1 != mean2), np.sign(mean1-mean2)*np.inf, np.nan))
         dof = np.where(
             se > 0,
             se2 ** 2 / ((var1 / n1) ** 2 / max(n1 - 1, 1) + (var2 / n2) ** 2 / max(n2 - 1, 1)),
             1.0,
         )
 
-    pvals = np.where(se > 0, 2.0 * t_dist.sf(np.abs(t_stats), dof), 1.0)
+    pvals = np.where(se > 0, 2.0 * t_dist.sf(np.abs(t_stats), dof),
+                      np.where((se == 0) & (mean1 != mean2), 0.0, np.nan))
     return t_stats, t_stats, pvals
 
 
@@ -153,9 +150,13 @@ def interaction_changed_genes(
     groupby: str,
     neighbors_key: str = "spatial_neighbors",
     layer: str | None = None,
+    expression_scale: Literal["linear", "log1p"],
+    log_base: float | None = None,
+    block_key: str | None = None,
+    library_key: str | None = "library_id",
     method: Literal["wilcoxon", "t-test"] = "wilcoxon",
     min_cells: int = 10,
-    fdr_scope: Literal["pair", "global"] = "pair",
+    fdr_scope: Literal["pair", "global"] = "global",
     skip_self_pairs: bool = True,
     pairs: "list[tuple[str, str]] | None" = None,
     n_perms: int = 200,
@@ -163,115 +164,17 @@ def interaction_changed_genes(
     n_jobs: int = 1,
     key_added: str = "icg",
 ) -> pd.DataFrame:
-    """Test for genes whose expression in cell type A changes when neighboring cell type B.
+    """Within-type contact association, with fixed receiver identities.
 
-    For every ordered pair (receiver A, neighbor B), cells of type A are
-    split into "contacted" (≥1 spatial neighbor of type B) and
-    "non-contacted" groups; a two-group DE test is run across all genes at
-    once.  Results are stored in ``adata.uns[key_added]`` and returned, and
-    mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
-
-    This is the analysis introduced by Giotto's
-    ``findInteractionChangedGenes`` (Dries et al. 2021, Genome Biology).
-
-    **Significance** (default: permutation null).  Cells in tissue are not
-    exchangeable — expression is spatially autocorrelated, and the
-    contacted/non-contacted split is itself spatially structured — so the
-    asymptotic Mann-Whitney/Welch p-value's independence assumption is
-    violated and that p-value is **anti-conservative**.  By default
-    (``n_perms > 0``), significance therefore comes from a
-    spatial-structure-preserving permutation null: the *groupby* labels are
-    shuffled over cells while positions, the spatial graph, and each cell's
-    expression stay fixed; the contact/non-contact split is recomputed per
-    pair under each relabeling; and each gene's observed standardized
-    statistic is compared against its own empirical null,
-    ``p = (1 + #{|z_perm| ≥ |z_obs|}) / (1 + n_valid_perms)`` (permutations
-    where a pair's split fails *min_cells* are excluded from that pair's
-    null).  The asymptotic p-value is still reported as ``p_asymptotic``
-    for reference/ranking, with the caveat above.
-
-    Parameters
-    ----------
-    data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData` with spatial
-        connectivity in ``obsp`` and cell-type labels in ``obs``.
-    modality
-        Modality key when *data* is a MuData; defaults to ``uns['default_modality']``.
-    groupby
-        ``obs`` column containing discrete cell-type / cluster labels.
-    neighbors_key
-        Prefix for the spatial graph in ``obsp``
-        (``{neighbors_key}_connectivities``).
-    layer
-        Expression layer to test.  ``None`` uses ``adata.X``.
-    method
-        Statistical test: ``'wilcoxon'`` (Mann-Whitney U + normal
-        approximation, default) or ``'t-test'`` (Welch).
-    min_cells
-        Minimum cells required in *both* groups for a pair to be tested.
-    fdr_scope
-        ``'pair'`` (default) — Benjamini-Hochberg correction applied
-        independently within each (cell_type, neighbor_type) pair's genes,
-        matching this function's original behavior. ``'global'`` — BH
-        applied once across every gene of every tested pair together. The
-        two give different, both-defensible answers to "controlled at what
-        family": per-pair FDR treats each pair as its own question ("which
-        genes change when A meets B specifically"), and doesn't control the
-        false-discovery rate of the *union* across all pairs, which
-        multiplies with pair count and involves statistically dependent
-        tests (the same cells are reused across many pairs' "non-contacted"
-        groups). ``'global'`` controls that union-wide rate at the cost of
-        real power loss on any individual pair.
-    skip_self_pairs
-        Skip A-vs-A pairs (default ``True``). For a self pair, "contacted"
-        means "has a same-type neighbor", so the split is a proxy for local
-        density/isolation rather than a cell-cell interaction: any gene
-        whose expression covaries with cell density (e.g. hypoxia, cell
-        cycle, segmentation-quality artifacts) shows up as an "interaction"
-        change. Pass ``False`` to test self pairs anyway — interpret them as
-        density-associated, not interaction-specific, signals.
-    pairs
-        Restrict testing to these ``(receiver, neighbor)`` category pairs.
-        ``None`` (default) tests every ordered pair. With the permutation
-        null, computation scales with the number of pairs × ``n_perms`` —
-        restrict to the pairs of interest when only a few matter.
-    n_perms
-        Number of label permutations for the empirical null (default 200 →
-        minimum attainable p = 1/201). ``0`` skips the permutation null
-        entirely and falls back to the asymptotic p-value as ``pval``
-        (anti-conservative under spatial autocorrelation — see above).
-    seed
-        Seed for the permutation RNG (reproducible for a given seed
-        regardless of ``n_jobs``).
-    n_jobs
-        Parallel workers for the permutation loop
-        (:class:`joblib.Parallel`, thread-backed). ``1`` = sequential,
-        ``-1`` = all cores.
-    key_added
-        Key written to ``adata.uns``.
-
-    Returns
-    -------
-    pd.DataFrame
-        Tidy frame sorted by ``(cell_type, neighbor_type, pval)`` with columns
-        ``cell_type``, ``neighbor_type``, ``gene``, ``statistic``, ``pval``
-        (permutation p when ``n_perms > 0``, else asymptotic),
-        ``p_asymptotic``, ``pval_adj`` (BH on ``pval``; scope set by
-        *fdr_scope*), ``mean_contacted``, ``mean_non_contacted``, ``log2fc``,
-        ``n_contacted``, ``n_non_contacted``.
-
-    Examples
-    --------
-    >>> df = ab.tl.interaction_changed_genes(mdata, groupby="leiden")
-    >>> df[df.pval_adj < 0.05].head(20)
-
-    References
-    ----------
-    Dries, R., Zhu, Q., Dong, R. et al. *Giotto: a toolbox for integrative
-    analysis and visualization of spatial expression data.* Genome Biology
-    22, 78 (2021). doi:10.1186/s13059-021-02286-0
+    Contact flags are permuted within receiver type, library and optional
+    ``block_key``. This assumes exchangeability within those strata and
+    does not establish signaling or causality. BH corrects genes and pairs
+    together by default. ``n_perms=0`` is not tested (asymptotic p-values
+    remain diagnostics). Specify the expression scale for fold changes:
+    ``log1p`` uses natural logs unless ``log_base`` is supplied.
     """
-    conn_key = neighbors_key + "_connectivities"
+    from astrolabe.tl._spatial_stats import _get_conn_matrix
+    conn_key = adata.uns.get(neighbors_key, {}).get("connectivities_key", neighbors_key + "_connectivities")
     if conn_key not in adata.obsp:
         raise KeyError(
             f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors first"
@@ -281,7 +184,25 @@ def interaction_changed_genes(
     if n_perms < 0:
         raise ValueError(f"n_perms must be >= 0; got {n_perms}")
 
-    conn = adata.obsp[conn_key].tocsr()
+    if method not in ("wilcoxon", "t-test") or fdr_scope not in ("pair", "global"):
+        raise ValueError("invalid method or fdr_scope")
+    if min_cells < (2 if method == "t-test" else 1):
+        raise ValueError("min_cells must be at least two for Welch, or one for Mann-Whitney")
+    if expression_scale not in ("linear", "log1p"):
+        raise ValueError("expression_scale must be linear or log1p")
+    if log_base is not None and (not np.isfinite(log_base) or log_base <= 0 or log_base == 1):
+        raise ValueError("log_base must be positive and different from one")
+    strata_keys = [k for k in (library_key, block_key) if k is not None and k in adata.obs]
+    if block_key is not None and block_key not in adata.obs:
+        raise KeyError(block_key)
+    for k in strata_keys:
+        if adata.obs[k].isna().any():
+            raise ValueError(f"missing exchangeability labels in {k}")
+    strata = (pd.MultiIndex.from_frame(adata.obs[strata_keys]).factorize()[0]
+              if strata_keys else np.zeros(adata.n_obs, dtype=int))
+    conn = _get_conn_matrix(adata, neighbors_key).tocsr(copy=True)
+    conn.setdiag(0)
+    conn.eliminate_zeros()
     # Shared with the rest of tl/_neighborhood.py's category-resolution
     # convention (declared .cat.categories order) instead of a separate
     # ad-hoc np.unique(labels) (alphabetical-by-value, and loses any
@@ -292,6 +213,8 @@ def interaction_changed_genes(
 
     # Keep X sparse; only the per-pair row subsets are densified.
     X = adata.layers[layer] if layer is not None else adata.X
+    if hasattr(X, "get"):
+        X = X.get()
     if not sp.issparse(X):
         X = np.asarray(X, dtype=np.float64)
 
@@ -347,29 +270,24 @@ def interaction_changed_genes(
 
             stats, z, p_asym = test_fn(X_cont, X_non)
 
-            # log-scale means (still useful diagnostic columns as-is), but
-            # log2fc itself is computed from expm1'd per-cell values *before*
-            # averaging -- matching scanpy.tl.rank_genes_groups' convention
-            # -- not from a ratio of already-log1p-transformed means. Taking
-            # log2 of a ratio of log-scale means is a different, less
-            # standard quantity, and the tiny 1e-9 pseudocount (calibrated
-            # for linear-scale expm1'd values, which are genuinely 0 for
-            # undetected genes) becomes wildly distorting when applied
-            # directly to small log1p-scale means instead: a barely-nonzero
-            # log1p mean of 0.001 against an exact-zero mean already gives
-            # log2((0.001+1e-9)/1e-9) ~ 20, overstating a near-undetectable
-            # difference as a ~million-fold change.
             mean_c = X_cont.mean(axis=0)
             mean_nc = X_non.mean(axis=0)
-            expm1_c = np.expm1(X_cont).mean(axis=0)
-            expm1_nc = np.expm1(X_non).mean(axis=0)
-            log2fc = np.log2((expm1_c + 1e-9) / (expm1_nc + 1e-9))
-            # Genes absent in both groups are not informative; mark them NaN
-            # so they sort to the bottom rather than appearing as "no change".
-            log2fc = np.where((mean_c == 0) & (mean_nc == 0), np.nan, log2fc)
+            try:
+                with np.errstate(over="raise", invalid="raise"):
+                    factor = 1 if log_base is None else np.log(log_base)
+                    linear_c = np.expm1(X_cont * factor) if expression_scale == "log1p" else X_cont
+                    linear_nc = np.expm1(X_non * factor) if expression_scale == "log1p" else X_non
+            except FloatingPointError as exc:
+                raise ValueError("expression scale inversion overflowed; check expression_scale/log_base") from exc
+            if (not np.isfinite(linear_c).all() or not np.isfinite(linear_nc).all()
+                    or (linear_c < 0).any() or (linear_nc < 0).any()):
+                raise ValueError("fold changes require finite nonnegative linear expression")
+            mean_linear_c, mean_linear_nc = linear_c.mean(axis=0), linear_nc.mean(axis=0)
+            log2fc = np.log2((mean_linear_c + 1e-9) / (mean_linear_nc + 1e-9))
+            log2fc = np.where((mean_linear_c == 0) & (mean_linear_nc == 0), np.nan, log2fc)
 
             tested_pairs.append((ct_a, ct_b))
-            obs_z.append(np.abs(z))
+            obs_z.append(z)
 
             parts.append(
                 pd.DataFrame(
@@ -397,17 +315,19 @@ def interaction_changed_genes(
     if n_pairs > 0 and n_perms > 0:
         pair_codes = [(code_of[a], code_of[b]) for a, b in tested_pairs]
 
-        def _one_perm(rng: np.random.Generator) -> np.ndarray:
-            perm_codes = rng.permutation(codes)
-            out = np.full((n_pairs, n_genes), np.nan, dtype=np.float64)
-            for pi, (ca, cb) in enumerate(pair_codes):
-                split_p = _split_pair(perm_codes, ca, cb)
-                if split_p is None:
-                    continue
-                _, z_p, _ = test_fn(
-                    _dense_rows(X, split_p[0]), _dense_rows(X, split_p[1])
-                )
-                out[pi] = np.abs(z_p)
+        fixed_splits = [_split_pair(codes, ca, cb) for ca, cb in pair_codes]
+
+        def _one_perm(rng):
+            out = np.full((n_pairs, n_genes), np.nan)
+            for pi, split in enumerate(fixed_splits):
+                cont, non = split
+                receiver = np.concatenate([cont, non])
+                flags = np.concatenate([np.ones(len(cont), dtype=bool), np.zeros(len(non), dtype=bool)])
+                for stratum in np.unique(strata[receiver]):
+                    idx = np.flatnonzero(strata[receiver] == stratum)
+                    flags[idx] = rng.permutation(flags[idx])
+                _, z_p, _ = test_fn(_dense_rows(X, receiver[flags]), _dense_rows(X, receiver[~flags]))
+                out[pi] = z_p
             return out
 
         log.info(
@@ -419,36 +339,42 @@ def interaction_changed_genes(
             delayed(_one_perm)(child_rng) for child_rng in child_rngs
         )
         perm_z = np.stack(perm_z_list)  # (n_perms, n_pairs, n_genes)
-        obs_abs = np.stack(obs_z)  # (n_pairs, n_genes)
 
-        valid = np.isfinite(perm_z)
-        n_valid = valid.sum(axis=0)  # (n_pairs, n_genes)
-        n_exceed = np.nansum(perm_z >= obs_abs[None, :, :], axis=0)
-        # (k+1)/(n+1) -- an exact 0 isn't a valid Monte Carlo p estimate.
-        pval_perm = (n_exceed + 1.0) / (n_valid + 1.0)
-
+        pval_perm, n_valid = permutation_p(np.stack(obs_z), np.moveaxis(perm_z, 0, -1))
         for pi, part in enumerate(parts):
             part["pval"] = pval_perm[pi]
+            part["n_valid"] = n_valid[pi]
     else:
-        if n_pairs > 0:
-            log.warning(
-                "interaction_changed_genes: n_perms=0 -- 'pval' falls back to "
-                "the asymptotic p-value, which is anti-conservative under "
-                "spatial autocorrelation (cells are not exchangeable)."
-            )
         for part in parts:
-            part["pval"] = part["p_asymptotic"]
+            part["pval"] = np.nan
+            part["n_valid"] = 0
 
     df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     if not df.empty:
         if fdr_scope == "global":
             df["pval_adj"] = _bh_correct(df["pval"].to_numpy())
+            annotate_permutation_resolution(df, "pval", "n_valid", label="contact-associated genes")
         else:
             df["pval_adj"] = df.groupby(
                 ["cell_type", "neighbor_type"], observed=True
             )["pval"].transform(lambda p: _bh_correct(p.to_numpy()))
+            df["p_min"] = np.nan
+            df["resolution_limited"] = False
+            families = []
+            for pair, positions in df.groupby(["cell_type", "neighbor_type"], observed=True).indices.items():
+                part = df.iloc[positions]
+                floors, limited, summary = permutation_resolution(part.pval, part.n_valid,
+                    label=f"contact-associated genes {pair}")
+                df.loc[part.index, "p_min"] = floors
+                df.loc[part.index, "resolution_limited"] = limited
+                families.append(dict(cell_type=str(pair[0]), neighbor_type=str(pair[1]), **summary))
+            df.attrs["permutation_resolution"] = {"scope": "pair", "families": families}
         df = df.sort_values(["cell_type", "neighbor_type", "pval"]).reset_index(drop=True)
 
+    df.attrs.update(null="within-type contact flags", block_key=block_key, library_key=library_key,
+                    expression_scale=expression_scale, log_base=log_base, fdr_scope=fdr_scope)
+    if not df.empty:
+        df["status"] = np.where(df.pval.notna(), "tested", "not_tested")
     adata.uns[key_added] = df
     log.info(
         "interaction_changed_genes: %d rows across %d tested pairs",

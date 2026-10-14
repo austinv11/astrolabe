@@ -48,8 +48,12 @@ def _category_codes(adata: ad.AnnData, groupby: str) -> tuple[np.ndarray, list]:
     """Return (int codes, category list) for obs[groupby] cast to Categorical."""
     if groupby not in adata.obs.columns:
         raise KeyError(f"obs['{groupby}'] not found")
+    if adata.obs[groupby].isna().any():
+        raise ValueError(f"obs[{groupby!r}] contains missing category labels")
     labels = adata.obs[groupby].astype("category")
-    return labels.cat.codes.to_numpy(), labels.cat.categories.tolist()
+    # Pair indices multiply codes by the category count; int8 overflows at
+    # twelve categories even though Pandas still uses int8 for those labels.
+    return labels.cat.codes.to_numpy(dtype=np.intp), labels.cat.categories.tolist()
 
 
 def _one_hot(codes: np.ndarray, n_types: int) -> sp.csr_matrix:
@@ -659,351 +663,26 @@ def expression_by_distance(
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
-def ligrec(
-    adata: ad.AnnData,
-    groupby: str,
-    lr_pairs: pd.DataFrame,
-    *,
-    neighbors_key: str = "spatial_neighbors",
-    layer: str | None = None,
-    n_perms: int = 200,
-    seed: int = 0,
-    expr_frac_threshold: float = 0.1,
-    report_alpha: float = 0.05,
-    corr_method: str | None = None,
-    n_jobs: int = 1,
-    key_added: str = "ligrec",
-) -> None:
-    """Spatially-contextualized ligand-receptor permutation test.
+def ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", layer=None,
+           n_perms=100, seed=None, expr_frac_threshold=.1, report_alpha=.05,
+           corr_method="fdr_bh", n_jobs=1, min_valid_perms=20, library_key="library_id",
+           max_scratch_bytes=256*1024**2, key_added="ligrec"):
+    """Complex-aware spatial-edge ligand/receptor association.
 
-    For each LR pair (L, R) and each directed cell-type pair (sender A →
-    receiver B), computes ``(mean(expression_L) + mean(expression_R)) / 2``
-    over all spatial graph edges where the source is of type A and the
-    target is of type B — the CellPhoneDB (Efremova et al. 2020) scoring
-    convention, restricted here to spatial-graph edges rather than the full
-    cross product of every cell of each type. Cell-type labels are permuted
-    ``n_perms`` times to produce a null distribution and an empirical
-    p-value.
-
-    Following CellPhoneDB, an LR pair is only *tested* for a given
-    (sender, receiver) pair when at least ``expr_frac_threshold`` of the
-    sender cluster's cells express the ligand **and** at least that fraction
-    of the receiver cluster's cells express the receptor (expression = any
-    nonzero value). Entries failing the gate — and cell-type pairs with no
-    spatial-graph edges at all — are ``NaN`` in both ``means`` and
-    ``pvalues``, never a fabricated 0 score or a p-value of ~1.
-
-    By restricting to actual spatial neighbors the test identifies LR
-    interactions that are plausible given the spatial architecture of the
-    tissue — a more stringent criterion than bulk cell-type-level analysis.
-
-    .. warning::
-
-        The GPU path (``ab.use_gpu(True)``) delegates to ``rsc.gr.ligrec``,
-        which has no spatial-graph-restriction parameter at all — it
-        computes a CellPhoneDB-style cluster-mean statistic across *every*
-        cell of each type, completely ignoring ``neighbors_key`` and
-        ``layer``. This is a genuinely different, non-spatial test from the
-        CPU path described above, not just a faster version of the same
-        thing. Check ``uns[key_added]['metadata']['spatial_restricted']``
-        (``True`` on CPU, ``False`` on GPU) if a result's provenance matters.
-
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
-
-    Parameters
-    ----------
-    data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
-    groupby
-        ``obs`` column with cell-type / cluster labels.
-    lr_pairs
-        :class:`pandas.DataFrame` with at least columns ``'ligand'`` and
-        ``'receptor'``.  Pairs whose genes are absent from ``var_names``
-        are silently dropped.
-    modality
-        Modality key when *data* is :class:`~mudata.MuData`.
-    neighbors_key
-        ``uns`` key written by :func:`~astrolabe.tl.spatial_neighbors`.
-    layer
-        Expression layer.  ``None`` uses ``X``.
-    n_perms
-        Permutations for the null distribution.  Increase to 1 000 for
-        final publication-quality p-values (slower).
-    seed
-        Random seed.
-    expr_frac_threshold
-        CellPhoneDB expressing-fraction gate: minimum fraction of a
-        cluster's cells expressing the ligand (sender) / receptor
-        (receiver) for the pair to be tested at all; failing entries are
-        ``NaN``. ``0.1`` (default) is CellPhoneDB's own default. Forwarded
-        as ``threshold=`` to ``rsc.gr.ligrec`` on the GPU path, where it has
-        the same meaning. (An earlier version had a single ``threshold``
-        parameter that meant this gate on GPU but a report-only alpha on
-        CPU — two unrelated things under one name.)
-    report_alpha
-        P-value threshold used only in the log summary (does not filter
-        results).
-    corr_method
-        Optional multiple-testing correction (e.g. ``'fdr_bh'``,
-        ``'bonferroni'``) applied jointly across every tested
-        (LR pair × cell-type pair) p-value. ``None`` (default) skips it;
-        otherwise a ``pvalues_adj`` DataFrame (same shape as ``pvalues``)
-        is stored alongside the raw p-values.
-    n_jobs
-        Parallel workers for the CPU permutation loop (joblib, thread-backed
-        — no extra memory copies since arrays are shared, not pickled).
-        ``1`` (default) runs sequentially. ``-1`` uses all available cores.
-        Ignored on the GPU path (``ab.use_gpu(True)``), which delegates to
-        ``rsc.gr.ligrec`` instead.
-    key_added
-        ``uns`` key to write results into.
-
-    Results stored in ``adata.uns[key_added]``
-    ------------------------------------------
-    Also mirrored to ``mdata.uns[key_added][<modality>]`` when called on a MuData.
-
-    ``means``
-        :class:`pandas.DataFrame` — rows = (ligand, receptor) MultiIndex,
-        columns = (sender, receiver) MultiIndex.  Values are the
-        CellPhoneDB-style ``(mean(L) + mean(R)) / 2`` score over spatial
-        edges; ``NaN`` where the expressing-fraction gate failed or the
-        cell-type pair has no spatial edges. On the CPU path the per-edge
-        averaging weights each cell by its edge count (a spatial-graph
-        degree-weighted mean), unlike CellPhoneDB's unweighted per-cluster
-        cell mean.
-    ``pvalues``
-        Same shape as ``means``; empirical p-values (``NaN`` where untested).
-    ``pvalues_adj``
-        Only when ``corr_method`` is given — corrected p-values.
-    ``metadata``
-        Dict storing ``groupby``, ``n_perms``, ``expr_frac_threshold``,
-        ``report_alpha``, ``corr_method``, ``spatial_restricted``.
-
-    Examples
-    --------
-    >>> import pandas as pd
-    >>> lr = pd.DataFrame({'ligand': ['CXCL12', 'VEGFA'], 'receptor': ['CXCR4', 'KDR']})
-    >>> ab.tl.ligrec(mdata, 'leiden', lr)
-    >>> ab.pl.ligrec_plot(mdata)
+    Uses minimum-subunit expression and within-library label permutations.
+    Missing subunits, expression gates and too few valid null scores are
+    explicitly untested. ``n_valid`` and ``status`` accompany p-values;
+    zero-edge permutations are excluded from the denominator. Scratch space
+    is bounded by chunked edge scoring; full expression is never densified.
+    GPU inputs use the equivalent CPU statistic rather than changing the null.
+    See ``tl.import_ligrec_resource`` for explicit complex/resource metadata.
     """
-    if not {"ligand", "receptor"}.issubset(lr_pairs.columns):
-        raise ValueError("lr_pairs must have 'ligand' and 'receptor' columns")
-
-    if gpu_enabled():
-        # rsc.gr.ligrec has no spatial-graph-restriction parameter at all --
-        # it computes CellPhoneDB-style cluster-mean expression across every
-        # cell of each type, completely ignoring `neighbors_key` and
-        # `layer`. This is a genuinely different, non-spatial statistic from
-        # the CPU path above (which restricts every product to actual
-        # spatial-graph edges) -- toggling ab.use_gpu(True) silently swapped
-        # one test for the other with no indication in the result. Since
-        # there is no way to make rsc.gr.ligrec spatially-restricted, the
-        # divergence is made loud instead of silent: a warning on every
-        # call, and `spatial_restricted: False` recorded in the metadata so
-        # a result can be checked programmatically, not just via a log line
-        # a caller may not see.
-        log.warning(
-            "ligrec: GPU path (rsc.gr.ligrec) computes a non-spatial, "
-            "cluster-mean statistic across ALL cells of each type -- "
-            "neighbors_key=%r and layer=%r are ignored entirely. This is "
-            "NOT equivalent to the CPU path's spatial-graph-edge-restricted "
-            "test. Use ab.use_gpu(False) for a spatially-restricted result.",
-            neighbors_key, layer,
-        )
-        rsc = _require_rapids()
-        # rsc.gr.ligrec expects 'source'/'target' column names
-        interactions_df = lr_pairs.rename(columns={"ligand": "source", "receptor": "target"})
-        with _gpu_X(adata):
-            # rsc's threshold= is the CellPhoneDB expressing-fraction gate --
-            # the same meaning as expr_frac_threshold here (the old code
-            # passed the CPU report-only alpha into it, silently gating GPU
-            # results at an unrelated value).
-            rsc.gr.ligrec(
-                adata,
-                cluster_key=groupby,
-                interactions=interactions_df,
-                n_perms=n_perms,
-                threshold=expr_frac_threshold,
-                key_added=key_added,
-                use_raw=False,
-            )
-        # Remap metadata from rsc DataFrame to astrolabe dict format
-        result = adata.uns[key_added]
-        out = {
-            "means": result["means"],
-            "pvalues": result["pvalues"],
-            "metadata": {
-                "groupby": groupby, "n_perms": n_perms,
-                "expr_frac_threshold": expr_frac_threshold,
-                "report_alpha": report_alpha,
-                "corr_method": corr_method,
-                "spatial_restricted": False,
-                "note": (
-                    "GPU path: non-spatial cluster-mean statistic, not "
-                    "restricted to spatial-graph edges. See ab.tl.ligrec docs."
-                ),
-            },
-        }
-        if corr_method is not None:
-            from astrolabe.tl._spatial_stats import _adj_pvalues
-
-            pv = result["pvalues"]
-            adj = _adj_pvalues(pv.to_numpy(dtype=np.float64).ravel(), corr_method)
-            out["pvalues_adj"] = pd.DataFrame(
-                adj.reshape(pv.shape), index=pv.index, columns=pv.columns
-            )
-        adata.uns[key_added] = out
-        return
-
-    # Filter to genes present in adata
-    present = set(adata.var_names)
-    valid = lr_pairs[
-        lr_pairs["ligand"].isin(present) & lr_pairs["receptor"].isin(present)
-    ].reset_index(drop=True)
-    if len(valid) == 0:
-        raise ValueError("No LR pairs have both genes in adata.var_names")
-
-    n_dropped = len(lr_pairs) - len(valid)
-    if n_dropped:
-        log.info("ligrec: dropped %d LR pairs with genes not in var_names.", n_dropped)
-
-    codes, categories = _category_codes(adata, groupby)
-    n_types = len(categories)
-
-    # Edge arrays
-    edge_src, edge_dst = _edge_arrays(adata, neighbors_key)
-    n_edges = len(edge_src)
-
-    # Gene indices
-    lig_idx = np.array([adata.var_names.get_loc(g) for g in valid["ligand"]])
-    rec_idx = np.array([adata.var_names.get_loc(g) for g in valid["receptor"]])
-    n_lr = len(valid)
-
-    # Precompute per-edge ligand and receptor expression (n_edges × n_lr each)
-    mat = adata.layers[layer] if layer is not None else adata.X
-    if sp.issparse(mat):
-        mat = mat.toarray()
-    mat = np.asarray(mat, dtype=np.float32)
-
-    lig_expr = mat[np.ix_(edge_src, lig_idx)].astype(np.float64)   # (n_edges, n_lr)
-    rec_expr = mat[np.ix_(edge_dst, rec_idx)].astype(np.float64)    # (n_edges, n_lr)
-
-    # CellPhoneDB expressing-fraction gate: fraction of each cluster's cells
-    # with nonzero expression of each ligand/receptor gene. Computed over
-    # *cells* (cluster membership), not edges -- it's a property of the
-    # cluster's expression, independent of the spatial graph.
-    type_counts = np.bincount(codes, minlength=n_types).astype(np.float64)
-    expr_sub = (mat[:, np.concatenate([lig_idx, rec_idx])] > 0).astype(np.float64)
-    frac = np.asarray((_one_hot(codes, n_types).T @ expr_sub))  # (n_types, 2*n_lr)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        frac = np.where(type_counts[:, None] > 0, frac / type_counts[:, None], np.nan)
-    lig_frac, rec_frac = frac[:, :n_lr], frac[:, n_lr:]
-    # tested[a*n_types+b, lr]: sender a expresses L and receiver b expresses
-    # R in at least expr_frac_threshold of their cells.
-    tested = (
-        (lig_frac[:, None, :] >= expr_frac_threshold)
-        & (rec_frac[None, :, :] >= expr_frac_threshold)
-    ).reshape(n_types * n_types, n_lr)
-
-    # Cell-type pair flat index for each edge
-    src_codes = codes[edge_src]
-    dst_codes = codes[edge_dst]
-    n_ct = n_types * n_types
-    ct_idx = src_codes * n_types + dst_codes     # (n_edges,)
-
-    def _mean_component_by_ct(values: np.ndarray, ct_indices: np.ndarray) -> np.ndarray:
-        """Compute (n_ct, n_lr) mean of one component (L or R) by ct group.
-
-        Cell-type pairs with zero edges are NaN, not 0 -- "no spatial
-        contact observed" is absence of evidence, not a zero score
-        (squidpy's own convention is NaN too).
-        """
-        scores = np.zeros((n_ct, n_lr), dtype=np.float64)
-        counts = np.zeros(n_ct, dtype=np.float64)
-        np.add.at(scores, ct_indices, values)
-        np.add.at(counts, ct_indices, 1.0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(counts[:, None] > 0, scores / counts[:, None], np.nan)
-
-    def _mean_by_ct(ct_indices: np.ndarray) -> np.ndarray:
-        """CellPhoneDB-style score: (mean(L) + mean(R)) / 2 within each ct group."""
-        mean_l = _mean_component_by_ct(lig_expr, ct_indices)
-        mean_r = _mean_component_by_ct(rec_expr, ct_indices)
-        return (mean_l + mean_r) / 2.0
-
-    obs_scores = _mean_by_ct(ct_idx)  # (n_ct, n_lr)
-
-    # Permutations — each draws from an independent RNG substream so the
-    # loop is safe to parallelize.
-    def _one_perm(child_rng: "np.random.Generator") -> np.ndarray:
-        perm_codes = codes.copy()
-        child_rng.shuffle(perm_codes)
-        perm_ct_idx = perm_codes[edge_src] * n_types + perm_codes[edge_dst]
-        perm_s = _mean_by_ct(perm_ct_idx)
-        # NaN perm scores (a permuted ct pair with zero edges) compare
-        # False -- counted as "not more extreme", the conservative choice.
-        return (perm_s >= obs_scores).astype(np.float64)
-
-    child_rngs = _spawn_rngs(seed, n_perms)
-    perm_ge_list = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_one_perm)(child_rng) for child_rng in child_rngs
-    )
-    perm_ge = np.sum(perm_ge_list, axis=0) if perm_ge_list else np.zeros((n_ct, n_lr), dtype=np.float64)
-
-    # (k+1)/(n+1) floor -- an exact 0 isn't a valid Monte Carlo p-value
-    # estimate and breaks downstream -log10(p)/FDR steps.
-    pvalues = (perm_ge + 1.0) / (n_perms + 1.0)  # (n_ct, n_lr)
-
-    # NaN out everything that was never a real test: entries failing the
-    # expressing-fraction gate, and zero-edge ct pairs (obs score NaN).
-    untested = ~tested | ~np.isfinite(obs_scores)
-    obs_scores = np.where(untested, np.nan, obs_scores)
-    pvalues = np.where(untested, np.nan, pvalues)
-
-    # Build DataFrames
-    lr_index = pd.MultiIndex.from_arrays(
-        [valid["ligand"], valid["receptor"]], names=["ligand", "receptor"]
-    )
-    ct_index = pd.MultiIndex.from_tuples(
-        [(categories[a], categories[b]) for a in range(n_types) for b in range(n_types)],
-        names=["sender", "receiver"],
-    )
-
-    means_df = pd.DataFrame(obs_scores.T, index=lr_index, columns=ct_index)
-    pval_df = pd.DataFrame(pvalues.T, index=lr_index, columns=ct_index)
-
-    result: dict = {
-        "means": means_df,
-        "pvalues": pval_df,
-        "metadata": {
-            "groupby": groupby, "n_perms": n_perms,
-            "expr_frac_threshold": expr_frac_threshold,
-            "report_alpha": report_alpha,
-            "corr_method": corr_method,
-            "spatial_restricted": True,
-            "neighbors_key": neighbors_key,
-        },
-    }
-    if corr_method is not None:
-        from astrolabe.tl._spatial_stats import _adj_pvalues
-
-        adj = _adj_pvalues(pval_df.to_numpy(dtype=np.float64).ravel(), corr_method)
-        result["pvalues_adj"] = pd.DataFrame(
-            adj.reshape(pval_df.shape), index=lr_index, columns=ct_index
-        )
-
-    n_sig = int((pval_df < report_alpha).values.sum())
-    n_tested = int(np.isfinite(pvalues).sum())
-    adata.uns[key_added] = result
-    log.info(
-        "ligrec: %d LR pairs × %d cell-type pairs (%d tested after the "
-        "expressing-fraction gate); %d significant at p < %.2f.",
-        n_lr,
-        n_ct,
-        n_tested,
-        n_sig,
-        report_alpha,
-    )
+    from astrolabe.tl._communication import _ligrec
+    return _ligrec(adata, groupby, lr_pairs, neighbors_key=neighbors_key, layer=layer,
+                   n_perms=n_perms, seed=seed, expr_frac_threshold=expr_frac_threshold,
+                   report_alpha=report_alpha, corr_method=corr_method, n_jobs=n_jobs,
+                   min_valid_perms=min_valid_perms, library_key=library_key,
+                   max_scratch_bytes=max_scratch_bytes, key_added=key_added)
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))

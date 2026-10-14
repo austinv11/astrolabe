@@ -98,3 +98,6 @@ __all__ = [
     "banksy_matrix",
     "harmony",
 ]
+from astrolabe.pp._pseudobulk import pseudobulk
+from astrolabe.pp._image_features import extract_image_features
+__all__ += ["pseudobulk", "extract_image_features"]

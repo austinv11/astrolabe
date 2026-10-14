@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 
 import anndata as ad
 import numpy as np
@@ -17,6 +18,8 @@ import pandas as pd
 import scipy.sparse as sp
 from joblib import Parallel, delayed
 
+from astrolabe._statistics import (permutation_p, adjust_p, annotate_permutation_resolution,
+                                   PermutationResolutionWarning)
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
 from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
 
@@ -39,102 +42,100 @@ log = logging.getLogger(__name__)
 _QUAD_LABELS: dict[int, str] = {1: "HH", 2: "LH", 3: "LL", 4: "HL"}
 
 
-def _perm_normal_p(z_sim: np.ndarray) -> np.ndarray:
-    """Two-sided p from the normal approximation of the permutation null.
-
-    ``z_sim`` standardizes the observed statistic against the *simulated*
-    null's mean/std, so ``2·sf(|z_sim|)`` is a continuous p-value anchored to
-    the same permutation null as ``p_sim`` — without ``p_sim``'s discreteness
-    floor of ``~1/(n_perms+1)``. That floor matters at scale: BH across 10^5
-    cells can only retain floor-level p-values when tens of thousands of
-    cells share the floor, so gating quadrants/hotspots on BH-adjusted
-    *rank* p-values collapses to "everything NS" on large tissues even for
-    strongly autocorrelated genes (observed on real 154k-cell data). The
-    rank-based ``p_sim`` stays in the output as the assumption-free
-    reference; the multiple-testing gate uses this continuous version.
-    """
+def _perm_normal_p(z_sim):
+    """Normal approximation diagnostic; never used to control local FDR."""
     from scipy.stats import norm
-
-    z = np.asarray(z_sim, dtype=np.float64)
-    return np.clip(2.0 * norm.sf(np.abs(z)), 0.0, 1.0)
+    return 2 * norm.sf(np.abs(z_sim))
 
 
-def _gated_quadrants(q: np.ndarray, p: np.ndarray, alpha: float) -> pd.api.extensions.ExtensionArray:
-    """LISA quadrant labels, gated by significance.
-
-    A raw quadrant (HH/LH/LL/HL) is a property of every cell's sign pattern
-    regardless of evidence — reporting it ungated invites reading noise as
-    hot/cold spots. Cells whose gating p-value (the directed pseudo-p
-    ``p_dir``; see :func:`_directed_perm_p`) does not reach *alpha* are
-    labeled ``'NS'`` instead, the standard LISA-map convention
-    (Anselin 1995 / GeoDa).
-
-    With ``n_perms=0`` there are no p-values at all (every ``p`` is
-    NaN): no test was run, so gating everything to ``'NS'`` would silently
-    conflate "not significant" with "not tested". In that case the **raw,
-    ungated** quadrant labels are returned and a warning is logged — useful
-    for fast visual exploration, but not evidence of local structure.
-    """
-    p = np.asarray(p, dtype=np.float64)
-    if not np.isfinite(p).any():
-        log.warning(
-            "moran_local: n_perms=0 — no significance test was run, so "
-            "'quadrant' holds RAW (ungated) labels. Use n_perms>0 for "
-            "significance-gated quadrants."
-        )
-        return pd.array(
-            [_QUAD_LABELS.get(int(qi), "NS") for qi in q], dtype="string"
-        )
-    sig = np.isfinite(p) & (p < alpha)
-    return pd.array(
-        [
-            _QUAD_LABELS.get(int(qi), "NS") if s else "NS"
-            for qi, s in zip(q, sig)
-        ],
-        dtype="string",
-    )
+def _gated_quadrants(q, p, alpha):
+    return pd.array([
+        _QUAD_LABELS.get(int(qi), "NS") if np.isfinite(pi) and pi < alpha
+        else "NS" if np.isfinite(pi) else "not_tested"
+        for qi, pi in zip(q, p)
+    ], dtype="string")
 
 
-def _two_sided_perm_p(stat: np.ndarray, sims: np.ndarray) -> np.ndarray:
-    """Two-sided pseudo-p from retained permutation simulations.
-
-    ``esda``'s local statistics expose ``p_sim`` computed with the
-    data-directed ("directed") convention their own docs deprecate as
-    "uniformly too small" (half the two-sided value). This recomputes the
-    p-value two-sided from the retained simulations via
-    ``esda.significance.calculate_significance``. *sims* must be shaped
-    ``(n_cells, n_perms)`` (``.rlisas`` layout; transpose ``.sim`` first).
-    """
-    from esda.significance import calculate_significance
-
-    p = calculate_significance(np.asarray(stat), np.asarray(sims), alternative="two-sided")
-    return np.minimum(np.asarray(p, dtype=np.float64).ravel(), 1.0)
+def _two_sided_perm_p(stat, sims):
+    return permutation_p(stat, sims)[0]
 
 
-def _directed_perm_p(stat: np.ndarray, sims: np.ndarray) -> np.ndarray:
-    """One-sided *directed* pseudo-p — the GeoDa map-gating convention.
+def _directed_perm_p(stat, sims):
+    """Exploratory smaller tail, without two-sided significance semantics."""
+    return np.minimum(permutation_p(stat, sims, alternative="greater")[0],
+                      permutation_p(stat, sims, alternative="less")[0])
 
-    ``min(#(sims >= obs), #(sims <= obs)) + 1) / (n_perms + 1)``: the tail is
-    chosen by where the observed statistic falls, without doubling. This is
-    exactly the pseudo-significance GeoDa/Anselin use to classify LISA and
-    Gi* cluster maps. It is deliberately NOT a strict two-sided p-value —
-    under a true null it flags ~2·alpha of cells (esda deprecates it for
-    inference for this reason), which is why it only gates the *map labels*
-    here while ``p_sim`` (two-sided) and ``p_adj`` (BH on the continuous
-    normal approximation) carry the honest inference. The practical
-    difference is power: per-cell local statistics on k≈6-neighbor graphs
-    are weak, and the two-sided fold on top of that empties real cluster
-    maps entirely (planted-signal recovery 0.2% two-sided vs 41% directed
-    at identical null behavior up to the factor of 2). Tighten ``alpha``
-    (0.01, 0.001) for stricter maps, per GeoDa's own guidance.
-    *sims* must be shaped ``(n_cells, n_perms)``.
-    """
-    stat = np.asarray(stat, dtype=np.float64)[:, None]
-    sims = np.asarray(sims, dtype=np.float64)
-    n = sims.shape[1]
-    ge = (np.sum(sims >= stat, axis=1) + 1.0) / (n + 1.0)
-    le = (np.sum(sims <= stat, axis=1) + 1.0) / (n + 1.0)
-    return np.minimum(ge, le)
+
+def _local_family(result, method, alpha, *, getis=False):
+    result["p_normal_diagnostic"] = _perm_normal_p(result["z_sim"].to_numpy())
+    result["p_adj"] = adjust_p(result["p_sim"].to_numpy(), method)
+    result["status"] = np.where(result.p_sim.notna(), "tested", "not_tested")
+    if getis:
+        result["type"] = pd.array([
+            "hot" if z > 0 else "cold" for z in result["z_sim"]
+        ], dtype="string")
+        result.loc[result.p_adj.ge(alpha), "type"] = "NS"
+        result.loc[result.p_adj.isna(), "type"] = "not_tested"
+    else:
+        result["quadrant_raw"] = result["quadrant"].where(np.isfinite(result["Ii"]), pd.NA)
+        result.loc[result.p_adj.ge(alpha), "quadrant"] = "NS"
+        result.loc[result.p_adj.isna(), "quadrant"] = "not_tested"
+    result.attrs.update(p_adjust_method=method, fdr_family="all requested cells and fields",
+                        null="conditional randomization", inference="empirical equal tails")
+    annotate_permutation_resolution(result, "p_sim", "n_valid", method=method,
+                                   alpha=alpha, label="local spatial tests")
+    return result
+
+
+def _permutation_blocks(adata, neighbors_key):
+    """Use the graph's library grouping for exchangeable expression draws."""
+    library_key = adata.uns.get(neighbors_key, {}).get("params", {}).get("library_key", "library_id")
+    if library_key is None or library_key not in adata.obs:
+        return [np.arange(adata.n_obs)], library_key
+    labels = adata.obs[library_key]
+    if labels.isna().any():
+        raise ValueError("library labels must be present for spatial inference")
+    codes, levels = pd.factorize(labels, sort=False)
+    if len(levels) > 1:
+        graph = _get_conn_matrix(adata, neighbors_key).tocoo()
+        if ((graph.data != 0) & (codes[graph.row] != codes[graph.col])).any():
+            raise ValueError("spatial inference graph contains edges across libraries")
+    return [np.flatnonzero(codes == i) for i in range(len(levels))], library_key
+
+
+def _local_by_library(adata, function, args, kwargs, *, getis=False):
+    """Fit conditional local nulls per library, then correct one pooled family."""
+    blocks, library_key = _permutation_blocks(adata, kwargs["neighbors_key"])
+    if len(blocks) <= 1:
+        return None
+    if any(len(block) < 3 for block in blocks):
+        raise ValueError("local spatial inference requires at least three cells per library")
+    parts = []
+    for block in blocks:
+        # A writable subset prevents the function's result store from mutating
+        # the original; each library is processed and released in turn.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PermutationResolutionWarning)
+            parts.append(function(adata[block].copy(), *args, **kwargs))
+    result = pd.concat(parts)
+    keys = result.index.get_level_values("key").unique()
+    result = result.reindex(pd.MultiIndex.from_product([keys, adata.obs_names], names=["key", "obs_name"]))
+    if not getis:
+        result["quadrant"] = result["quadrant_raw"].copy()
+    result = _local_family(result, kwargs["p_adjust_method"], kwargs["alpha"], getis=getis)
+    result.attrs.update(library_key=library_key, n_libraries=len(blocks),
+                        null="within-library conditional randomization", n_perms=int(kwargs["n_perms"]))
+    adata.uns[kwargs["key_added"]] = result
+    return result
+
+
+def _shuffle_blocks(values, rng, blocks):
+    if len(blocks) == 1:
+        return rng.permutation(values)
+    shuffled = values.copy()
+    for block in blocks:
+        shuffled[block] = rng.permutation(values[block])
+    return shuffled
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +168,10 @@ def _build_weights(adata: ad.AnnData, neighbors_key: str, *, row_standardize: bo
         raise KeyError(
             f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors() first"
         )
-    w = WSP(adata.obsp[conn_key]).to_W()
+    conn = _get_conn_matrix(adata, neighbors_key).tocsr(copy=True)
+    conn.setdiag(0)
+    conn.eliminate_zeros()
+    w = WSP(conn).to_W()
     if row_standardize:
         w.transform = "r"
     return w
@@ -208,7 +212,8 @@ def _get_conn_matrix(adata: ad.AnnData, neighbors_key: str) -> sp.spmatrix:
         raise KeyError(
             f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors() first"
         )
-    return adata.obsp[conn_key]
+    conn = adata.obsp[conn_key]
+    return conn.get() if hasattr(conn, "get") else conn
 
 
 def _chunked_distance_sum(
@@ -361,9 +366,11 @@ def _extract_values(adata: ad.AnnData, key: str, layer: str | None) -> np.ndarra
         idx = adata.var_names.get_loc(key)
         mat = adata.layers[layer] if layer is not None else adata.X
         col = mat[:, idx]
+        if hasattr(col, "get"):
+            col = col.get()
         if sp.issparse(col):
             col = col.toarray().ravel()
-        return np.asarray(col, dtype=np.float64)
+        return np.asarray(col, dtype=np.float64).ravel()
     if key in adata.obs.columns:
         return adata.obs[key].to_numpy(dtype=np.float64)
     raise KeyError(f"Key '{key}' not found in var_names or obs columns")
@@ -544,87 +551,28 @@ def moran_local(
     seed: int | None = None,
     key_added: str = "moran_local",
 ) -> pd.DataFrame:
-    """Local Moran's I (LISA; Anselin 1995) for one or more keys.
+    """Local spatial association with empirical two-sided permutation p-values.
 
-    Identifies per-cell spatial association patterns:
-
-    - **HH** — high value surrounded by high-value neighbors (hot spot)
-    - **LL** — low value surrounded by low-value neighbors (cold spot)
-    - **HL** — high value surrounded by low-value neighbors (spatial outlier)
-    - **LH** — low value surrounded by high-value neighbors (spatial outlier)
-    - **NS** — quadrant label gated out: the cell's directed pseudo-p
-      (``p_dir``) did not reach *alpha* (with ``n_perms=0`` no test exists,
-      so raw ungated labels are returned with a warning instead)
-
-    Each key is first looked up in ``var_names``; if absent it falls back to
-    ``obs`` columns.
-
-    Three p-value columns are reported, one per purpose. ``p_dir`` is the
-    directed one-sided pseudo-p GeoDa/Anselin use to classify LISA maps —
-    it gates ``quadrant`` at *alpha* (map classification, not strict
-    inference: ~2·alpha of null cells pass; tighten alpha for stricter
-    maps). ``p_sim`` is the honest **two-sided** pseudo-p recomputed from
-    the retained conditional-randomisation simulations (esda's own
-    ``.p_sim`` is the deprecated data-directed value). ``p_adj`` applies
-    *p_adjust_method* to a continuous normal approximation of the same
-    permutation null — the stringent multiple-testing reading (the discrete
-    rank p cannot pass BH at 10^5-cell scale).
-
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
-
-    Parameters
-    ----------
-    data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
-    keys
-        One or more gene / obs column names to test.
-    modality
-        For :class:`~mudata.MuData`: modality key.
-    layer
-        Expression layer to use.  ``None`` uses ``X``.
-    neighbors_key
-        Key in ``uns`` written by :func:`~astrolabe.tl.spatial_neighbors`.
-    n_perms
-        Conditional randomisation permutations for per-cell p-values.
-        ``0`` skips permutation; ``p_sim`` and ``p_adj`` will be ``NaN``.
-    p_adjust_method
-        Multiple-testing correction (e.g. ``'fdr_bh'``, ``'bonferroni'``).
-        Applied independently per key across all cells.
-    alpha
-        Pseudo-significance threshold on ``p_dir`` gating the ``quadrant``
-        label — cells that do not reach it are labeled ``'NS'`` rather than
-        being assigned a raw quadrant regardless of evidence (GeoDa's
-        LISA-map convention; see above).
-    n_jobs
-        Parallel workers for the conditional-randomisation permutations,
-        forwarded to ``esda.Moran_Local``. ``1`` (default) runs sequentially.
-        ``-1`` uses all available cores.
-    seed
-        Seed for the permutation RNG, forwarded to ``esda.Moran_Local``.
-        ``None`` (default) is unseeded, matching prior behavior.
-    key_added
-        ``uns`` key where the result DataFrame is stored.
-
-    Returns
-    -------
-    pd.DataFrame
-        MultiIndex ``(key, obs_name)`` rows with columns ``Ii``, ``z_sim``,
-        ``p_sim``, ``p_dir``, ``p_adj``, ``quadrant``.
-        Access per-key results with ``result.loc['<key>']``.
-        Also stored in ``adata.uns[key_added]``, and mirrored to
-        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
-
-    Examples
-    --------
-    >>> ab.tl.spatial_neighbors(mdata)
-    >>> lisa = ab.tl.moran_local(mdata, ["EPCAM", "CD3D"])
-    >>> hh_epcam = lisa.loc["EPCAM"].query("quadrant == 'HH' and p_adj < 0.05")
+    BH (default) corrects one family across all requested cells and fields.
+    BH assumes independent or positively dependent tests; use ``fdr_by`` for
+    arbitrary dependence. Labels use adjusted p-values at ``alpha``; raw
+    quadrants and directed smaller tails are exploratory diagnostics.
+    Zero permutations and undefined statistics are explicitly not tested.
     """
     import esda
+    if not isinstance(n_perms, (int, np.integer)) or n_perms < 0:
+        raise ValueError("n_perms must be a nonnegative integer")
+    if not 0 < alpha <= 1:
+        raise ValueError("alpha must be in (0, 1]")
 
     if isinstance(keys, str):
         keys = [keys]
 
+    scoped = _local_by_library(adata, moran_local, (keys,), dict(
+        layer=layer, neighbors_key=neighbors_key, n_perms=n_perms, p_adjust_method=p_adjust_method,
+        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added))
+    if scoped is not None:
+        return scoped
     w = _build_weights(adata, neighbors_key)
     log.info("moran_local: %d keys, %d cells, n_perms=%d", len(keys), adata.n_obs, n_perms)
 
@@ -636,42 +584,41 @@ def moran_local(
         )
 
         if n_perms > 0:
-            # Two-sided from the retained sims -- not esda's deprecated
-            # data-directed .p_sim (see _two_sided_perm_p).
-            p_sim = _two_sided_perm_p(lmi.Is, lmi.rlisas)
+            p_sim, n_valid = permutation_p(lmi.Is, lmi.rlisas)
             p_dir = _directed_perm_p(lmi.Is, lmi.rlisas)
             z_sim = lmi.z_sim
-            # BH gate uses the continuous normal-approx p of the same
-            # permutation null (see _perm_normal_p): the discrete rank p
-            # cannot pass BH at 10^5-cell scale.
-            p_adj = _adj_pvalues(_perm_normal_p(z_sim), p_adjust_method)
+            p_adj = _adj_pvalues(p_sim, p_adjust_method)
         else:
+            n_valid = np.zeros(adata.n_obs, dtype=int)
             p_sim = np.full(adata.n_obs, np.nan)
             p_dir = np.full(adata.n_obs, np.nan)
             z_sim = np.full(adata.n_obs, np.nan)
             p_adj = np.full(adata.n_obs, np.nan)
 
-        # Gate the map label on the DIRECTED pseudo-p at `alpha` -- the
-        # exact GeoDa/Anselin LISA-map convention (see _directed_perm_p for
-        # why neither the two-sided p_sim nor BH p_adj can serve as a map
-        # gate at 10^5-cell scale). p_sim/p_adj stay in the table as the
-        # honest inference columns.
-        quadrant = _gated_quadrants(lmi.q, p_dir, alpha)
+        if (np.ptp(y) == 0):
+            p_sim[:] = np.nan
+            p_dir[:] = np.nan
+            z_sim[:] = np.nan
+
+        quadrant = pd.array([_QUAD_LABELS.get(int(q), "NS") for q in lmi.q], dtype="string")
 
         frames.append(
             pd.DataFrame(
-                {"Ii": lmi.Is, "z_sim": z_sim, "p_sim": p_sim, "p_dir": p_dir, "p_adj": p_adj, "quadrant": quadrant},
+                {"Ii": lmi.Is, "z_sim": z_sim, "p_sim": p_sim, "p_dir": p_dir, "p_adj": p_adj, "quadrant": quadrant,
+                 "n_valid": n_valid},
                 index=adata.obs_names,
             )
         )
 
     result = pd.concat(frames, keys=keys, names=["key", "obs_name"])
+    result = _local_family(result, p_adjust_method, alpha)
     adata.uns[key_added] = result
     log.info("moran_local: done")
     return result
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
+
 def moran_bv(
     adata: ad.AnnData,
     x: str | list[str],
@@ -777,65 +724,27 @@ def moran_local_bv(
     seed: int | None = None,
     key_added: str = "moran_local_bv",
 ) -> pd.DataFrame:
-    """Local bivariate Moran's I (LISA; Anselin 1995) for pairs of keys.
+    """Local spatial association with empirical two-sided permutation p-values.
 
-    Per-cell spatial co-association of *x* with the spatial lag of *y*.
-    Quadrant labels (HH/LL/HL/LH) indicate whether a cell has a high/low
-    value of *x* surrounded by high/low values of *y*; cells whose directed
-    pseudo-p (``p_dir``) does not reach *alpha* are labeled ``'NS'`` (with
-    ``n_perms=0`` no test exists, so raw ungated labels are returned with a
-    warning). See :func:`moran_local` for the three p-value columns and why
-    the map gate uses ``p_dir`` — per-cell *bivariate* locals on sparse
-    spatial graphs are especially low-powered, and gating on the two-sided
-    or BH-adjusted p empties real cluster maps entirely.
-
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
-    Each key is looked up in ``var_names`` first, then ``obs`` columns.
-
-    Parameters
-    ----------
-    data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
-    x, y
-        One or more paired gene / obs column names.  Lengths must match.
-    modality
-        For :class:`~mudata.MuData`: modality key.
-    layer
-        Expression layer to use.  ``None`` uses ``X``.
-    neighbors_key
-        Key in ``uns`` written by :func:`~astrolabe.tl.spatial_neighbors`.
-    n_perms
-        Conditional randomisation permutations (``0`` → NaN p-values).
-    p_adjust_method
-        Multiple-testing correction applied per pair across all cells.
-    alpha
-        Pseudo-significance threshold on the directed pseudo-p (``p_dir``)
-        gating the ``quadrant`` label (GeoDa's LISA-map convention; see
-        :func:`moran_local`); ``p_sim``/``p_adj`` hold the honest two-sided
-        and BH readings (non-significant cells are labeled ``'NS'``).
-    n_jobs
-        Parallel workers for the permutations, forwarded to
-        ``esda.Moran_Local_BV``. ``1`` (default) runs sequentially. ``-1``
-        uses all available cores.
-    seed
-        Seed for the permutation RNG, forwarded to ``esda.Moran_Local_BV``.
-        ``None`` (default) is unseeded, matching prior behavior.
-    key_added
-        ``uns`` key where the result DataFrame is stored.
-
-    Returns
-    -------
-    pd.DataFrame
-        MultiIndex ``(pair, obs_name)`` rows where ``pair = 'x:y'``, with
-        columns ``Ii``, ``z_sim``, ``p_sim``, ``p_dir``, ``p_adj``,
-        ``quadrant``.
-        Also stored in ``adata.uns[key_added]``, and mirrored to
-        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+    BH (default) corrects one family across all requested cells and fields.
+    BH assumes independent or positively dependent tests; use ``fdr_by`` for
+    arbitrary dependence. Labels use adjusted p-values at ``alpha``; raw
+    quadrants and directed smaller tails are exploratory diagnostics.
+    Zero permutations and undefined statistics are explicitly not tested.
     """
     import esda
+    if not isinstance(n_perms, (int, np.integer)) or n_perms < 0:
+        raise ValueError("n_perms must be a nonnegative integer")
+    if not 0 < alpha <= 1:
+        raise ValueError("alpha must be in (0, 1]")
 
     x_keys, y_keys = _normalize_pairs(x, y)
 
+    scoped = _local_by_library(adata, moran_local_bv, (x_keys, y_keys), dict(
+        layer=layer, neighbors_key=neighbors_key, n_perms=n_perms, p_adjust_method=p_adjust_method,
+        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added))
+    if scoped is not None:
+        return scoped
     w = _build_weights(adata, neighbors_key)
     log.info("moran_local_bv: %d pairs, %d cells, n_perms=%d", len(x_keys), adata.n_obs, n_perms)
 
@@ -849,42 +758,42 @@ def moran_local_bv(
         )
 
         if n_perms > 0:
-            # Two-sided from the retained sims -- not esda's deprecated
-            # data-directed .p_sim (see _two_sided_perm_p).
-            p_sim = _two_sided_perm_p(lmi.Is, lmi.rlisas)
+            p_sim, n_valid = permutation_p(lmi.Is, lmi.rlisas)
             p_dir = _directed_perm_p(lmi.Is, lmi.rlisas)
             z_sim = np.asarray(getattr(lmi, "z_sim", np.full(adata.n_obs, np.nan)))
-            # BH gate on the continuous normal-approx p of the permutation
-            # null (see _perm_normal_p) -- the discrete rank p cannot pass
-            # BH at 10^5-cell scale.
-            p_adj = _adj_pvalues(_perm_normal_p(z_sim), p_adjust_method)
+            p_adj = _adj_pvalues(p_sim, p_adjust_method)
         else:
+            n_valid = np.zeros(adata.n_obs, dtype=int)
             p_sim = np.full(adata.n_obs, np.nan)
             p_dir = np.full(adata.n_obs, np.nan)
             z_sim = np.full(adata.n_obs, np.nan)
             p_adj = np.full(adata.n_obs, np.nan)
 
-        # Gate the map label on the DIRECTED pseudo-p at `alpha` -- the
-        # exact GeoDa/Anselin LISA-map convention (see _directed_perm_p).
-        # Per-cell bivariate locals on k~6-neighbor graphs are weak; the
-        # two-sided fold on top empties real cluster maps entirely.
-        quadrant = _gated_quadrants(lmi.q, p_dir, alpha)
+        if (np.ptp(xv) == 0 or np.ptp(yv) == 0):
+            p_sim[:] = np.nan
+            p_dir[:] = np.nan
+            z_sim[:] = np.nan
+
+        quadrant = pd.array([_QUAD_LABELS.get(int(q), "NS") for q in lmi.q], dtype="string")
 
         frames.append(
             pd.DataFrame(
-                {"Ii": lmi.Is, "z_sim": z_sim, "p_sim": p_sim, "p_dir": p_dir, "p_adj": p_adj, "quadrant": quadrant},
+                {"Ii": lmi.Is, "z_sim": z_sim, "p_sim": p_sim, "p_dir": p_dir, "p_adj": p_adj, "quadrant": quadrant,
+                 "n_valid": n_valid},
                 index=adata.obs_names,
             )
         )
         pair_labels.append(f"{xk}:{yk}")
 
     result = pd.concat(frames, keys=pair_labels, names=["key", "obs_name"])
+    result = _local_family(result, p_adjust_method, alpha)
     adata.uns[key_added] = result
     log.info("moran_local_bv: done")
     return result
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
+
 def getis_ord(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -898,93 +807,29 @@ def getis_ord(
     seed: int | None = None,
     key_added: str = "getis_ord",
 ) -> pd.DataFrame:
-    """Local Getis-Ord G* hot/cold spot detection (Getis & Ord 1992; Ord & Getis 1995).
+    """Local spatial association with empirical two-sided permutation p-values.
 
-    Unlike LISA, G* has a single interpretable axis: positive z-score = local
-    high-expression cluster (hot spot), negative = cold spot.  Spatial outliers
-    (HL/LH) are not distinguished.
-
-    Permutation p-values (``p_sim``) are recomputed **two-sided** from the
-    retained simulations via ``esda.significance.calculate_significance``
-    rather than read off ``esda.G_Local.p_sim``, which uses the deprecated
-    data-directed convention esda's own docs describe as uniformly too
-    small. The analytic ``p_norm`` is likewise reported two-sided
-    (``2·sf(|z|)``). The ``hot``/``cold`` map label, however, is gated on
-    the **directed** pseudo-p (``p_dir``, GeoDa's Gi* cluster-map
-    convention — map classification, not strict inference; ~2·alpha of
-    null cells pass, so tighten *alpha* for stricter maps) when
-    ``n_perms > 0``, and on ``p_norm`` otherwise. ``p_sim`` and ``p_adj``
-    (BH on a continuous normal approximation of the permutation null) are
-    the honest inference columns.
-
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
-    Each key is looked up in ``var_names`` first, then ``obs`` columns.
-
-    Parameters
-    ----------
-    data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
-    keys
-        One or more gene / obs column names to test.
-    modality
-        For :class:`~mudata.MuData`: modality key.
-    layer
-        Expression layer to use.  ``None`` uses ``X``.
-    neighbors_key
-        Key in ``uns`` written by :func:`~astrolabe.tl.spatial_neighbors`.
-    n_perms
-        Permutations for empirical p-values (``0`` uses normality).
-    p_adjust_method
-        Multiple-testing correction applied per key across all cells.
-    alpha
-        Pseudo-significance threshold on ``p_dir`` (``p_norm`` when
-        ``n_perms=0``) used to assign ``type``
-        (``'hot'`` / ``'cold'`` / ``'NS'``).
-    n_jobs
-        Parallel workers for the permutations, forwarded to
-        ``esda.G_Local``. ``1`` (default) runs sequentially. ``-1`` uses all
-        available cores.
-    seed
-        Seed for the permutation RNG, forwarded to ``esda.G_Local``. ``None``
-        (default) is unseeded, matching prior behavior.
-    key_added
-        ``uns`` key where the result DataFrame is stored.
-
-    Returns
-    -------
-    pd.DataFrame
-        MultiIndex ``(key, obs_name)`` rows with columns ``Gs``, ``z_norm``,
-        ``p_norm`` (analytic, always present), ``z_sim``, ``p_sim``,
-        ``p_dir`` (permutation-based; NaN when ``n_perms=0``), ``p_adj``,
-        ``type``. ``type`` is gated on ``p_dir`` when ``n_perms > 0``, on
-        ``p_norm`` otherwise; ``p_adj`` is corrected from the continuous
-        normal approximation of the permutation null when ``n_perms > 0``,
-        from ``p_norm`` otherwise.
-        Also stored in ``adata.uns[key_added]``, and mirrored to
-        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
-
-    Examples
-    --------
-    >>> go = ab.tl.getis_ord(mdata, ["EPCAM", "CD3D"])
-    >>> go.loc["EPCAM"].query("type == 'hot'")
+    BH (default) corrects one family across all requested cells and fields.
+    BH assumes independent or positively dependent tests; use ``fdr_by`` for
+    arbitrary dependence. Labels use adjusted p-values at ``alpha``; raw
+    quadrants and directed smaller tails are exploratory diagnostics.
+    Zero permutations and undefined statistics are explicitly not tested.
     """
     import esda
+    if not isinstance(n_perms, (int, np.integer)) or n_perms < 0:
+        raise ValueError("n_perms must be a nonnegative integer")
+    if not 0 < alpha <= 1:
+        raise ValueError("alpha must be in (0, 1]")
 
     if isinstance(keys, str):
         keys = [keys]
 
-    # row_standardize=False: esda.G_Local (below) fills the Gi* self-weight
-    # onto the diagonal and row-standardizes once itself -- see
-    # _build_weights' docstring for why pre-standardizing here as well would
-    # give every cell a self-weight of exactly 0.5 instead of ~1/(k+1).
+    scoped = _local_by_library(adata, getis_ord, (keys,), dict(
+        layer=layer, neighbors_key=neighbors_key, n_perms=n_perms, p_adjust_method=p_adjust_method,
+        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added), getis=True)
+    if scoped is not None:
+        return scoped
     w = _build_weights(adata, neighbors_key, row_standardize=False)
-    # star=1 below adds a self-weight of exactly 1, which only means "the
-    # point counts as an ordinary neighbor of itself" on a *binary* (0/1)
-    # graph. A weighted graph (e.g. tl.blend_neighbors' row-normalized
-    # joint_neighbors, whose entries are fractions) makes that fixed 1 an
-    # arbitrarily large self-weight relative to the neighbor weights --
-    # the same ~0.5-self-weight pathology _build_weights' docstring
-    # describes, reintroduced through the data instead of the transform.
     conn = _get_conn_matrix(adata, neighbors_key)
     nz = conn.data[conn.data != 0]
     if nz.size and not np.allclose(nz, 1.0):
@@ -1002,56 +847,34 @@ def getis_ord(
     frames = []
     for key in keys:
         y = _extract_values(adata, key, layer)
-        # star=1 (rather than star=True): our spatial graph has a zero
-        # diagonal (no self-loops), so esda.G_Local can't infer a self-weight
-        # for Gi* on its own -- star=True leaves it to guess one *per row*
-        # (defaults to that row's max neighbor weight, with a UserWarning on
-        # every call). Passing an explicit self-weight of 1 (the standard Ord
-        # & Getis / GeoDa convention: the point counts as an ordinary
-        # neighbor of itself) gives every cell the same, reproducible
-        # self-weight instead of one that silently varies with local
-        # connectivity density, and avoids the warning.
         lG = esda.G_Local(
             y, w, permutations=n_perms, transform="r", star=1,
             n_jobs=n_jobs, seed=seed, keep_simulations=True,
         )
 
-        # Analytic columns are always available; esda's own .p_norm is a
-        # folded one-tailed sf(|z|) -- doubled here so p_norm is two-sided,
-        # matching the two-sided p_sim convention below.
         z_norm = np.asarray(lG.Zs, dtype=np.float64)
         p_norm = np.minimum(2.0 * sp_stats.norm.sf(np.abs(z_norm)), 1.0)
 
         if n_perms > 0:
             z_sim = np.asarray(lG.z_sim)
-            # Two-sided from the retained sims (lG.sim is (n_perms, n)) --
-            # not esda's deprecated data-directed .p_sim.
-            p_sim = _two_sided_perm_p(np.asarray(lG.Gs), np.asarray(lG.sim).T)
+            p_sim, n_valid = permutation_p(np.asarray(lG.Gs), np.asarray(lG.sim).T)
             p_dir = _directed_perm_p(np.asarray(lG.Gs), np.asarray(lG.sim).T)
         else:
+            n_valid = np.zeros(adata.n_obs, dtype=int)
             z_sim = np.full(adata.n_obs, np.nan)
             p_sim = np.full(adata.n_obs, np.nan)
             p_dir = np.full(adata.n_obs, np.nan)
 
-        # FDR (or whichever p_adjust_method) is applied here regardless of
-        # n_perms -- p_norm is a legitimate per-cell p-value like p_sim, and
-        # skipping multiple-testing correction on it whenever n_perms=0 was
-        # silently dropping correction across every cell for that (common,
-        # fast) code path.
+
+        if (np.ptp(y) == 0):
+            p_sim[:] = np.nan
+            p_dir[:] = np.nan
+            z_sim[:] = np.nan
         z_vals = z_sim if n_perms > 0 else z_norm
-        # The BH gate uses a CONTINUOUS p (normal approximation of the
-        # permutation null when n_perms > 0; analytic p_norm otherwise) --
-        # the discrete rank p_sim cannot pass BH at 10^5-cell scale (see
-        # _perm_normal_p). p_sim remains in the output as the
-        # assumption-free reference.
         p_adj = _adj_pvalues(
-            _perm_normal_p(z_sim) if n_perms > 0 else p_norm, p_adjust_method
+            p_sim, p_adjust_method
         )
 
-        # Same convention as the LISA quadrants: gate the map label on the
-        # DIRECTED pseudo-p at `alpha` (GeoDa's Gi* cluster-map convention;
-        # p_norm when n_perms=0); p_sim/p_adj stay in the table as the
-        # honest inference columns.
         p_gate = p_dir if n_perms > 0 else p_norm
         spot_type = pd.array(
             [
@@ -1065,6 +888,7 @@ def getis_ord(
             pd.DataFrame(
                 {
                     "Gs": np.asarray(lG.Gs),
+                    "n_valid": n_valid,
                     "z_norm": z_norm,
                     "p_norm": p_norm,
                     "z_sim": z_sim,
@@ -1078,12 +902,14 @@ def getis_ord(
         )
 
     result = pd.concat(frames, keys=keys, names=["key", "obs_name"])
+    result = _local_family(result, p_adjust_method, alpha, getis=True)
     adata.uns[key_added] = result
     log.info("getis_ord: done")
     return result
 
 
 @with_adata
+
 def spatial_lag(
     adata: ad.AnnData,
     keys: str | list[str],
@@ -1423,7 +1249,7 @@ def ripley_l(
         columns ``L_obs``, ``L_exp``, ``L_hi``, ``L_lo``, ``p_value``.
         ``p_value`` is a **per-radius, two-sided** Monte Carlo rank p-value
         against the CSR simulations at that same radius,
-        ``(2·min(#sims ≥ L_obs, #sims ≤ L_obs) + 1) / (n_perms + 1)`` —
+        ``2·(min(#sims ≥ L_obs, #sims ≤ L_obs) + 1) / (n_perms + 1)`` —
         significant for clustering *and* for dispersion, evaluated
         independently at every distance. These pointwise p-values are not
         corrected for testing across the ``support`` radii; treat "any
@@ -1504,22 +1330,22 @@ def ripley_l(
             # the distance-indexed column.) The +1 floor keeps an exact 0
             # from breaking downstream -log10(p)/FDR steps. Pointwise, not
             # corrected across radii -- see the docstring.
-            n_ge = (l_sims >= l_obs[None, :]).sum(axis=0)
-            n_le = (l_sims <= l_obs[None, :]).sum(axis=0)
-            p_value = np.minimum(
-                (2.0 * np.minimum(n_ge, n_le) + 1.0) / (n_perms + 1.0), 1.0
-            )
+            p_value, n_valid = permutation_p(l_obs, l_sims.T)
         else:
             l_exp = np.full_like(l_obs, np.nan)
             l_hi = np.full_like(l_obs, np.nan)
             l_lo = np.full_like(l_obs, np.nan)
             p_value = np.full_like(l_obs, np.nan)
+            n_valid = np.zeros_like(l_obs, dtype=int)
 
         df = pd.DataFrame(
-            {"L_obs": l_obs, "L_exp": l_exp, "L_hi": l_hi, "L_lo": l_lo, "p_value": p_value},
+            {"L_obs": l_obs, "L_exp": l_exp, "L_hi": l_hi, "L_lo": l_lo, "p_value": p_value,
+             "n_valid": n_valid},
             index=pd.Index(radii, name="distance_um"),
         )
 
+        annotate_permutation_resolution(df, "p_value", "n_valid", method=None,
+                                       label=f"pointwise Ripley {name}")
         results[name] = df
 
     adata.uns[key_added] = results
@@ -1540,15 +1366,22 @@ def _svg_moran(
     n_perms: int,
     p_adjust_method: str,
     n_jobs: int = 1,
+    seed: int | None = None,
 ) -> pd.DataFrame:
     import esda
     from scipy import stats as sp_stats
 
     get_weights = _thread_local_weights_getter(adata, neighbors_key)
+    blocks, library_key = _permutation_blocks(adata, neighbors_key)
+    if len(blocks) > 1 and n_perms == 0:
+        raise ValueError("multiple libraries require n_perms > 0 for SVG inference; the null shuffles within each library")
 
-    def _one_gene(g: str) -> dict:
+    rngs = _spawn_rngs(seed, len(genes))
+
+    def _one_gene(g: str, rng) -> dict:
         y = _extract_values(adata, g, layer)
-        mi = esda.Moran(y, get_weights(), permutations=n_perms, two_tailed=False)
+        mi = esda.Moran(y, get_weights(), permutations=0, two_tailed=False)
+        n_valid = 0
         # One-sided upper-tail p ("is this gene POSITIVELY spatially
         # autocorrelated?") on both code paths -- matching squidpy's
         # convention for this scan. Neither of esda's own p-values gives
@@ -1559,15 +1392,27 @@ def _svg_moran(
         if not np.isfinite(mi.I):
             p = np.nan
         elif n_perms > 0:
-            p = float((np.sum(np.asarray(mi.sim) >= mi.I) + 1.0) / (n_perms + 1.0))
+            centered = y-y.mean()
+            denominator = centered@centered
+            weights = get_weights().sparse
+            sims = np.empty(n_perms)
+            for permutation in range(n_perms):
+                shuffled = _shuffle_blocks(centered, rng, blocks)
+                sims[permutation] = len(y)/weights.sum() * (shuffled@(weights@shuffled))/denominator
+            p, n_valid = permutation_p(np.asarray(mi.I), sims, alternative="greater")
+            p = float(p)
         else:
             p = float(sp_stats.norm.sf(mi.z_norm))
-        return {"gene": g, "score": float(mi.I), "pval": p}
+        return {"gene": g, "score": float(mi.I), "pval": p, "n_valid": int(n_valid)}
 
-    rows = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_one_gene)(g) for g in genes)
+    rows = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_one_gene)(g, rng) for g, rng in zip(genes, rngs))
 
     df = pd.DataFrame(rows).set_index("gene")
     df["pval_adj"] = _adj_pvalues(df["pval"].to_numpy(), p_adjust_method)
+    annotate_permutation_resolution(df, "pval", "n_valid", alternative="greater",
+                                   method=p_adjust_method, label="Moran SVG")
+    df.attrs.update(library_key=library_key, null="within-library expression permutations" if n_perms else "analytic normality",
+                    n_perms=int(n_perms))
     return df
 
 
@@ -1579,15 +1424,22 @@ def _svg_geary(
     n_perms: int,
     p_adjust_method: str,
     n_jobs: int = 1,
+    seed: int | None = None,
 ) -> pd.DataFrame:
     import esda
     from scipy import stats as sp_stats
 
     get_weights = _thread_local_weights_getter(adata, neighbors_key)
+    blocks, library_key = _permutation_blocks(adata, neighbors_key)
+    if len(blocks) > 1 and n_perms == 0:
+        raise ValueError("multiple libraries require n_perms > 0 for SVG inference; the null shuffles within each library")
 
-    def _one_gene(g: str) -> dict:
+    rngs = _spawn_rngs(seed, len(genes))
+
+    def _one_gene(g: str, rng) -> dict:
         y = _extract_values(adata, g, layer)
-        gc = esda.Geary(y, get_weights(), permutations=n_perms)
+        gc = esda.Geary(y, get_weights(), permutations=0)
+        n_valid = 0
         # Geary's C: C < 1 = positive autocorrelation, C > 1 = negative.
         # One-sided LOWER-tail p ("is C significantly below 1?"), the Geary
         # mirror of _svg_moran's one-sided upper-tail convention -- z_norm is
@@ -1598,15 +1450,26 @@ def _svg_geary(
         if not np.isfinite(gc.C):
             p = np.nan
         elif n_perms > 0:
-            p = float((np.sum(np.asarray(gc.sim) <= gc.C) + 1.0) / (n_perms + 1.0))
+            weights = get_weights().sparse.tocoo()
+            denominator = ((y-y.mean())**2).sum()
+            sims = np.empty(n_perms)
+            for permutation in range(n_perms):
+                shuffled = _shuffle_blocks(y, rng, blocks)
+                sims[permutation] = (len(y)-1)/(2*weights.data.sum()*denominator) * np.sum(weights.data*(shuffled[weights.row]-shuffled[weights.col])**2)
+            p, n_valid = permutation_p(np.asarray(gc.C), sims, alternative="less")
+            p = float(p)
         else:
             p = float(sp_stats.norm.cdf(gc.z_norm))
-        return {"gene": g, "score": float(gc.C), "pval": p}
+        return {"gene": g, "score": float(gc.C), "pval": p, "n_valid": int(n_valid)}
 
-    rows = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_one_gene)(g) for g in genes)
+    rows = Parallel(n_jobs=n_jobs, prefer="threads")(delayed(_one_gene)(g, rng) for g, rng in zip(genes, rngs))
 
     df = pd.DataFrame(rows).set_index("gene")
     df["pval_adj"] = _adj_pvalues(df["pval"].to_numpy(), p_adjust_method)
+    annotate_permutation_resolution(df, "pval", "n_valid", alternative="less",
+                                   method=p_adjust_method, label="Geary SVG")
+    df.attrs.update(library_key=library_key, null="within-library expression permutations" if n_perms else "analytic normality",
+                    n_perms=int(n_perms))
     return df
 
 
@@ -1619,6 +1482,7 @@ def spatially_variable_genes(
     layer: str | None = None,
     neighbors_key: str = "spatial_neighbors",
     n_perms: int = 0,
+    seed: int | None = None,
     p_adjust_method: str = "fdr_bh",
     n_jobs: int = 1,
     key_added: str = "spatially_variable",
@@ -1667,8 +1531,7 @@ def spatially_variable_genes(
         Parallel workers for the per-gene loop (joblib, thread-backed — no
         extra memory copies since arrays are shared, not pickled). ``1``
         (default) runs sequentially. ``-1`` uses all available cores.
-        Ignored on the GPU path (``ab.use_gpu(True)``), which parallelizes
-        across genes on-device instead. Applies regardless of ``n_perms``,
+        GPU-resident inputs use the same CPU statistic. Applies regardless of ``n_perms``,
         since the per-gene loop is the dominant cost even at ``n_perms=0``.
     modality
         For :class:`~mudata.MuData`: modality key.
@@ -1706,59 +1569,8 @@ def spatially_variable_genes(
     _FLAVORS = ("moran", "geary")
     if flavor not in _FLAVORS:
         raise ValueError(f"flavor must be one of {_FLAVORS!r}, got {flavor!r}")
-
-    if gpu_enabled():
-        rsc = _require_rapids()
-        # Resolve the connectivities key the same way _get_conn_matrix does
-        # (respecting a custom key recorded in uns) instead of hardcoding
-        # the "<neighbors_key>_connectivities" naming convention.
-        uns_entry = adata.uns.get(neighbors_key, {})
-        conn_key = uns_entry.get("connectivities_key", neighbors_key + "_connectivities")
-        if conn_key not in adata.obsp:
-            raise KeyError(
-                f"obsp['{conn_key}'] not found. Run ab.tl.spatial_neighbors() first"
-            )
-        rsc_uns_key = "moranI" if flavor == "moran" else "gearyC"
-        score_col = "I" if flavor == "moran" else "C"
-        with _gpu_X(adata):
-            rsc.gr.spatial_autocorr(
-                adata,
-                connectivity_key=conn_key,
-                mode=flavor,
-                layer=layer,
-                n_perms=n_perms if n_perms > 0 else None,
-                corr_method=p_adjust_method,
-            )
-        # Remap squidpy output to astrolabe var columns. When permutations
-        # were requested, report the permutation p-values (pval_sim), not the
-        # analytic ones -- computing n_perms permutations and then reading
-        # pval_norm anyway silently discarded all of them. Adjusted-column
-        # names follow squidpy's f"{pval_col}_{corr_method}" convention;
-        # if the expected column is absent (rsc version drift), fall back to
-        # correcting locally rather than KeyError-ing.
-        rsc_df = adata.uns.pop(rsc_uns_key)  # remove squidpy key
-        p_col = "pval_sim" if n_perms > 0 else "pval_norm"
-        adj_col = f"{p_col}_{p_adjust_method}"
-        df = pd.DataFrame(index=adata.var_names)
-        df["score"] = rsc_df[score_col].reindex(adata.var_names)
-        df["pval"] = rsc_df[p_col].reindex(adata.var_names)
-        if adj_col in rsc_df.columns:
-            df["pval_adj"] = rsc_df[adj_col].reindex(adata.var_names)
-        else:
-            df["pval_adj"] = _adj_pvalues(df["pval"].to_numpy(), p_adjust_method)
-        df["flavor"] = flavor
-        if n_top_genes is not None:
-            ascending = flavor == "geary"
-            top_idx = df["score"].sort_values(ascending=ascending).head(n_top_genes).index
-            df["spatially_variable"] = df.index.isin(top_idx)
-        else:
-            df["spatially_variable"] = df["pval_adj"] < 0.05
-        for col in ("score", "pval", "pval_adj", "spatially_variable", "flavor"):
-            adata.var[f"sv_{col}"] = df[col].reindex(adata.var_names).to_numpy()
-        adata.uns[key_added] = df
-        n_sv = int(df["spatially_variable"].sum())
-        log.info("spatially_variable_genes (GPU): %d SVGs identified", n_sv)
-        return df
+    if not isinstance(n_perms, (int, np.integer)) or n_perms < 0:
+        raise ValueError("n_perms must be a nonnegative integer")
 
     genes = list(adata.var_names)
     log.info(
@@ -1769,9 +1581,9 @@ def spatially_variable_genes(
     )
 
     if flavor == "moran":
-        df = _svg_moran(adata, genes, layer, neighbors_key, n_perms, p_adjust_method, n_jobs=n_jobs)
+        df = _svg_moran(adata, genes, layer, neighbors_key, n_perms, p_adjust_method, n_jobs=n_jobs, seed=seed)
     else:
-        df = _svg_geary(adata, genes, layer, neighbors_key, n_perms, p_adjust_method, n_jobs=n_jobs)
+        df = _svg_geary(adata, genes, layer, neighbors_key, n_perms, p_adjust_method, n_jobs=n_jobs, seed=seed)
 
     df["flavor"] = flavor
 
@@ -1784,7 +1596,8 @@ def spatially_variable_genes(
         df["spatially_variable"] = df["pval_adj"] < 0.05
 
     # Write per-gene columns back to var
-    for col in ("score", "pval", "pval_adj", "spatially_variable", "flavor"):
+    for col in ("score", "pval", "pval_adj", "spatially_variable", "flavor",
+                "n_valid", "p_min", "resolution_limited"):
         adata.var[f"sv_{col}"] = df[col].reindex(adata.var_names).to_numpy()
 
     adata.uns[key_added] = df
@@ -2108,21 +1921,22 @@ def colocation_quotient(
             }
             if perm_stack is not None:
                 # Rank-based two-sided p against the permutation distribution
-                # itself: (2*min(#>=, #<=)+1)/(n_perms+1), capped at 1. (An
+                # itself: 2*(min(#>=, #<=)+1)/(n_valid+1), capped at 1. (An
                 # earlier version measured |CLQ - 1| deviation from a
                 # hardcoded 1.0 -- but the finite-sample null mean of CLQ is
                 # not 1, especially on the diagonal, and the null is
                 # right-skewed, so that deviation test was miscalibrated.)
                 perm_vals = perm_stack[:, ia, ib]
                 obs_val = clq_obs[ia, ib]
-                n_ge = int((perm_vals >= obs_val).sum())
-                n_le = int((perm_vals <= obs_val).sum())
-                row["p_value"] = min(
-                    (2.0 * min(n_ge, n_le) + 1.0) / (n_perms + 1.0), 1.0
-                )
+                p, n_valid = permutation_p(np.asarray(obs_val), perm_vals)
+                row["p_value"] = float(p)
+                row["n_valid"] = int(n_valid)
             rows_out.append(row)
 
     result = pd.DataFrame(rows_out)
+    if perm_stack is not None:
+        annotate_permutation_resolution(result, "p_value", "n_valid", method=None,
+                                       label="uncorrected CLQ")
     adata.uns[key_added] = result
     log.info(
         "colocation_quotient: %d category pairs, %d points, k=%d, n_perms=%d",

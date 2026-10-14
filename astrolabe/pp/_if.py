@@ -386,6 +386,8 @@ def _resolve_channel_axis(dimension_order: str, ndim: int) -> int | None:
     ``None``, the same way the renderer already does.
     """
     order = dimension_order.upper()
+    if ndim == 2:
+        return None
     if "C" in order:
         return order.index("C")
     if "Z" in order or "T" in order:
@@ -411,28 +413,14 @@ def _resolve_affine(
     if affine is not None:
         return np.asarray(affine, dtype=np.float64)
 
-    if spec.registration_affine is not None:
-        M = np.asarray(spec.registration_affine, dtype=np.float64)
-        try:
-            return np.linalg.inv(M)
-        except np.linalg.LinAlgError:
-            log.warning("registration_affine is singular; falling back to pixel_size_um scaling.")
-
-    px_um: float = spec.pixel_size_um
-    if np.isnan(px_um) or px_um == 0.0:
-        log.warning(
-            "pixel_size_um is nan or 0; using identity transform. "
-            "Set spec.pixel_size_um manually."
-        )
-        return np.eye(3, dtype=np.float64)
-
-    scale = 1.0 / px_um
-    return np.array(
-        [[scale, 0.0, 0.0],
-         [0.0, scale, 0.0],
-         [0.0, 0.0, 1.0]],
-        dtype=np.float64,
-    )
+    M = (np.asarray(spec.registration_affine, dtype=np.float64)
+         if spec.registration_affine is not None
+         else np.diag([spec.pixel_size_um, spec.pixel_size_um, 1.]))
+    for transform in spec.transform_chain:
+        M = np.asarray(transform) @ M
+    if not np.isfinite(M).all():
+        raise ValueError("image registration requires finite pixel size and affine")
+    return np.linalg.inv(M)
 
 
 def _read_tile(

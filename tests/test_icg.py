@@ -48,7 +48,7 @@ def _adata_for_icg(n_per_type=20, n_genes=10, seed=42):
 class TestICGLog2FC:
     def test_zero_zero_gene_log2fc_is_nan(self):
         adata = _adata_for_icg()
-        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1)
+        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1, expression_scale="log1p")
         assert len(result) > 0, "expected at least one pair tested with min_cells=1"
         gene0_rows = result[result["gene"] == "gene_0"]
         assert len(gene0_rows) > 0, "gene_0 must appear in at least one pair result"
@@ -58,14 +58,14 @@ class TestICGLog2FC:
 
     def test_expressed_gene_log2fc_is_not_all_nan(self):
         adata = _adata_for_icg()
-        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1)
+        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1, expression_scale="log1p")
         expressed = result[result["gene"] != "gene_0"]["log2fc"]
         assert len(expressed) > 0, "expected results for expressed genes"
         assert not expressed.isna().all(), "some expressed genes must have numeric log2fc"
 
     def test_result_columns_present(self):
         adata = _adata_for_icg()
-        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1)
+        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1, expression_scale="log1p")
         assert len(result) > 0, "expected non-empty result with min_cells=1"
         for col in ("cell_type", "neighbor_type", "gene", "log2fc", "pval", "pval_adj"):
             assert col in result.columns, f"column '{col}' missing from ICG result"
@@ -79,7 +79,7 @@ class TestICGLog2FC:
         adata.var_names = [f"g{i}" for i in range(5)]
         adata.obsp["spatial_neighbors_connectivities"] = sp.csr_matrix((n_cells, n_cells))
         adata.uns["spatial_neighbors"] = {"connectivities_key": "spatial_neighbors_connectivities"}
-        result = interaction_changed_genes(adata, groupby="cell_type")
+        result = interaction_changed_genes(adata, groupby="cell_type", expression_scale="log1p")
         assert len(result) == 0
 
 
@@ -174,7 +174,7 @@ class TestICGLog2FCScale:
         adata.obsp["spatial_neighbors_connectivities"] = sp.csr_matrix(adj)
         adata.uns["spatial_neighbors"] = {"connectivities_key": "spatial_neighbors_connectivities"}
 
-        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1)
+        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1, expression_scale="log1p")
         row = result[
             (result["cell_type"] == "A") & (result["neighbor_type"] == "B") & (result["gene"] == "gene_0")
         ].iloc[0]
@@ -196,10 +196,10 @@ class TestICGFDRScope:
         adata = _adata_for_icg(n_per_type=20, n_genes=10, seed=7)
         pair_result = interaction_changed_genes(
             adata.copy(), groupby="cell_type", min_cells=1, fdr_scope="pair"
-        )
+        , expression_scale="log1p")
         global_result = interaction_changed_genes(
             adata.copy(), groupby="cell_type", min_cells=1, fdr_scope="global"
-        )
+        , expression_scale="log1p")
         merged = pair_result.merge(
             global_result, on=["cell_type", "neighbor_type", "gene"], suffixes=("_pair", "_global")
         )
@@ -207,12 +207,12 @@ class TestICGFDRScope:
         assert merged["pval_adj_global"].between(0, 1).all()
         assert merged["pval_adj_pair"].between(0, 1).all()
 
-    def test_default_scope_is_pair(self):
+    def test_default_scope_is_global(self):
         adata = _adata_for_icg(n_per_type=20, n_genes=10, seed=7)
-        default_result = interaction_changed_genes(adata.copy(), groupby="cell_type", min_cells=1)
+        default_result = interaction_changed_genes(adata.copy(), groupby="cell_type", min_cells=1, seed=0, expression_scale="log1p")
         pair_result = interaction_changed_genes(
-            adata.copy(), groupby="cell_type", min_cells=1, fdr_scope="pair"
-        )
+            adata.copy(), groupby="cell_type", min_cells=1, fdr_scope="global", seed=0
+        , expression_scale="log1p")
         pd.testing.assert_series_equal(
             default_result["pval_adj"].reset_index(drop=True),
             pair_result["pval_adj"].reset_index(drop=True),
@@ -256,8 +256,8 @@ class TestICGPermutationNull:
         # null genes stay non-significant.
         adata = _planted_icg_adata()
         result = interaction_changed_genes(
-            adata, groupby="cell_type", n_perms=199, seed=0
-        )
+            adata, groupby="cell_type", n_perms=999, seed=0
+        , expression_scale="log1p")
         ab_rows = result[(result["cell_type"] == "A") & (result["neighbor_type"] == "B")]
         assert len(ab_rows) > 0
 
@@ -273,7 +273,7 @@ class TestICGPermutationNull:
         adata = _planted_icg_adata(seed=1)
         result = interaction_changed_genes(
             adata, groupby="cell_type", n_perms=49, seed=0
-        )
+        , expression_scale="log1p")
         assert "p_asymptotic" in result.columns
         assert "pval" in result.columns
         # Permutation p-values are discrete with resolution 1/(n_valid+1) and
@@ -281,21 +281,23 @@ class TestICGPermutationNull:
         assert (result["pval"] > 0).all()
         assert (result["pval"] >= 1.0 / 50.0 - 1e-12).all()
 
-    def test_n_perms_zero_falls_back_to_asymptotic(self):
+    def test_n_perms_zero_is_not_tested(self):
         adata = _planted_icg_adata(seed=2)
         result = interaction_changed_genes(
             adata, groupby="cell_type", n_perms=0
-        )
-        assert np.allclose(result["pval"], result["p_asymptotic"])
+        , expression_scale="log1p")
+        assert result["pval"].isna().all()
+        assert result["pval_adj"].isna().all()
+        assert result["p_asymptotic"].notna().all()
 
     def test_permutation_reproducible_across_n_jobs(self):
         adata = _planted_icg_adata(seed=3)
         r1 = interaction_changed_genes(
             adata.copy(), groupby="cell_type", n_perms=25, seed=7, n_jobs=1
-        )
+        , expression_scale="log1p")
         r2 = interaction_changed_genes(
             adata.copy(), groupby="cell_type", n_perms=25, seed=7, n_jobs=2
-        )
+        , expression_scale="log1p")
         pd.testing.assert_frame_equal(r1, r2)
 
 
@@ -325,7 +327,7 @@ class TestICGSkipSelfPairs:
         adata = self._adata_with_self_contacts()
         result = interaction_changed_genes(
             adata, groupby="cell_type", min_cells=2, n_perms=0
-        )
+        , expression_scale="log1p")
         assert len(result) > 0
         assert (result["cell_type"] != result["neighbor_type"]).all()
 
@@ -334,7 +336,7 @@ class TestICGSkipSelfPairs:
         result = interaction_changed_genes(
             adata, groupby="cell_type", min_cells=2, n_perms=0,
             skip_self_pairs=False,
-        )
+         expression_scale="log1p")
         self_rows = result[result["cell_type"] == result["neighbor_type"]]
         assert len(self_rows) > 0
         assert set(self_rows["cell_type"]) == {"A"}
@@ -379,7 +381,7 @@ class TestICGCategoryOrder:
         adata.obsp["spatial_neighbors_connectivities"] = sp.csr_matrix(adj)
         adata.uns["spatial_neighbors"] = {"connectivities_key": "spatial_neighbors_connectivities"}
 
-        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1)
+        result = interaction_changed_genes(adata, groupby="cell_type", min_cells=1, expression_scale="log1p")
         assert set(result["cell_type"]) == {"Z", "A", "M"}
         assert set(result["neighbor_type"]) == {"Z", "A", "M"}
         assert "W" not in set(result["cell_type"])
