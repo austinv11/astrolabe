@@ -33,7 +33,8 @@ SCENARIOS = {
 }
 
 
-def simulate(seed, scenario, exposure_override=None, *, n_donors=8, core_width_shift=0, donor_imbalance=False):
+def simulate(seed, scenario, exposure_override=None, *, n_donors=8, core_width_shift=0, donor_imbalance=False,
+             donor_sd=.25, spatial_sd=.3, phi=.5, nb_size=10):
     rng = np.random.default_rng(seed)
     beta, unequal, condition, confounding = SCENARIOS[scenario]
     blocks, coordinates, donors, cores = [], [], [], []
@@ -60,15 +61,15 @@ def simulate(seed, scenario, exposure_override=None, *, n_donors=8, core_width_s
         spatial.extend(rng.multivariate_normal(np.zeros(len(adjacency)), covariance))
     spatial = np.asarray(spatial)
     nuisance = .7*x + rng.normal(0, .7, n) if confounding else rng.normal(size=n)
-    eta = 2 + beta*x + .3*(np.sqrt(.5)*spatial+np.sqrt(.5)*rng.normal(size=n))
-    eta += rng.normal(0, .25, n_donors)[donor]
+    eta = 2 + beta*x + spatial_sd*(np.sqrt(phi)*spatial+np.sqrt(1-phi)*rng.normal(size=n))
+    eta += rng.normal(0, donor_sd, n_donors)[donor]
     if confounding:
         eta += .5*nuisance
     exposure = rng.uniform(.5, 2., n)
     if exposure_override is not None:
         exposure = np.asarray(exposure_override)
     mu = exposure*np.exp(eta)
-    counts = rng.negative_binomial(10, 10/(10+mu))
+    counts = rng.negative_binomial(nb_size, nb_size/(nb_size+mu))
     graph = sparse.block_diag(blocks, format="csr")
     if scenario == "transcript_misassignment":
         # Twenty percent of each cell's molecules are reassigned to adjacent

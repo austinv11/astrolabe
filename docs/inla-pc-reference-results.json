@@ -1,0 +1,143 @@
+{
+  "backend": "pyINLA 0.1.11",
+  "seed": 811,
+  "n_cells": 96,
+  "n_cores": 8,
+  "n_donors": 4,
+  "gaussian": {
+    "direct": {
+      "mean": {
+        "(Intercept)": 1.103120668361256,
+        "x": 0.4995859797401538
+      },
+      "sd": {
+        "(Intercept)": 0.10282466942565573,
+        "x": 0.048223325524515116
+      },
+      "0.025quant": {
+        "(Intercept)": 0.9015880195647339,
+        "x": 0.40506999849735303
+      },
+      "0.5quant": {
+        "(Intercept)": 1.103120668361256,
+        "x": 0.4995859797401538
+      },
+      "0.975quant": {
+        "(Intercept)": 1.304653317157778,
+        "x": 0.5941019609829545
+      },
+      "mode": {
+        "(Intercept)": 1.103120668361256,
+        "x": 0.4995859797401538
+      },
+      "kld": {
+        "(Intercept)": 0.0,
+        "x": 0.0
+      }
+    },
+    "analytic_mean": [
+      1.10312066836129,
+      0.4995866383962072
+    ],
+    "analytic_sd": [
+      0.10282468899377556,
+      0.048230631595018725
+    ],
+    "max_mean_error": 6.586560534205255e-07,
+    "max_sd_error": 7.306070503608486e-06
+  },
+  "engine": {
+    "version": "latest",
+    "platform": "windows_x86_64",
+    "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-windows-x86_64.zip",
+    "installed": "2026-10-24 09:06:54"
+  },
+  "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+  "launcher_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+  "build_info": "== inla build ==\ndate:       2026-10-20T03:37:05Z\ncommit:     unknown\ncompiler:   x86_64-w64-mingw32ucrt-gcc (GCC) 16.2.1 20260819 (Fedora MinGW 16.2.1-1.fc44)\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER  -DGITCOMMIT=26.10.20 -DINLA_TAG='\"26.10.20+unknown\"'  -I/opt/mingw-deps/include -I/opt/mingw-deps/R-win/include -I/__w/r-inla/r-inla/local-win/include.boot -DINLA_WITH_STILES -I/__w/r-inla/r-inla/local-win/stiles/include\nblas:       OpenBLAS 0.3.29, static, runtime CPU dispatch\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Fedora Linux 44 (Container Image)\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+  "donor_sd_prior": [
+    1.0,
+    0.01
+  ],
+  "negative_binomial": {
+    "planted_effect": 0.5,
+    "fixed": {
+      "mean": {
+        "(Intercept)": 2.140985765767496,
+        "x": 0.4247872308097392
+      },
+      "sd": {
+        "(Intercept)": 0.13715627623030438,
+        "x": 0.060800711692836365
+      },
+      "0.025quant": {
+        "(Intercept)": 1.8681129990109175,
+        "x": 0.30586632930519314
+      },
+      "0.5quant": {
+        "(Intercept)": 2.1412583081391157,
+        "x": 0.42460014604772456
+      },
+      "0.975quant": {
+        "(Intercept)": 2.412317321755772,
+        "x": 0.5447885220145378
+      },
+      "mode": {
+        "(Intercept)": 2.141228164897644,
+        "x": 0.4246070754103965
+      },
+      "kld": {
+        "(Intercept)": 2.712746165116982e-08,
+        "x": 1.0212513209403797e-08
+      }
+    },
+    "hyperparameters": {
+      "mean": {
+        "size for the nbinomial observations (1/overdispersion)": 21213.984842206406,
+        "Precision for cell": 25.3636608040701,
+        "Phi for cell": 0.2697937678495846,
+        "Precision for donor": 23.355167733237835
+      },
+      "sd": {
+        "size for the nbinomial observations (1/overdispersion)": 915965.2643266277,
+        "Precision for cell": 81.32024582118423,
+        "Phi for cell": 0.22758202844321318,
+        "Precision for donor": 22.958894846219813
+      },
+      "0.025quant": {
+        "size for the nbinomial observations (1/overdispersion)": 0.26018360036655336,
+        "Precision for cell": 0.07947905739052254,
+        "Phi for cell": 0.009324174247502865,
+        "Precision for donor": 3.007686960640949
+      },
+      "0.5quant": {
+        "size for the nbinomial observations (1/overdispersion)": 49.189457471169014,
+        "Precision for cell": 5.975318914925121,
+        "Phi for cell": 0.20241073132878556,
+        "Precision for donor": 16.641813509588165
+      },
+      "0.975quant": {
+        "size for the nbinomial observations (1/overdispersion)": 44406.74543584716,
+        "Precision for cell": 170.2118694494462,
+        "Phi for cell": 0.8083697290922344,
+        "Precision for donor": 84.08342730722877
+      },
+      "mode": {
+        "size for the nbinomial observations (1/overdispersion)": 0.10966141117077917,
+        "Precision for cell": 0.03548306600426018,
+        "Phi for cell": 0.01613204188941502,
+        "Precision for donor": 8.01159937890433
+      }
+    }
+  },
+  "prior_table": {
+    "shape": [
+      10000,
+      2
+    ],
+    "exact_match": true,
+    "integrated_density": 1.0,
+    "cdf_at_phi_half": 0.5441298707251766
+  },
+  "R_loaded": false
+}

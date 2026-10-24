@@ -109,6 +109,25 @@ The fixture's original matrix total (31,714) differs from its transcript subset;
 neither vendor assignments nor that matrix are independent reconstruction truth.
 See [the vendor integration results](proseg-vendor-results.json).
 
+The additional diffusion ablation uses fresh seeds 903/904 for clean, jittered
+and leaking coordinates, retaining all 18 runs (36 core results). It distinguishes
+`--no-diffusion` from `--diffusion-probability 0`, which retains near-only
+adjustments. Mean assignment accuracy is:
+
+| Input | Original | Disabled | Near only | Default diffusion |
+| --- | ---: | ---: | ---: | ---: |
+| Clean | 100% | 88.4% | 86.9% | 84.3% |
+| Jitter | 90.7% | 81.1% | 84.0% | 81.7% |
+| Leakage | 90.2% | 79.2% | 81.8% | 80.4% |
+
+Near-only adjustments improve on the other Proseg arms for these noisy inputs,
+but remain worse than the original assignments and harm clean inputs. Positional
+RMSE also increases: for leakage, 2.36 microns initially versus 2.76 near-only
+and 3.30 with default diffusion. All native count checks pass. These are
+descriptive averages across two simulated datasets, not independent biological
+replicates. No Proseg default is selected from these outcomes. See
+[all ablation results](proseg-diffusion-ablation-results.json).
+
 ## Optional conditional expression
 
 The approved implementation uses published BYM2/INLA through optional pyINLA
@@ -117,8 +136,9 @@ and shared effects for four donors agrees to maximum absolute errors `6.6e-7`
 (means) and `7.4e-6` (SDs). A count example yields effect `0.42336` for a planted
 `0.5`, with credible interval `[0.3048, 0.5433]`. The prior table used by the
 engine exactly matches the backend-generated table. These results are retained
-in [the reference results](inla-reference-results.json) and reproduced by
-`benchmarks/inla_reference.py` in the optional environment.
+in [the baseline reference results](inla-reference-results.json). Those count
+results used the inherited log-gamma donor prior; current references explicitly
+specify the PC donor prior.
 
 The public adapter has a separate direct-call agreement test, input rejection,
 optional-import isolation, disconnected-core/shared-donor, serialization and
@@ -128,7 +148,9 @@ coverage, zero exclusion and exact binomial uncertainty. This integration remain
 experimental: numerical agreement and a small simulation screen do not establish
 calibration for arbitrary tissue, covariate selection or segmentation errors.
 
-All **140 fits** in the seven-scenario screen complete (20 seeds/scenario).
+All **140 fits** in the initial seven-scenario screen complete (20 seeds/scenario).
+This screen and the fixed-design, extended and sensitivity records below use
+the inherited log-gamma donor prior, not the current explicit PC prior.
 The table reports coverage of the true coefficient by a 95% credible interval,
 and exclusion of zero. Zero exclusion is a false exclusion only in null rows;
 in planted-effect rows it measures detection. No priors were tuned to these runs.
@@ -194,9 +216,15 @@ scale halved/doubled, phi PC probability 1/3 or 2/3, and donor log-gamma rate
 multiplied/divided by ten. All fits complete. Null coverage is 8/10 for every
 setting; planted-effect coverage is 7–8/10. Zero-exclusion decisions never change
 relative to default. Maximum paired mean and SD changes are 0.0162 and 0.0269.
-This bounded sensitivity check does not resolve undercoverage; defaults remain
-unchanged. [All sensitivity settings and runs](inla-sensitivity-results.json)
+This bounded sensitivity check does not resolve undercoverage; it varied the
+donor prior's rate without changing its family. [All sensitivity settings and runs](inla-sensitivity-results.json)
 are retained, including unfavorable outcomes.
+
+The separate [donor-prior investigation](inla-undercoverage-investigation.md)
+compares the established PC prior with the inherited prior, oracle parameters
+and full Laplace. The public API exposes `donor_sd_prior=(1, .01)`, meaning
+`P(donor SD > 1) = .01` on the log-expression scale, and checks the native prior
+serialization. This is a published INLA prior, not a new interval correction.
 
 ## Real files and optional environments
 
@@ -280,13 +308,21 @@ freshness survive the round-trip: 358 cells, 520 features and 31,714 counts.
 The source archive uses an explicit inclusion list. Source, tests (including
 the licensed fixture), docs, examples, validation scripts and font assets are
 retained; executed notebooks and local editor files are excluded. The validated
-archive shrank from 276 MB to approximately 1.75 MB without editing notebooks.
+archive shrank from 276 MB to approximately 1.94 MB without editing notebooks.
 
 CI includes separate SpatialData 0.8-compatible optional jobs on Windows/Linux,
 INLA-extra installation/native-reference jobs on Windows/Linux, and a clean-wheel
 job on Linux. The inference jobs explicitly install the engine during CI setup
 and upload numerical reference records; ordinary package code never installs it.
-Hosted validation uses a separate snapshot branch. Local optional-environment
+Hosted validation runs on [the separate snapshot branch](https://github.com/austinv11/astrolabe/actions/runs/40111547286),
+commit `4d36a3cfbeaf8ed4eec0d34ab04feba551f22eac`: **all 13 jobs pass**. This covers
+Python 3.12/3.13 on Windows/Linux, base and cohort/communication installations,
+both optional SpatialData and native INLA jobs, and the clean-wheel workflow.
+The [CI record](ci-validation-results.json) retains job URLs and conclusions.
+The initial hosted run exposed
+Windows Git line-ending conversion of a checksummed vendor JSON file; `.gitattributes`
+now preserves fixture bytes. The original six vendor checksums remain unchanged,
+including after an isolated `core.autocrlf=true` checkout. Local optional-environment
 validation passes all four SpatialData tests.
 
 The rebuilt wheel also passes the Xenium smoke workflow after installing

@@ -47,10 +47,35 @@ def _fit_native(pyinla, model, data, offset, config, directory, index, table, re
             actual = read_fmesher_file(str(artifact / "data.files" / filename))
             if not np.array_equal(actual, table):
                 raise RuntimeError("INLA received a different BYM2 prior table; refusing inference")
+            _check_donor_prior(model, lines)
             return result
         finally:
             if config.get("keep_artifacts", False):
                 shutil.copytree(work, directory / f"gene-{index}")
+
+
+def _check_donor_prior(model, lines):
+    """Check the donor prior actually serialized by the optional wrapper."""
+    import numpy as np
+    donor = next((term for term in model.get("random", []) if term["id"] == "donor"), None)
+    if donor is None:
+        return
+    prior = donor.get("hyper", [{}])[0]
+    if prior.get("prior") not in ("pc.prec", "loggamma") or prior.get("fixed", False):
+        return  # Diagnostic oracle models have no inferred donor precision.
+    values, active = {}, False
+    for line in lines:
+        if line.startswith("!") and line.endswith("!"):
+            active = line == "!donor!"
+        elif active and " = " in line:
+            key, value = line.split(" = ", 1)
+            values[key] = value
+    expected_name = {"pc.prec": "pcprec", "loggamma": "loggamma"}[prior["prior"]]
+    actual = np.fromstring(values.get("parameters", ""), sep=" ")
+    expected = np.asarray(prior["param"], dtype=float)
+    if (values.get("prior") != expected_name or values.get("fixed") != "0"
+            or actual.shape != expected.shape or not np.allclose(actual, expected, rtol=1e-12, atol=0)):
+        raise RuntimeError("INLA received a different donor precision prior; refusing inference")
 
 
 def run(directory, native_root=None):
@@ -106,7 +131,8 @@ def run(directory, native_root=None):
                    "hyper": [{}, {"prior": encoded}]}]
         if config["donor"]:
             data["donor"] = donor
-            random.append({"id": "donor", "model": "iid"})
+            random.append({"id": "donor", "model": "iid",
+                           "hyper": [{"prior": "pc.prec", "param": config.get("donor_sd_prior", [1., .01])}]})
         result = _fit_native(pyinla,
             {"response": "y", "fixed": ["1", *config["fixed"]], "random": random},
             data, offset, config, directory, index, table, read_fmesher_file)
@@ -137,10 +163,12 @@ def run(directory, native_root=None):
         "scipy_version": version("scipy"), "pandas_version": pd.__version__,
         "strategy": "simplified.laplace", "integration": "ccd", "num_threads": config["num_threads"],
         "priors": {"bym2_precision": "pc.prec(1, 0.01)", "bym2_phi": "pc(u=0.5, alpha=0.5)",
-                   "donor_precision": "loggamma(1, 0.00005)", "nb_size": "pc.mgamma(7)",
+                   "donor_precision": ("pc.prec(" + ", ".join(map(str, config.get("donor_sd_prior", [1., .01]))) + ")") if config["donor"] else "not used",
+                   "nb_size": "pc.mgamma(7)",
                    "intercept": "flat", "fixed_effects": "normal(mean=0, precision=0.001)"},
         "prior_table_sha256": hashlib.sha256(table.tobytes()).hexdigest(),
         "prior_identity_verified": bool(hyperparameters), "n_fitted": len(hyperparameters),
+        "donor_prior_identity_verified": bool(hyperparameters) and config["donor"],
         "hyperparameter_summaries_json": json.dumps(hyperparameters, allow_nan=False),
         "inference": "Bayesian; no p-values or BH adjustment",
     }

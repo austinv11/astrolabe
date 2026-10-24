@@ -48,6 +48,13 @@ Results are posterior means, standard deviations, credible intervals and posteri
 sign probabilities. They are **not frequentist p-values**; no BH correction of
 posterior probabilities. Use the documented PC priors, with their numerical values
 recorded, and simplified Laplace inference with CCD hyperparameter integration.
+The donor intercept uses an explicit PC precision prior with
+`donor_sd_prior=(1, .01)`: `P(donor SD > 1) = .01` on the log-expression scale.
+This matches the spatial SD prior's scale; callers can supply another positive
+scale/probability pair justified by their experiment. Native prior parameters
+are verified after serialization, alongside the BYM2 table. The inherited
+log-gamma donor baseline and the explicit PC specification are compared in the
+[undercoverage investigation](inla-undercoverage-investigation.md).
 Sign probabilities are numerical marginal integrals. `probability_tail_truncated`
 flags when zero lies outside the backend's finite marginal grid; reported zero
 or one then reflects truncated numerical support, not absolute certainty.
@@ -90,13 +97,15 @@ The last scenario explicitly violates the observation model. Report coverage and
 false exclusion with their binomial uncertainty; do not label posterior sign
 probabilities as calibrated frequentist tests.
 
-The subsequent 300-fit screen confirms undercoverage: 88% for unequal cores,
+The subsequent 300-fit screen using the inherited log-gamma donor prior confirms undercoverage: 88% for unequal cores,
 85% for donor-condition nulls and 92% for adjusted regional confounding. Four-donor
 condition fits cover only 18/25 null coefficients. A separate 140-fit sensitivity
 screen varies seven published prior settings; no setting resolves the issue on
-those seeds. These findings keep the integration experimental. See
+those seeds. Those seven settings did not change the donor prior family.
+These findings keep the integration experimental. See
 [extended results](inla-extended-results.json) and
-[prior sensitivity](inla-sensitivity-results.json); defaults were not tuned.
+[prior sensitivity](inla-sensitivity-results.json). The subsequent PC-donor
+investigation is separate and retains the original results.
 
 ## Installation and use
 

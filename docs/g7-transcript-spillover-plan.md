@@ -10,6 +10,13 @@ full-schedule clean/displaced control runs did not meet the correction-efficacy 
 remains an explicit experimental integration. See [validation results](spatial-validation.md)
 and [usage contracts](spatial-workflows.md).
 
+The subsequent diagnostic ablation uses fresh seeds 903/904, clean, jitter and
+leakage scenarios, and three documented modes: disabled repositioning, small
+adjustments only (`--diffusion-probability 0`), and default diffusion. It retains
+all outcomes and unchanged sampling/model defaults. This distinguishes the
+upstream model's two adjustment scales without inventing a correction algorithm;
+see `benchmarks/proseg_diffusion_ablation.py`.
+
 ## Recommendation
 
 Add an optional Proseg-backed workflow for transcript displacement and cell
@@ -165,3 +172,15 @@ import, correction diagnostics, and independent validation. Treat MisTIC,
 FastReseg, ResolVI, and SPLIT as research comparators; implementing all of them
 is not part of this initial proposal. Automatic registration correction and a
 new native probabilistic segmentation algorithm are also outside this scope.
+
+## Completed diffusion ablation
+
+Fresh seeds 903/904 compare disabled, near-only and default diffusion on clean,
+jittered and leaking coordinates (18 retained runs). Near-only adjustments help
+relative to the other Proseg settings on noisy inputs but remain worse than
+the original assignments. Clean assignment accuracy falls from 100% to 86.9%
+with near-only adjustment; leakage accuracy falls from 90.2% to 81.8%.
+The correction-efficacy gate remains unmet. Keep reconstruction optional,
+preserve observed coordinates, and make no automatic correction recommendation.
+See [all ablation outcomes](proseg-diffusion-ablation-results.json) and
+[validation details](spatial-validation.md).

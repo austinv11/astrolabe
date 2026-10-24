@@ -82,6 +82,8 @@ mu = np.exp(eta+offset)
 data['y'] = rng.negative_binomial(10, 10/(10+mu))
 for term in model['random']:
     term.pop('hyper')
+model['random'][1]['hyper'] = [{'prior': 'pc.prec', 'param': [1., .01]}]
+report['donor_sd_prior'] = [1., .01]
 from pyinla.pc_bym import pc_bym_phi
 prior = pc_bym_phi(graph=graph.toarray(), alpha=.5, u=.5, scale_model=True,
                    adjust_for_con_comp=True, return_as_table=True)

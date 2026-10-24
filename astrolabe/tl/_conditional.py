@@ -94,7 +94,7 @@ def _run_inla(directory, python_executable, timeout):
 @with_adata(mirror_uns=from_kwarg("key_added"), spatial_result=True)
 def conditional_expression(
     adata, genes, *, predictor, exposure_key, covariates=(), contrast=None,
-    donor_key=None, cell_type_key=None, cell_type=None, layer="counts",
+    donor_key=None, donor_sd_prior=(1.0, 0.01), cell_type_key=None, cell_type=None, layer="counts",
     neighbors_key="spatial_neighbors", library_key="auto", core_key="auto",
     python_executable=None, output_dir=None, max_cells=1000,
     max_working_bytes=512 * 1024**2, timeout=1800, num_threads=1,
@@ -115,6 +115,12 @@ def conditional_expression(
     donor_key : str, optional
         Biological donor IDs for an IID intercept shared across that donor's
         cores. At least three donors are required, not a guarantee of precision.
+    donor_sd_prior : tuple of float
+        Published PC precision prior specified as ``(u, alpha)``, meaning
+        ``P(donor SD > u) = alpha`` on the natural-log expression scale.
+        Default ``(1, 0.01)`` uses the same scale as the spatial SD prior.
+        Choose this scale for the biological question; small cohorts can be
+        sensitive to it. Used only when ``donor_key`` is supplied.
     cell_type_key, cell_type : str, optional
         Explicit single-cell-type restriction; supply both or neither.
     neighbors_key : str
@@ -151,6 +157,13 @@ def conditional_expression(
     """
     genes = [genes] if isinstance(genes, str) else list(genes)
     covariates = [covariates] if isinstance(covariates, str) else list(covariates)
+    try:
+        donor_prior = np.asarray(donor_sd_prior, dtype=float)
+    except (TypeError, ValueError):
+        raise ValueError("donor_sd_prior requires (u > 0, 0 < alpha < 1)") from None
+    if (donor_prior.shape != (2,) or not np.isfinite(donor_prior).all()
+            or donor_prior[0] <= 0 or not 0 < donor_prior[1] < 1):
+        raise ValueError("donor_sd_prior requires finite (u > 0, 0 < alpha < 1)")
     if not genes or len(set(genes)) != len(genes) or not adata.var_names.is_unique:
         raise ValueError("Select distinct genes on a unique feature axis")
     if not adata.obs_names.is_unique:
@@ -225,6 +238,7 @@ def conditional_expression(
         "predictor": predictor, "exposure_key": exposure_key, "covariates": list(covariates),
         "contrast": [] if contrast is None else [str(v) for v in contrast],
         "donor_key": donor_key or "", "cell_type_key": cell_type_key or "",
+        "donor_sd_prior": donor_prior.tolist() if donor_key is not None else [],
         "cell_type": "all" if cell_type is None else str(cell_type), "layer": layer or "X",
         "neighbors_key": neighbors_key, "unit_columns": unit_columns, "design_encoding": encoding,
         "n_cells": n, "n_donors": n_donors, "n_units": len(np.unique(codes)),
@@ -234,6 +248,7 @@ def conditional_expression(
         "max_cells": max_cells, "max_working_bytes": max_working_bytes,
     }
     config = {"genes": genes, "fixed": list(design), "donor": donor_key is not None,
+              "donor_sd_prior": donor_prior.tolist(),
               "num_threads": num_threads, "keep_artifacts": output_dir is not None}
     python_executable = sys.executable if python_executable is None else python_executable
     def fit(directory):

@@ -1,0 +1,137 @@
+[
+  {
+    "scenario": "donor_condition_null",
+    "seed": 8201,
+    "difference": {
+      "posterior_mean": -1.4811473902143213e-05,
+      "posterior_sd": -9.067098155984832e-06,
+      "credible_low": 2.632124287876847e-05,
+      "credible_high": -4.6216228636541956e-05
+    },
+    "agreement": "passed",
+    "backend": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "06a284b48d07d7f08cbfbb253c230591038df5204e739190300f0ad89c80895f",
+      "launcher_sha256": "dfee0eed5fb76557af57069370f6d137a9e36f61cdeb6d5014d7ab00764fb237",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "linux_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-linux-x86_64-v3-portable.tar.gz",
+        "installed": "2026-10-24 11:55:43"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-24T14:26:54Z\ncommit:     64260c8bd2efd6b320a8597433b99092b2ffa5f4\ncompiler:   gcc-16 (Ubuntu 16-20260315-1ubuntu1~24~ppa1) 16.0.1 20260315 (experimental) [trunk r16-8100-g3aca3bae8ee]\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -march=x86-64-v3 -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL -DINLA_WITH_CLONE_TARGETS  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER -DINLA_WITH_NUMA  -DGITCOMMIT=26.10.24-1 -DINLA_TAG='\"26.10.24-1+64260c8\"' -DINLA_WITH_MKL -I/opt/intel/oneapi/mkl/latest/include -DINLA_WITH_STILES -I/home/runner/work/r-inla/r-inla/local/stiles/include -I/home/runner/work/r-inla/r-inla/local/include.boot\nblas:       Intel MKL, static, embedded (/opt/intel/oneapi/mkl/latest/lib/intel64)\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Ubuntu 24.04.5 LTS\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.7 (main, Oct 16 2024, 04:37:19) [Clang 18.1.8 ]",
+      "numpy_version": "2.0.2",
+      "scipy_version": "1.18.1",
+      "pandas_version": "2.3.3",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "pc.prec(1.0, 0.01)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "02a03aac5cd4ec927083f3ade5c61cd347aff46ace96e22eac2ff4adea2592b5",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "donor_prior_identity_verified": true,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 8595.860477055365, \"Precision for cell\": 4.751655833813111, \"Phi for cell\": 0.22970670446492508, \"Precision for donor\": 115.7899610067414}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 154418.61930794432, \"Precision for cell\": 1.7445995748193457, \"Phi for cell\": 0.1672708925142233, \"Precision for donor\": 291.869862513242}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 5.11722583271067, \"Precision for cell\": 1.905612555031023, \"Phi for cell\": 0.020305861619385496, \"Precision for donor\": 4.10137992876767}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 146.92429427470472, \"Precision for cell\": 4.544567213489741, \"Phi for cell\": 0.18881646845701103, \"Precision for donor\": 44.17980288929429}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 37643.77539187217, \"Precision for cell\": 8.60037207340602, \"Phi for cell\": 0.6368492210547665, \"Precision for donor\": 683.1479221728118}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 9.628225047705492, \"Precision for cell\": 4.161567469998266, \"Phi for cell\": 0.062368746234182475, \"Precision for donor\": 9.896627183980408}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  },
+  {
+    "scenario": "donor_condition_null",
+    "seed": 8202,
+    "difference": {
+      "posterior_mean": 8.263846185130319e-08,
+      "posterior_sd": 2.6545819371837087e-06,
+      "credible_low": -5.483557708241271e-06,
+      "credible_high": 5.697189295994498e-06
+    },
+    "agreement": "passed",
+    "backend": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "06a284b48d07d7f08cbfbb253c230591038df5204e739190300f0ad89c80895f",
+      "launcher_sha256": "dfee0eed5fb76557af57069370f6d137a9e36f61cdeb6d5014d7ab00764fb237",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "linux_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-linux-x86_64-v3-portable.tar.gz",
+        "installed": "2026-10-24 11:55:43"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-24T14:26:54Z\ncommit:     64260c8bd2efd6b320a8597433b99092b2ffa5f4\ncompiler:   gcc-16 (Ubuntu 16-20260315-1ubuntu1~24~ppa1) 16.0.1 20260315 (experimental) [trunk r16-8100-g3aca3bae8ee]\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -march=x86-64-v3 -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL -DINLA_WITH_CLONE_TARGETS  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER -DINLA_WITH_NUMA  -DGITCOMMIT=26.10.24-1 -DINLA_TAG='\"26.10.24-1+64260c8\"' -DINLA_WITH_MKL -I/opt/intel/oneapi/mkl/latest/include -DINLA_WITH_STILES -I/home/runner/work/r-inla/r-inla/local/stiles/include -I/home/runner/work/r-inla/r-inla/local/include.boot\nblas:       Intel MKL, static, embedded (/opt/intel/oneapi/mkl/latest/lib/intel64)\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Ubuntu 24.04.5 LTS\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.7 (main, Oct 16 2024, 04:37:19) [Clang 18.1.8 ]",
+      "numpy_version": "2.0.2",
+      "scipy_version": "1.18.1",
+      "pandas_version": "2.3.3",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "pc.prec(1.0, 0.01)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "b2119f0d99eeaf5d425436096c71e56c59a356dc59b4dd6dcb87db6e2683d210",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "donor_prior_identity_verified": true,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 196.89392645087213, \"Precision for cell\": 109.72738729975806, \"Phi for cell\": 0.32962202079927794, \"Precision for donor\": 32.69142230480707}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 518.3134620473907, \"Precision for cell\": 195.28286865512507, \"Phi for cell\": 0.24236959212022297, \"Precision for donor\": 28.599467980001837}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 5.11384667795404, \"Precision for cell\": 4.744702346061499, \"Phi for cell\": 0.020770904389806954, \"Precision for donor\": 5.184695139394801}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 70.94386026956218, \"Precision for cell\": 53.351784268843154, \"Phi for cell\": 0.27374393561779, \"Precision for donor\": 24.622886055984488}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 1186.52256040703, \"Precision for cell\": 566.6736384990913, \"Phi for cell\": 0.8628407180464523, \"Precision for donor\": 108.43375535455304}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 11.824751231715688, \"Precision for cell\": 11.864915034903131, \"Phi for cell\": 0.053373387843545866, \"Precision for donor\": 13.454941261079233}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  },
+  {
+    "scenario": "donor_condition_null",
+    "seed": 8203,
+    "difference": {
+      "posterior_mean": 2.1139883621401623e-06,
+      "posterior_sd": 5.177441696907481e-05,
+      "credible_low": -0.00010038443272319952,
+      "credible_high": 0.00010412743948740033
+    },
+    "agreement": "passed",
+    "backend": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "06a284b48d07d7f08cbfbb253c230591038df5204e739190300f0ad89c80895f",
+      "launcher_sha256": "dfee0eed5fb76557af57069370f6d137a9e36f61cdeb6d5014d7ab00764fb237",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "linux_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-linux-x86_64-v3-portable.tar.gz",
+        "installed": "2026-10-24 11:55:43"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-24T14:26:54Z\ncommit:     64260c8bd2efd6b320a8597433b99092b2ffa5f4\ncompiler:   gcc-16 (Ubuntu 16-20260315-1ubuntu1~24~ppa1) 16.0.1 20260315 (experimental) [trunk r16-8100-g3aca3bae8ee]\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -march=x86-64-v3 -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL -DINLA_WITH_CLONE_TARGETS  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER -DINLA_WITH_NUMA  -DGITCOMMIT=26.10.24-1 -DINLA_TAG='\"26.10.24-1+64260c8\"' -DINLA_WITH_MKL -I/opt/intel/oneapi/mkl/latest/include -DINLA_WITH_STILES -I/home/runner/work/r-inla/r-inla/local/stiles/include -I/home/runner/work/r-inla/r-inla/local/include.boot\nblas:       Intel MKL, static, embedded (/opt/intel/oneapi/mkl/latest/lib/intel64)\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Ubuntu 24.04.5 LTS\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.7 (main, Oct 16 2024, 04:37:19) [Clang 18.1.8 ]",
+      "numpy_version": "2.0.2",
+      "scipy_version": "1.18.1",
+      "pandas_version": "2.3.3",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "pc.prec(1.0, 0.01)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "c52a8e3551bbff92c52795d4f090a51ed211f93ad9a73592a0aaffa8f7e4c3bb",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "donor_prior_identity_verified": true,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 1500789.6195089382, \"Precision for cell\": 4.3308426985563, \"Phi for cell\": 0.34038595365299196, \"Precision for donor\": 6.891028044219334}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 64451524.68066688, \"Precision for cell\": 2.7285229618866507, \"Phi for cell\": 0.19934690440358713, \"Precision for donor\": 3.932929194552186}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 2.4785954224800464, \"Precision for cell\": 0.6625649079875366, \"Phi for cell\": 0.04071445006866476, \"Precision for donor\": 1.948275240297758}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 282.8318195341917, \"Precision for cell\": 3.7506238940748875, \"Phi for cell\": 0.31360434300950923, \"Precision for donor\": 6.020139690837852}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 1118934.3106830434, \"Precision for cell\": 10.79281506478181, \"Phi for cell\": 0.7581206645054993, \"Precision for donor\": 16.892683847078896}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 3.1026692853662303, \"Precision for cell\": 2.0655600007214825, \"Phi for cell\": 0.16348789135524402, \"Precision for donor\": 4.495919689489044}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  }
+]

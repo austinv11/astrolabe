@@ -84,6 +84,25 @@ def test_resource_limits(counts):
         fit(counts, donor_key="donor")
 
 
+@pytest.mark.parametrize("prior", [None, 1., (0., .01), (1., 0.), (1., 1.), (np.nan, .01), (1., .01, .5)])
+def test_invalid_donor_prior_rejected_before_backend(counts, monkeypatch, prior):
+    monkeypatch.setattr(_conditional, "_run_inla", lambda *args: pytest.fail("Invalid prior reached backend"))
+    with pytest.raises(ValueError, match="donor_sd_prior"):
+        fit(counts, donor_key="donor", donor_sd_prior=prior)
+
+
+def test_native_donor_prior_mismatch_rejected():
+    from astrolabe.tl._inla_worker import _check_donor_prior
+    model = {"random": [{"id": "donor", "model": "iid", "hyper": [{"prior": "pc.prec", "param": [1., .01]}]}]}
+    lines = ["!donor!", "prior = pcprec", "parameters = 1 0.01", "fixed = 0", "!INLA!"]
+    _check_donor_prior(model, lines)
+    for changed in ("parameters = 1 0.1", "prior = loggamma", "fixed = 1"):
+        key = changed.split(" = ")[0]
+        invalid = [changed if line.startswith(key + " = ") else line for line in lines]
+        with pytest.raises(RuntimeError, match="donor precision prior"):
+            _check_donor_prior(model, invalid)
+
+
 def test_categorical_design():
     frame = pd.DataFrame({"region": ["B", "A", "B", "A", "B", "A"],
                           "batch": ["y", "x", "x", "y", "y", "x"]})
@@ -254,15 +273,18 @@ assert callable(astrolabe.tl.conditional_expression)
 
 
 @pytest.mark.skipif(not os.environ.get("ASTROLABE_INLA_PYTHON"), reason="explicit optional INLA environment required")
-def test_optional_native_backend_and_direct_reference(counts, tmp_path):
+@pytest.mark.parametrize("donor_sd_prior", [(1., .01), (.7, .05)])
+def test_optional_native_backend_and_direct_reference(counts, tmp_path, donor_sd_prior):
     python = os.environ["ASTROLABE_INLA_PYTHON"]
     graph = counts.obsp["graph"].tolil()
     graph[0, 1] = graph[1, 0] = 0
     counts.obsp["graph"] = graph.tocsr()
-    result = fit(counts, donor_key="donor", python_executable=python, output_dir=tmp_path)
+    result = fit(counts, donor_key="donor", donor_sd_prior=donor_sd_prior, python_executable=python, output_dir=tmp_path)
     record = counts.uns["conditional_expression"]
     assert result.status.tolist() == ["fitted"]
     assert record["backend"]["prior_identity_verified"]
+    assert record["backend"]["donor_prior_identity_verified"]
+    assert record["parameters"]["donor_sd_prior"] == list(donor_sd_prior)
     assert record["parameters"]["n_components"] == 9  # eight cores and one isolated cell
     assert record["parameters"]["n_units"] == 8
     assert record["parameters"]["n_donors"] == 4
@@ -280,13 +302,14 @@ from scipy import sparse
 import pyinla
 from pyinla.pc_bym import pc_bym_phi
 p=Path(sys.argv[1]); a=np.load(p/'inputs.npz'); g=sparse.load_npz(p/'graph.npz')
+donor_prior=json.loads((p/'config.json').read_text())['donor_sd_prior']
 prior=pc_bym_phi(graph=g.toarray(),alpha=.5,u=.5,scale_model=True,adjust_for_con_comp=True,return_as_table=True)
 t=np.column_stack([prior['theta'],prior['logprior']])
 data=pd.DataFrame({'target':a['design'][:,0],'y':a['counts'][:,0],'cell':np.arange(1,g.shape[0]+1),'donor':a['donor']})
 model={'response':'y','fixed':['1','target'],'random':[
  {'id':'cell','model':'bym2','graph':g,'scale.model':True,'adjust.for.con.comp':True,
   'hyper':[{}, {'prior':'table: '+' '.join(format(v,'.17g') for v in t.ravel(order='F'))}]},
- {'id':'donor','model':'iid'}]}
+ {'id':'donor','model':'iid','hyper':[{'prior':'pc.prec','param':donor_prior}]}]}
 r=pyinla.pyinla(model=model,family='nbinomial',data=data,offset=a['offset'],num_threads=1,
  control={'inla':{'strategy':'simplified.laplace','int.strategy':'ccd'}})
 (p/'direct.json').write_text(json.dumps(r.summary_fixed.loc['target'].to_dict()))

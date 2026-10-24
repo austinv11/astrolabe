@@ -36,14 +36,22 @@ def main():
         result = summary(subset)
         result["by_donor_count"] = {str(n): summary([row for row in subset if row["n_donors"] == n])
                                     for n in sorted({row["n_donors"] for row in subset})}
+        if all("simulation_parameters" in row for row in subset):
+            result["by_simulation_parameter"] = {
+                parameter: {str(value): summary([row for row in subset
+                    if row["simulation_parameters"][parameter] == value])
+                    for value in sorted({row["simulation_parameters"][parameter] for row in subset})}
+                for parameter in sorted(subset[0]["simulation_parameters"])}
         if prior != "default":
             baseline = {row["seed"]: row for row in rows if row["scenario"] == scenario and row["prior"] == "default" and row["status"] == "fitted"}
             paired = [row for row in subset if row["status"] == "fitted" and row["seed"] in baseline]
             result["paired_to_default"] = {
                 "n": len(paired),
-                "max_absolute_mean_change": max(abs(row["posterior_mean"] - baseline[row["seed"]]["posterior_mean"]) for row in paired),
-                "max_absolute_sd_change": max(abs(row["posterior_sd"] - baseline[row["seed"]]["posterior_sd"]) for row in paired),
-                "zero_exclusion_changes": sum(row["excludes_zero"] != baseline[row["seed"]]["excludes_zero"] for row in paired)}
+                "max_absolute_mean_change": max((abs(row["posterior_mean"] - baseline[row["seed"]]["posterior_mean"]) for row in paired), default=None),
+                "max_absolute_sd_change": max((abs(row["posterior_sd"] - baseline[row["seed"]]["posterior_sd"]) for row in paired), default=None),
+                "zero_exclusion_changes": sum(row["excludes_zero"] != baseline[row["seed"]]["excludes_zero"] for row in paired),
+                "coverage_gained": sum(row["covered"] and not baseline[row["seed"]]["covered"] for row in paired),
+                "coverage_lost": sum(not row["covered"] and baseline[row["seed"]]["covered"] for row in paired)}
         data["summary"][scenario + "/" + prior] = result
     args.output.write_text(json.dumps(data, indent=2) + "\n")
     print(json.dumps(data["summary"], indent=2))

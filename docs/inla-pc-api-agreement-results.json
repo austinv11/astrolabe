@@ -1,0 +1,137 @@
+[
+  {
+    "scenario": "donor_condition_null",
+    "seed": 8201,
+    "difference": {
+      "posterior_mean": 2.4871310472240893e-06,
+      "posterior_sd": -9.107314899475805e-06,
+      "credible_low": 1.640994004309393e-05,
+      "credible_high": -1.4449832933971507e-05
+    },
+    "agreement": "passed",
+    "backend": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "launcher_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "windows_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-windows-x86_64.zip",
+        "installed": "2026-10-24 09:06:54"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-20T03:37:05Z\ncommit:     unknown\ncompiler:   x86_64-w64-mingw32ucrt-gcc (GCC) 16.2.1 20260819 (Fedora MinGW 16.2.1-1.fc44)\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER  -DGITCOMMIT=26.10.20 -DINLA_TAG='\"26.10.20+unknown\"'  -I/opt/mingw-deps/include -I/opt/mingw-deps/R-win/include -I/__w/r-inla/r-inla/local-win/include.boot -DINLA_WITH_STILES -I/__w/r-inla/r-inla/local-win/stiles/include\nblas:       OpenBLAS 0.3.29, static, runtime CPU dispatch\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Fedora Linux 44 (Container Image)\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.12 (main, Dec  9 2025, 19:02:55) [MSC v.1944 64 bit (AMD64)]",
+      "numpy_version": "2.0.2",
+      "scipy_version": "1.18.1",
+      "pandas_version": "2.3.3",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "pc.prec(1.0, 0.01)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "d83977cb22a20388827922557147498ce097864c70e0275a8f545c850fb51743",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "donor_prior_identity_verified": true,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 9268.889421090975, \"Precision for cell\": 4.744282533315575, \"Phi for cell\": 0.2296706946214471, \"Precision for donor\": 116.21556434045283}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 169755.2783171918, \"Precision for cell\": 1.749880471764364, \"Phi for cell\": 0.16737472266853573, \"Precision for donor\": 293.73548953748536}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 5.091349209357776, \"Precision for cell\": 1.8908152768769009, \"Phi for cell\": 0.020296470375136107, \"Precision for donor\": 4.08465400757826}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 148.99227872835306, \"Precision for cell\": 4.536063797070301, \"Phi for cell\": 0.18869488204812176, \"Precision for donor\": 44.23096121465839}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 39818.4449738398, \"Precision for cell\": 8.603199054103879, \"Phi for cell\": 0.637279592633327, \"Precision for donor\": 686.3557217162445}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 9.55429954275594, \"Precision for cell\": 4.148783519376754, \"Phi for cell\": 0.062303656401540744, \"Precision for donor\": 9.850684088454786}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  },
+  {
+    "scenario": "donor_condition_null",
+    "seed": 8202,
+    "difference": {
+      "posterior_mean": -4.871789838212237e-08,
+      "posterior_sd": -4.6573023387841417e-07,
+      "credible_low": 7.215265912519087e-07,
+      "credible_high": -7.519625587759649e-07
+    },
+    "agreement": "passed",
+    "backend": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "launcher_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "windows_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-windows-x86_64.zip",
+        "installed": "2026-10-24 09:06:54"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-20T03:37:05Z\ncommit:     unknown\ncompiler:   x86_64-w64-mingw32ucrt-gcc (GCC) 16.2.1 20260819 (Fedora MinGW 16.2.1-1.fc44)\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER  -DGITCOMMIT=26.10.20 -DINLA_TAG='\"26.10.20+unknown\"'  -I/opt/mingw-deps/include -I/opt/mingw-deps/R-win/include -I/__w/r-inla/r-inla/local-win/include.boot -DINLA_WITH_STILES -I/__w/r-inla/r-inla/local-win/stiles/include\nblas:       OpenBLAS 0.3.29, static, runtime CPU dispatch\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Fedora Linux 44 (Container Image)\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.12 (main, Dec  9 2025, 19:02:55) [MSC v.1944 64 bit (AMD64)]",
+      "numpy_version": "2.0.2",
+      "scipy_version": "1.18.1",
+      "pandas_version": "2.3.3",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "pc.prec(1.0, 0.01)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "fdd1788a382ced96657627a0b72cbfd5ce28b23b5c211a01b17d4e0effd83cd8",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "donor_prior_identity_verified": true,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 196.78769907058702, \"Precision for cell\": 109.74076219072154, \"Phi for cell\": 0.32962465911416333, \"Precision for donor\": 32.69093711976226}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 517.8191397438492, \"Precision for cell\": 195.31154926322503, \"Phi for cell\": 0.24235924270242365, \"Precision for donor\": 28.597779967169902}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 5.11467623847275, \"Precision for cell\": 4.745661624630682, \"Phi for cell\": 0.020777443798392494, \"Precision for donor\": 5.184475448011699}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 70.9305530086368, \"Precision for cell\": 53.357809691133305, \"Phi for cell\": 0.27375284240955744, \"Precision for donor\": 24.6230184084945}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 1185.7248423071337, \"Precision for cell\": 566.7474744654473, \"Phi for cell\": 0.8628242649294836, \"Precision for donor\": 108.42863116803791}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 11.82802438249276, \"Precision for cell\": 11.867437256067696, \"Phi for cell\": 0.053399339952254016, \"Precision for donor\": 13.45487931075578}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  },
+  {
+    "scenario": "donor_condition_null",
+    "seed": 8203,
+    "difference": {
+      "posterior_mean": 6.899173317642671e-07,
+      "posterior_sd": 2.742402479244399e-05,
+      "credible_low": -5.520140472914381e-05,
+      "credible_high": 5.7373402607308055e-05
+    },
+    "agreement": "passed",
+    "backend": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "launcher_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "windows_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-windows-x86_64.zip",
+        "installed": "2026-10-24 09:06:54"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-20T03:37:05Z\ncommit:     unknown\ncompiler:   x86_64-w64-mingw32ucrt-gcc (GCC) 16.2.1 20260819 (Fedora MinGW 16.2.1-1.fc44)\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER  -DGITCOMMIT=26.10.20 -DINLA_TAG='\"26.10.20+unknown\"'  -I/opt/mingw-deps/include -I/opt/mingw-deps/R-win/include -I/__w/r-inla/r-inla/local-win/include.boot -DINLA_WITH_STILES -I/__w/r-inla/r-inla/local-win/stiles/include\nblas:       OpenBLAS 0.3.29, static, runtime CPU dispatch\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Fedora Linux 44 (Container Image)\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.12 (main, Dec  9 2025, 19:02:55) [MSC v.1944 64 bit (AMD64)]",
+      "numpy_version": "2.0.2",
+      "scipy_version": "1.18.1",
+      "pandas_version": "2.3.3",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "pc.prec(1.0, 0.01)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "6cc6848e6383ace66708a17dc2fc52e16d5c9e7955e32908afd5291163bb4d5b",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "donor_prior_identity_verified": true,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 1371792.4302292285, \"Precision for cell\": 4.339236293775842, \"Phi for cell\": 0.34073421717503133, \"Precision for donor\": 6.890976041688269}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 58478652.759201206, \"Precision for cell\": 2.7357140761900833, \"Phi for cell\": 0.19942359196803902, \"Precision for donor\": 3.9334200473853267}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 2.473084533275299, \"Precision for cell\": 0.6637765080001621, \"Phi for cell\": 0.0408334876665458, \"Precision for donor\": 1.946695112429024}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 277.44654815386986, \"Precision for cell\": 3.756736532532338, \"Phi for cell\": 0.31400105952830526, \"Precision for donor\": 6.02015363592271}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 1054757.319038068, \"Precision for cell\": 10.821396411524763, \"Phi for cell\": 0.758536485596851, \"Precision for donor\": 16.893015502098216}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 3.1055452426476435, \"Precision for cell\": 2.068581604964316, \"Phi for cell\": 0.16410668729810368, \"Precision for donor\": 4.495111487351815}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  }
+]

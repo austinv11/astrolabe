@@ -153,6 +153,10 @@ prepared external Python 3.12 interpreter. Ordinary imports never load pyINLA;
 the adapter never installs packages or downloads an engine. Supply counts,
 positive exposures, a prespecified target/covariates and a symmetric binary
 graph without cross-core edges. Donor IDs can connect the same donor's independent
-cores through a shared intercept. Results are Bayesian credible intervals and
-posterior sign probabilities, not p-values. The integration is experimental and
+cores through a shared intercept. The donor SD prior is explicit:
+`donor_sd_prior=(1, .01)` specifies a 1% prior
+probability of SD exceeding 1 on the log-expression scale. Choose this scale
+using the study context and assess sensitivity, especially with few donors.
+Results include Bayesian credible intervals and posterior sign probabilities,
+not p-values. The integration is experimental and
 bounded to small dense-prior problems. See [installation, examples and limitations](g5-inla-proposal.md).

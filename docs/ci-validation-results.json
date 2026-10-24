@@ -1,0 +1,104 @@
+{
+  "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286",
+  "headSha": "4d36a3cfbeaf8ed4eec0d34ab04feba551f22eac",
+  "status": "completed",
+  "conclusion": "success",
+  "jobs": [
+    {
+      "name": "wheel",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146117",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:27:13Z"
+    },
+    {
+      "name": "spatialdata (windows-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146236",
+      "startedAt": "2026-10-24T16:26:14Z",
+      "completedAt": "2026-10-24T16:27:28Z"
+    },
+    {
+      "name": "spatial-inference-install (ubuntu-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146243",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:27:45Z"
+    },
+    {
+      "name": "test (windows-latest, 3.12, dev)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146270",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:30:32Z"
+    },
+    {
+      "name": "spatialdata (ubuntu-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146274",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:26:58Z"
+    },
+    {
+      "name": "spatial-inference-install (windows-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146289",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:28:54Z"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.12, dev,cohort,communication)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146303",
+      "startedAt": "2026-10-24T16:26:14Z",
+      "completedAt": "2026-10-24T16:29:00Z"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.13, dev)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146315",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:29:14Z"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.12, dev)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146335",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:29:23Z"
+    },
+    {
+      "name": "test (windows-latest, 3.12, dev,cohort,communication)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146350",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:29:57Z"
+    },
+    {
+      "name": "test (windows-latest, 3.13, dev)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146369",
+      "startedAt": "2026-10-24T16:26:14Z",
+      "completedAt": "2026-10-24T16:29:01Z"
+    },
+    {
+      "name": "test (windows-latest, 3.13, dev,cohort,communication)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146386",
+      "startedAt": "2026-10-24T16:26:14Z",
+      "completedAt": "2026-10-24T16:30:29Z"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.13, dev,cohort,communication)",
+      "conclusion": "success",
+      "url": "https://github.com/austinv11/astrolabe/actions/runs/40111547286/job/120924146417",
+      "startedAt": "2026-10-24T16:26:15Z",
+      "completedAt": "2026-10-24T16:29:14Z"
+    }
+  ],
+  "initial_failure": {
+    "run": "https://github.com/austinv11/astrolabe/actions/runs/40110934297",
+    "cause": "Windows Git CRLF conversion changed the byte checksum of experiment.xenium",
+    "fix": "Preserve vendor fixture bytes using .gitattributes; original checksums unchanged"
+  }
+}

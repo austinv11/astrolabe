@@ -1,0 +1,143 @@
+{
+  "backend": "pyINLA 0.1.11",
+  "seed": 811,
+  "n_cells": 96,
+  "n_cores": 8,
+  "n_donors": 4,
+  "gaussian": {
+    "direct": {
+      "mean": {
+        "(Intercept)": 1.1031206683612478,
+        "x": 0.5012380706289656
+      },
+      "sd": {
+        "(Intercept)": 0.10282466942566112,
+        "x": 0.04822332545930156
+      },
+      "0.025quant": {
+        "(Intercept)": 0.9015880195647151,
+        "x": 0.40672208951398114
+      },
+      "0.5quant": {
+        "(Intercept)": 1.1031206683612478,
+        "x": 0.5012380706289656
+      },
+      "0.975quant": {
+        "(Intercept)": 1.3046533171577803,
+        "x": 0.5957540517439501
+      },
+      "mode": {
+        "(Intercept)": 1.1031206683612478,
+        "x": 0.5012380706289656
+      },
+      "kld": {
+        "(Intercept)": 0.0,
+        "x": 1.0405892299810564e-14
+      }
+    },
+    "analytic_mean": [
+      1.1031206683612895,
+      0.501239181410331
+    ],
+    "analytic_sd": [
+      0.10282468899377556,
+      0.048230631595018725
+    ],
+    "max_mean_error": 1.1107813653321585e-06,
+    "max_sd_error": 7.306135717165263e-06
+  },
+  "engine": {
+    "version": "latest",
+    "platform": "linux_x86_64",
+    "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-linux-x86_64-v3-portable.tar.gz",
+    "installed": "2026-10-24 11:55:43"
+  },
+  "engine_sha256": "06a284b48d07d7f08cbfbb253c230591038df5204e739190300f0ad89c80895f",
+  "launcher_sha256": "dfee0eed5fb76557af57069370f6d137a9e36f61cdeb6d5014d7ab00764fb237",
+  "build_info": "== inla build ==\ndate:       2026-10-24T14:26:54Z\ncommit:     64260c8bd2efd6b320a8597433b99092b2ffa5f4\ncompiler:   gcc-16 (Ubuntu 16-20260315-1ubuntu1~24~ppa1) 16.0.1 20260315 (experimental) [trunk r16-8100-g3aca3bae8ee]\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -march=x86-64-v3 -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL -DINLA_WITH_CLONE_TARGETS  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER -DINLA_WITH_NUMA  -DGITCOMMIT=26.10.24-1 -DINLA_TAG='\"26.10.24-1+64260c8\"' -DINLA_WITH_MKL -I/opt/intel/oneapi/mkl/latest/include -DINLA_WITH_STILES -I/home/runner/work/r-inla/r-inla/local/stiles/include -I/home/runner/work/r-inla/r-inla/local/include.boot\nblas:       Intel MKL, static, embedded (/opt/intel/oneapi/mkl/latest/lib/intel64)\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Ubuntu 24.04.5 LTS\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+  "donor_sd_prior": [
+    1.0,
+    0.01
+  ],
+  "negative_binomial": {
+    "planted_effect": 0.5,
+    "fixed": {
+      "mean": {
+        "(Intercept)": 2.0340660745702883,
+        "x": 0.4049010323072809
+      },
+      "sd": {
+        "(Intercept)": 0.1018325685688256,
+        "x": 0.07216689725322209
+      },
+      "0.025quant": {
+        "(Intercept)": 1.8305067378296505,
+        "x": 0.26320436418816234
+      },
+      "0.5quant": {
+        "(Intercept)": 2.0344811569803185,
+        "x": 0.4048236278329613
+      },
+      "0.975quant": {
+        "(Intercept)": 2.2352057650050936,
+        "x": 0.5470442634069647
+      },
+      "mode": {
+        "(Intercept)": 2.0344542048342706,
+        "x": 0.40482592419197516
+      },
+      "kld": {
+        "(Intercept)": 1.042121095163771e-07,
+        "x": 1.6218393801383023e-08
+      }
+    },
+    "hyperparameters": {
+      "mean": {
+        "size for the nbinomial observations (1/overdispersion)": 46430.80465287685,
+        "Precision for cell": 5.469071596663352,
+        "Phi for cell": 0.3855540670981307,
+        "Precision for donor": 76.33576726008484
+      },
+      "sd": {
+        "size for the nbinomial observations (1/overdispersion)": 1229664.535109582,
+        "Precision for cell": 2.496739388942858,
+        "Phi for cell": 0.2351936226454108,
+        "Precision for donor": 118.1420893133147
+      },
+      "0.025quant": {
+        "size for the nbinomial observations (1/overdispersion)": 4.128242447203873,
+        "Precision for cell": 1.6831076061148689,
+        "Phi for cell": 0.04187234585918582,
+        "Precision for donor": 5.544342873307537
+      },
+      "0.5quant": {
+        "size for the nbinomial observations (1/overdispersion)": 196.77705516073732,
+        "Precision for cell": 5.076429312292576,
+        "Phi for cell": 0.3524963034559587,
+        "Precision for donor": 41.78219910248603
+      },
+      "0.975quant": {
+        "size for the nbinomial observations (1/overdispersion)": 125170.68121863093,
+        "Precision for cell": 11.185074080221408,
+        "Phi for cell": 0.8666153383758985,
+        "Precision for donor": 364.33644318671355
+      },
+      "mode": {
+        "size for the nbinomial observations (1/overdispersion)": 7.086419924048558,
+        "Precision for cell": 4.212521167693998,
+        "Phi for cell": 0.14762070581426395,
+        "Precision for donor": 14.201606333282683
+      }
+    }
+  },
+  "prior_table": {
+    "shape": [
+      10000,
+      2
+    ],
+    "exact_match": true,
+    "integrated_density": 1.0,
+    "cdf_at_phi_half": 0.5441298707251766
+  },
+  "R_loaded": false
+}
