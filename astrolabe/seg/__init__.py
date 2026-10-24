@@ -34,9 +34,13 @@ from astrolabe.seg._voronoi import voronoi_resegment
 from astrolabe.seg._segment import segment_cellpose, segment_stardist
 from astrolabe.seg._assign import assign_transcripts, create_compartment_layers
 from astrolabe.seg._eval import evaluate_segmentation
+from astrolabe.seg._audit import record_segmentation, reconstruction_qc
 from astrolabe.seg._bin2cell import assign_bins, segment_bin2cell
+from astrolabe.seg._proseg import run_proseg, import_proseg_reconstruction, select_transcript_coordinates
 
 __all__ = [
+    "record_segmentation", "reconstruction_qc",
+    "run_proseg", "import_proseg_reconstruction", "select_transcript_coordinates",
     "voronoi_resegment",
     "segment_cellpose",
     "segment_stardist",

@@ -213,7 +213,8 @@ def load_bin_counts(
     target = adata if inplace else adata.copy()
 
     if bin_mask is not None:
-        target._inplace_subset_obs(bin_mask)
+        from astrolabe._state import _subset_cells
+        _subset_cells(target, bin_mask, inplace=True)
     if gene_mask is not None:
         target._inplace_subset_var(gene_mask)
 

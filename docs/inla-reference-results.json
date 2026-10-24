@@ -1,0 +1,137 @@
+{
+  "backend": "pyINLA 0.1.11",
+  "seed": 811,
+  "n_cells": 96,
+  "n_cores": 8,
+  "n_donors": 4,
+  "gaussian": {
+    "direct": {
+      "mean": {
+        "(Intercept)": 1.1031206683612547,
+        "x": 0.49958597974015373
+      },
+      "sd": {
+        "(Intercept)": 0.10282466942565952,
+        "x": 0.048223325524515116
+      },
+      "0.025quant": {
+        "(Intercept)": 0.9015880195647252,
+        "x": 0.40506999849735303
+      },
+      "0.5quant": {
+        "(Intercept)": 1.1031206683612547,
+        "x": 0.49958597974015373
+      },
+      "0.975quant": {
+        "(Intercept)": 1.304653317157784,
+        "x": 0.5941019609829544
+      },
+      "mode": {
+        "(Intercept)": 1.1031206683612547,
+        "x": 0.49958597974015373
+      },
+      "kld": {
+        "(Intercept)": 0.0,
+        "x": 0.0
+      }
+    },
+    "analytic_mean": [
+      1.10312066836129,
+      0.4995866383962072
+    ],
+    "analytic_sd": [
+      0.10282468899377556,
+      0.048230631595018725
+    ],
+    "max_mean_error": 6.586560534760366e-07,
+    "max_sd_error": 7.306070503608486e-06
+  },
+  "engine": {
+    "version": "latest",
+    "platform": "windows_x86_64",
+    "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-windows-x86_64.zip",
+    "installed": "2026-10-24 09:06:54"
+  },
+  "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+  "negative_binomial": {
+    "planted_effect": 0.5,
+    "fixed": {
+      "mean": {
+        "(Intercept)": 2.1446783387315937,
+        "x": 0.4233590150588067
+      },
+      "sd": {
+        "(Intercept)": 0.10258022588423407,
+        "x": 0.06067996947791058
+      },
+      "0.025quant": {
+        "(Intercept)": 1.9395082385679285,
+        "x": 0.30480685183518963
+      },
+      "0.5quant": {
+        "(Intercept)": 2.145403329685035,
+        "x": 0.42312562582152136
+      },
+      "0.975quant": {
+        "(Intercept)": 2.3456603296470404,
+        "x": 0.5432848240109144
+      },
+      "mode": {
+        "(Intercept)": 2.145373906082908,
+        "x": 0.42314155470606474
+      },
+      "kld": {
+        "(Intercept)": 9.502782695168543e-08,
+        "x": 1.3233995445627322e-08
+      }
+    },
+    "hyperparameters": {
+      "mean": {
+        "size for the nbinomial observations (1/overdispersion)": 149.33310973611958,
+        "Precision for cell": 57.185279690008855,
+        "Phi for cell": 0.2966002590585756,
+        "Precision for donor": 62.61258490176687
+      },
+      "sd": {
+        "size for the nbinomial observations (1/overdispersion)": 1191.2618184691755,
+        "Precision for cell": 261.82512003937205,
+        "Phi for cell": 0.2389388200143234,
+        "Precision for donor": 75.30136472684165
+      },
+      "0.025quant": {
+        "size for the nbinomial observations (1/overdispersion)": 0.3828117006121419,
+        "Precision for cell": 0.2383060620819117,
+        "Phi for cell": 0.013151579576282584,
+        "Precision for donor": 6.942721724427405
+      },
+      "0.5quant": {
+        "size for the nbinomial observations (1/overdispersion)": 16.949984096261346,
+        "Precision for cell": 11.176972652098137,
+        "Phi for cell": 0.23097597348482143,
+        "Precision for donor": 40.1422386409094
+      },
+      "0.975quant": {
+        "size for the nbinomial observations (1/overdispersion)": 1023.7749514341502,
+        "Precision for cell": 393.61696192536346,
+        "Phi for cell": 0.8456295777540043,
+        "Precision for donor": 257.5352734500836
+      },
+      "mode": {
+        "size for the nbinomial observations (1/overdispersion)": 0.44545551545750106,
+        "Precision for cell": 0.23518791445321777,
+        "Phi for cell": 0.027560612874884736,
+        "Precision for donor": 17.69879197079803
+      }
+    }
+  },
+  "prior_table": {
+    "shape": [
+      10000,
+      2
+    ],
+    "exact_match": true,
+    "integrated_density": 1.0,
+    "cdf_at_phi_half": 0.5441298707251766
+  },
+  "R_loaded": false
+}

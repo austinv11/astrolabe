@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from copy import deepcopy
 
 import anndata as ad
 import mudata as md
@@ -29,6 +30,8 @@ def _prefix_transcripts_table(table: pa.Table, lib_id: str, index_unique: str, l
         )
         table = table.set_column(table.schema.get_field_index("cell_id"), "cell_id", prefixed_ids)
     lib_col = pa.array([lib_id] * table.num_rows, type=pa.string())
+    if library_id_key in table.column_names:
+        return table.set_column(table.schema.get_field_index(library_id_key), library_id_key, lib_col)
     return table.append_column(library_id_key, lib_col)
 
 
@@ -80,8 +83,9 @@ def concat_samples(
     ``obs[library_id_key]`` column is added so downstream functions can
     identify which sample each cell belongs to.
 
-    ``uns['spatial']`` entries are unioned across all samples so that
-    per-sample image and coordinate metadata are preserved.  Awkward ragged
+    Dictionary keys consistently alias observation labels, spatial metadata,
+    transcripts, and cell IDs. Spatial descriptors are copied without changing
+    the inputs. Ambiguous or multi-library inputs are rejected. Awkward ragged
     arrays in ``obsm`` (cell/nucleus boundaries) are concatenated via
     anndata's built-in awkward support (experimental but verified correct).
 
@@ -165,7 +169,7 @@ def concat_samples(
                 raise ValueError(
                     f"One of the input MuData objects already contains multiple libraries "
                     f"{ids}. concat_samples expects single-sample inputs. "
-                    "Pass a dict mapping library_id → MuData instead, or pre-filter."
+                    "Provide a separate single-library object for each sample."
                 )
             lib_id = ids[0]
             if lib_id in id_to_mdata:
@@ -209,6 +213,14 @@ def concat_samples(
 
         adata = mdata[mod].copy()
 
+        parent_spatial = mdata.uns.get("spatial", {})
+        lib_spatial = adata.uns.get("spatial", {})
+        if len(set(parent_spatial) | set(lib_spatial)) > 1:
+            raise ValueError("Each input must represent a single library with consistent spatial metadata")
+        for obj in (mdata, adata):
+            if library_id_key in obj.obs and obj.obs[library_id_key].nunique(dropna=False) > 1:
+                raise ValueError("Each input must represent a single library")
+
         # Add library_id obs column
         adata.obs[library_id_key] = lib_id
 
@@ -218,16 +230,11 @@ def concat_samples(
             name=adata.obs_names.name,
         )
 
-        # Collect uns['spatial'] — union all library entries
-        lib_spatial = adata.uns.get("spatial", {})
-        for key, val in lib_spatial.items():
-            if key in spatial_uns_merged:
-                log.warning(
-                    "concat_samples: spatial key '%s' already present; overwriting. "
-                    "Ensure each sample has a unique library_id.",
-                    key,
-                )
-            spatial_uns_merged[key] = val
+        # The explicit alias names the same library in observations, images,
+        # and transcripts. Copy parent-only descriptors to retain input ownership.
+        source_spatial = lib_spatial or parent_spatial
+        if source_spatial:
+            spatial_uns_merged[lib_id] = deepcopy(next(iter(source_spatial.values())))
 
         # uns['transcripts'] is a per-sample pyarrow.Table (raw parquet rows) --
         # ad.concat's uns_merge='unique' would silently drop it the moment any
@@ -235,6 +242,8 @@ def concat_samples(
         # merge it explicitly below instead.
         transcripts = adata.uns.get("transcripts")
         if transcripts is not None:
+            if library_id_key in transcripts.column_names and len(transcripts[library_id_key].unique()) > 1:
+                raise ValueError("Each input transcript table must represent a single library")
             transcripts_by_lib[lib_id] = _prefix_transcripts_table(
                 transcripts, lib_id, index_unique, library_id_key
             )
@@ -281,6 +290,7 @@ def concat_samples(
         {lib: concat_adata.var_names.isin(features) for lib, features in zip(id_to_mdata, gene_sets)},
         index=concat_adata.var_names,
     )
+    concat_adata.uns["measured_features_library_key"] = library_id_key
     concat_adata.uns["spatial"] = spatial_uns_merged
     concat_adata.uns[UNS_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
 

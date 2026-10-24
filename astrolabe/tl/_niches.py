@@ -11,7 +11,7 @@ from astrolabe.tl._spatial_stats import _get_conn_matrix
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
 def niche_composition(adata: ad.AnnData, groupby: str, *, neighbors_key="spatial_neighbors",
-                      library_key="library_id", key_added="niche_composition"):
+                      library_key="auto", key_added="niche_composition"):
     """Store non-self, one-hop cell-type fractions as CSR in ``obsm``.
 
     Edges are binary and libraries are isolated even for a supplied graph.
@@ -22,6 +22,13 @@ def niche_composition(adata: ad.AnnData, groupby: str, *, neighbors_key="spatial
     conn = _get_conn_matrix(adata, neighbors_key).tocsr(copy=True)
     conn.setdiag(0); conn.eliminate_zeros()
     conn.data[:] = 1
+    from astrolabe._spatial_units import _unit_keys
+    library_key, core_key = _unit_keys(adata, library_key, "auto", neighbors_key)
+    if core_key is not None:
+        coo = conn.tocoo()
+        labels = adata.obs[core_key].to_numpy()
+        keep = labels[coo.row] == labels[coo.col]
+        conn = sp.csr_matrix((coo.data[keep], (coo.row[keep], coo.col[keep])), shape=conn.shape)
     if library_key is not None and library_key in adata.obs:
         if adata.obs[library_key].isna().any():
             raise ValueError("missing library labels")
@@ -42,7 +49,7 @@ def niche_composition(adata: ad.AnnData, groupby: str, *, neighbors_key="spatial
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
 def niches(adata: ad.AnnData, groupby: str, *, neighbors_key="spatial_neighbors",
-           library_key="library_id", n_neighbors=15, resolution=1., seed=0,
+           library_key="auto", n_neighbors=15, resolution=1., seed=0,
            key_added="niches"):
     """Joint Leiden clustering of variance-scaled neighborhood compositions.
 

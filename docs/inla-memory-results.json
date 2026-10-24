@@ -1,0 +1,116 @@
+{
+  "seeds": [
+    2201,
+    2201
+  ],
+  "nominal_credible_level": 0.95,
+  "interpretation": "Limited calibration screen; 20 replicates cannot establish 95% coverage. Misassignment is an explicit model-violation stress test.",
+  "summary": {
+    "smooth_null": {
+      "attempted": 0,
+      "fitted": 0,
+      "failures": 0
+    },
+    "planted_distance": {
+      "attempted": 1,
+      "fitted": 1,
+      "failures": 0,
+      "covered": {
+        "rate": 1.0,
+        "exact_95_interval": [
+          0.025000000000000022,
+          1.0
+        ]
+      },
+      "excludes_zero": {
+        "rate": 1.0,
+        "exact_95_interval": [
+          0.025000000000000022,
+          1.0
+        ]
+      },
+      "mean_bias": -0.05221686400751846,
+      "mean_seconds": 17.13918030000059
+    },
+    "unequal_core_sizes": {
+      "attempted": 0,
+      "fitted": 0,
+      "failures": 0
+    },
+    "donor_condition": {
+      "attempted": 0,
+      "fitted": 0,
+      "failures": 0
+    },
+    "donor_condition_null": {
+      "attempted": 0,
+      "fitted": 0,
+      "failures": 0
+    },
+    "regional_confounding": {
+      "attempted": 0,
+      "fitted": 0,
+      "failures": 0
+    },
+    "transcript_misassignment": {
+      "attempted": 0,
+      "fitted": 0,
+      "failures": 0
+    }
+  },
+  "runs": [
+    {
+      "scenario": "planted_distance",
+      "seed": 2201,
+      "truth": 0.5,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.44778313599248154,
+      "posterior_sd": 0.05103081673101871,
+      "credible_low": 0.3477283332373061,
+      "credible_high": 0.5479985658920581,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "n_cells": 144,
+      "n_donors": 8,
+      "covered": true,
+      "excludes_zero": true,
+      "parent_rss_bytes": 291422208,
+      "backend_summed_rss_bytes": 225222656,
+      "seconds": 17.13918030000059
+    }
+  ],
+  "backends": {
+    "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb": {
+      "method": "negative-binomial BYM2/INLA",
+      "pyinla_version": "0.1.11",
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "engine_metadata": {
+        "version": "latest",
+        "platform": "windows_x86_64",
+        "url": "https://github.com/hrue/r-inla/releases/latest/download/inla-windows-x86_64.zip",
+        "installed": "2026-10-24 09:06:54"
+      },
+      "build_info": "== inla build ==\ndate:       2026-10-20T03:37:05Z\ncommit:     unknown\ncompiler:   x86_64-w64-mingw32ucrt-gcc (GCC) 16.2.1 20260819 (Fedora MinGW 16.2.1-1.fc44)\nflags:      -O3 -ftree-vectorize -funroll-loops -fvariable-expansion-in-unroller -ftracer -flto=auto -ffat-lto-objects -mtune=generic -pipe -pthread -Wall -Wextra  -fopenmp -fopenmp-simd -flax-vector-conversions  -DINLA_WITH_SIMDE -DINLA_WITH_DEVEL  -DINLA_WITH_EXTERNAL_PACKAGES -DINLA_WITH_MUPARSER  -DGITCOMMIT=26.10.20 -DINLA_TAG='\"26.10.20+unknown\"'  -I/opt/mingw-deps/include -I/opt/mingw-deps/R-win/include -I/__w/r-inla/r-inla/local-win/include.boot -DINLA_WITH_STILES -I/__w/r-inla/r-inla/local-win/stiles/include\nblas:       OpenBLAS 0.3.29, static, runtime CPU dispatch\nlibstiles:  Version_2026.10.19\nos:         Linux x86_64 Fedora Linux 44 (Container Image)\n\n== shared toolchain file (ci/toolchain.env) ==\nGCC_PREFER=\"${GCC_PREFER-16}\"\nGCC_TOOLSET=\"15\"\nMINGW_TRIPLET=\"x86_64-w64-mingw32ucrt\"\nMINGW_GCC_VERSION=\"16.2.1\"\nMINGW_FEDORA_IMAGE=\"fedora:44\"\nMARCH_X86_MODERN=\"-march=x86-64-v3 -mtune=generic\"\nMARCH_ARM_MODERN=\"-march=armv8.2-a -mtune=neoverse-n1\"\nMARCH_ARM_SVE2=\"-march=armv9-a+sve2 -mtune=neoverse-v2\"\nX86_ISA_FLOOR=avx2\nSTILES_MARCH_X86=avx2\nSTILES_MARCH_ARM=armv82\nOPT_LEVEL=3\nUSE_LTO=1\nOPENMP_RUNTIME=gomp\nSTATIC_LIBSTDCXX=1\nARMPL_VERSION=26.07\nOPENBLAS_VERSION=0.3.29\nMIMALLOC_VERSION=v3.5.0\nGLIBC_FLOOR_CLASSIC=2.28\nGLIBC_FLOOR_MODERN=2.39\nMACOS_DEPLOYMENT_TARGET=11.0\n",
+      "python_version": "3.12.12 (main, Dec  9 2025, 19:02:55) [MSC v.1944 64 bit (AMD64)]",
+      "numpy_version": "2.0.2",
+      "strategy": "simplified.laplace",
+      "integration": "ccd",
+      "num_threads": 1,
+      "priors": {
+        "bym2_precision": "pc.prec(1, 0.01)",
+        "bym2_phi": "pc(u=0.5, alpha=0.5)",
+        "donor_precision": "loggamma(1, 0.00005)",
+        "nb_size": "pc.mgamma(7)",
+        "intercept": "flat",
+        "fixed_effects": "normal(mean=0, precision=0.001)"
+      },
+      "prior_table_sha256": "8f9f25da745d2c08a485234abba44be705f816f8dd15e4c3fcf087e326a8976f",
+      "prior_identity_verified": true,
+      "n_fitted": 1,
+      "hyperparameter_summaries_json": "[{\"gene\": \"gene\", \"summary\": {\"mean\": {\"size for the nbinomial observations (1/overdispersion)\": 5.474333171200534, \"Precision for cell\": 339.56984359189, \"Phi for cell\": 0.40245868243728244, \"Precision for donor\": 8.551310461045068}, \"sd\": {\"size for the nbinomial observations (1/overdispersion)\": 1.967587735600892, \"Precision for cell\": 2051.4772773045643, \"Phi for cell\": 0.2560900528290877, \"Precision for donor\": 4.845403617221644}, \"0.025quant\": {\"size for the nbinomial observations (1/overdispersion)\": 2.3388552184047757, \"Precision for cell\": 3.565648432664403, \"Phi for cell\": 0.03490915373338546, \"Precision for donor\": 2.4633286367250466}, \"0.5quant\": {\"size for the nbinomial observations (1/overdispersion)\": 5.224231381122521, \"Precision for cell\": 54.28379608677577, \"Phi for cell\": 0.365854720554709, \"Precision for donor\": 7.47897473245181}, \"0.975quant\": {\"size for the nbinomial observations (1/overdispersion)\": 9.951702346125645, \"Precision for cell\": 2315.8350015612773, \"Phi for cell\": 0.9081176294873434, \"Precision for donor\": 20.881074966308162}, \"mode\": {\"size for the nbinomial observations (1/overdispersion)\": 4.758354533331135, \"Precision for cell\": 7.635225541531687, \"Phi for cell\": 0.10826844043676033, \"Precision for donor\": 5.6168621667043235}}}]",
+      "inference": "Bayesian; no p-values or BH adjustment"
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "backend": "Proseg 3.2.0",
+  "simulation_seed": 284,
+  "backend_seed": "not supported",
+  "reduced": [
+    {
+      "case": "clean_diffusion_False",
+      "n_input": 2880,
+      "initial_correct_fraction": 1.0,
+      "correct_fraction_all_input": 0.7649305555555556,
+      "foreground_fraction": 0.7649305555555556,
+      "marker_leakage_fraction_all_markers": 0.0,
+      "true_boundary_gene_correct_fraction": 0.8125
+    },
+    {
+      "case": "clean_diffusion_True",
+      "n_input": 2880,
+      "initial_correct_fraction": 1.0,
+      "correct_fraction_all_input": 0.9430555555555555,
+      "foreground_fraction": 0.9454861111111111,
+      "marker_leakage_fraction_all_markers": 0.0,
+      "true_boundary_gene_correct_fraction": 0.9322916666666666
+    },
+    {
+      "case": "displaced_diffusion_False",
+      "n_input": 2880,
+      "initial_correct_fraction": 0.8333333333333334,
+      "correct_fraction_all_input": 0.609375,
+      "foreground_fraction": 0.6826388888888889,
+      "marker_leakage_fraction_all_markers": 0.06845238095238096,
+      "true_boundary_gene_correct_fraction": 0.5572916666666666
+    },
+    {
+      "case": "displaced_diffusion_True",
+      "n_input": 2880,
+      "initial_correct_fraction": 0.8333333333333334,
+      "correct_fraction_all_input": 0.7795138888888888,
+      "foreground_fraction": 0.8958333333333334,
+      "marker_leakage_fraction_all_markers": 0.10615079365079365,
+      "true_boundary_gene_correct_fraction": 0.6614583333333334
+    }
+  ],
+  "full": [
+    {
+      "case": "clean_diffusion_False",
+      "schedule": "full",
+      "elapsed_seconds": 1.1886169999925187,
+      "n_input": 2880,
+      "initial_correct_fraction": 1.0,
+      "correct_fraction_all_input": 0.8798611111111111,
+      "foreground_fraction": 0.8805555555555555,
+      "marker_leakage_fraction_all_markers": 0.000496031746031746,
+      "true_boundary_gene_correct_fraction": 0.890625
+    },
+    {
+      "case": "clean_diffusion_True",
+      "schedule": "full",
+      "elapsed_seconds": 1.3255805999942822,
+      "n_input": 2880,
+      "initial_correct_fraction": 1.0,
+      "correct_fraction_all_input": 0.9375,
+      "foreground_fraction": 0.9427083333333334,
+      "marker_leakage_fraction_all_markers": 0.0,
+      "true_boundary_gene_correct_fraction": 0.8958333333333334
+    },
+    {
+      "case": "displaced_diffusion_False",
+      "schedule": "full",
+      "elapsed_seconds": 1.2418448000098579,
+      "n_input": 2880,
+      "initial_correct_fraction": 0.8333333333333334,
+      "correct_fraction_all_input": 0.7003472222222222,
+      "foreground_fraction": 0.8003472222222222,
+      "marker_leakage_fraction_all_markers": 0.09375,
+      "true_boundary_gene_correct_fraction": 0.6770833333333334
+    },
+    {
+      "case": "displaced_diffusion_True",
+      "schedule": "full",
+      "elapsed_seconds": 3.9139483000035398,
+      "n_input": 2880,
+      "initial_correct_fraction": 0.8333333333333334,
+      "correct_fraction_all_input": 0.7826388888888889,
+      "foreground_fraction": 0.9184027777777778,
+      "marker_leakage_fraction_all_markers": 0.11904761904761904,
+      "true_boundary_gene_correct_fraction": 0.6875
+    }
+  ]
+}

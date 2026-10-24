@@ -43,12 +43,16 @@ def spatial_neighbors(
     *,
     n_neighbors: int | None = None,
     radius: float | None = None,
-    coord_type: Literal["generic", "grid", "delaunay"] = "generic",
+    coord_type: Literal["generic", "grid", "delaunay", "contact"] = "generic",
     delaunay_max_dist: float | None = None,
     spatial_key: str = "spatial",
     key_added: str = "spatial_neighbors",
     set_diag: bool = False,
-    library_key: str | None = "library_id",
+    library_key: str | None = "auto",
+    core_key: str | None = "auto",
+    tissue_support: str | None = "auto",
+    boundaries_key: str = "cell_boundaries",
+    contact_distance: float = 0.,
 ) -> None:
     """Build a spatial neighborhood graph from cell centroids.
 
@@ -133,7 +137,7 @@ def spatial_neighbors(
     >>> ab.tl.spatial_neighbors(mdata, coord_type='delaunay',
     ...                         delaunay_max_dist=200)       # Delaunay
     """
-    if coord_type not in ("generic", "grid", "delaunay"):
+    if coord_type not in ("generic", "grid", "delaunay", "contact"):
         raise ValueError(
             "coord_type must be one of 'generic', 'grid', or 'delaunay'; "
             f"got {coord_type!r}"
@@ -151,6 +155,26 @@ def spatial_neighbors(
     coords = adata.obsm[spatial_key].astype(np.float64)  # (n_cells, 2)
     if coords.ndim != 2 or coords.shape[1] != 2 or not np.isfinite(coords).all():
         raise ValueError("spatial coordinates must be finite 2-D (n_cells, 2)")
+    from astrolabe._spatial_units import _unit_keys, _units
+    auto_library = library_key == "auto"
+    library_key, core_key = _unit_keys(adata, library_key, core_key)
+    if auto_library and library_key is None and len(adata.uns.get("spatial", {})) > 1:
+        raise ValueError("Multiple coordinate frames require obs library labels")
+    units, columns = _units(adata, library_key, core_key)
+    if not units:
+        raise ValueError("Cannot build a graph without cells")
+    if tissue_support == "auto":
+        tissue_support = adata.uns.get("spatial_units", {}).get("support_key")
+    if not np.isfinite(contact_distance) or contact_distance < 0:
+        raise ValueError("contact_distance must be finite and nonnegative")
+    if len(units) > 1 or tissue_support is not None or coord_type == "contact":
+        from astrolabe.tl._tissue_graph import _partitioned_graph
+        _partitioned_graph(adata, units, columns, library_key=library_key, core_key=core_key,
+                           tissue_support=tissue_support, boundaries_key=boundaries_key,
+                           contact_distance=contact_distance, n_neighbors=n_neighbors, radius=radius,
+                           coord_type=coord_type, delaunay_max_dist=delaunay_max_dist,
+                           spatial_key=spatial_key, key_added=key_added, set_diag=set_diag)
+        return
     if library_key is not None and library_key in adata.obs:
         labels = adata.obs[library_key]
         if labels.isna().any():
@@ -316,7 +340,8 @@ def spatial_neighbors(
             "coord_type": coord_type,
             "delaunay_max_dist": delaunay_max_dist,
             "spatial_key": spatial_key,
-            "library_key": library_key,
+            "library_key": library_key if library_key in adata.obs else None,
+            "core_key": core_key,
             "metric": metric,
             # Honest provenance: how this graph was actually constructed.
             "astrolabe_method": astrolabe_method,

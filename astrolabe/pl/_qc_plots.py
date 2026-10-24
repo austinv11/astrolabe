@@ -4,6 +4,8 @@ QC and expression distribution plots.
 
 from __future__ import annotations
 
+from astrolabe._dependencies import _get_result
+
 import logging
 from typing import Any
 
@@ -645,7 +647,7 @@ def volcano_plot(
             f"uns['{key}'] not found. Run ab.tl.rank_genes_groups() first"
         )
 
-    rgg = adata.uns[key]
+    rgg = _get_result(adata, key)
     groups_stored = list(rgg["names"].dtype.names)
 
     if group is None:
@@ -866,7 +868,7 @@ def ripley_plot(
     if key not in adata.uns:
         raise KeyError(f"uns['{key}'] not found. Run ab.tl.ripley_l() first")
 
-    result = adata.uns[key]
+    result = _get_result(adata, key)
     # result is a dict keyed by cell-type string, each value has 'bins' and 'stats'
     if cell_types is None:
         cell_types = [k for k in result if not k.startswith("_")]
@@ -2806,7 +2808,7 @@ def moran_plot(
 
     quad_arr = None
     if lisa_key is not None and lisa_key in adata.uns:
-        lisa_df = adata.uns[lisa_key]
+        lisa_df = _get_result(adata, lisa_key)
         try:
             # Align by obs_names, not position: the stored LISA frame keeps
             # the full run's cell index, which desyncs positionally once the
@@ -2917,7 +2919,7 @@ def nhood_enrichment_plot(
     if key not in adata.uns:
         raise KeyError(f"uns['{key}'] not found. Run ab.tl.nhood_enrichment() first")
 
-    result = adata.uns[key]
+    result = _get_result(adata, key)
     groups = result["groups"]
     mat = result[metric].astype(float)
     n = len(groups)
@@ -3029,7 +3031,7 @@ def co_occurrence_plot(
     if key not in adata.uns:
         raise KeyError(f"uns['{key}'] not found. Run ab.tl.co_occurrence() first")
 
-    result = adata.uns[key]
+    result = _get_result(adata, key)
     occ = result["occ"]
     interval = np.asarray(result["interval"], dtype=float)
     groups = result["groups"]
@@ -3114,7 +3116,7 @@ def centrality_scores_plot(
             f"uns['{key}'] not found. Run ab.tl.centrality_scores() first"
         )
 
-    df: pd.DataFrame = adata.uns[key]
+    df: pd.DataFrame = _get_result(adata, key)
     if metrics is None:
         metrics = [c for c in df.columns if not df[c].isna().all()]
     _validate_groupby_against_result(
@@ -3205,7 +3207,7 @@ def expression_by_distance_plot(
             f"uns['{key}'] not found. Run ab.tl.expression_by_distance() first"
         )
 
-    result = adata.uns[key]
+    result = _get_result(adata, key)
     mean_df: pd.DataFrame = result["mean"]
     se_df: pd.DataFrame = result["se"]
     anchor_groups = result.get("anchor_groups", [])
@@ -3297,7 +3299,7 @@ def ligrec_plot(
     if key not in adata.uns:
         raise KeyError(f"uns['{key}'] not found. Run ab.tl.ligrec() first")
 
-    result = adata.uns[key]
+    result = _get_result(adata, key)
     means_df: pd.DataFrame = result["means"]
     pval_df: pd.DataFrame = result["pvalues"]
 
@@ -3454,7 +3456,7 @@ def som_umatrix(
     if key not in adata.uns:
         raise KeyError(f"uns['{key}'] not found. Run ab.tl.som() first")
 
-    umatrix: np.ndarray = adata.uns[key]["umatrix"]
+    umatrix: np.ndarray = _get_result(adata, key)["umatrix"]
     sx, sy = umatrix.shape
 
     if figsize is None:
@@ -3480,7 +3482,7 @@ def som_umatrix(
     ax.set_xticks(range(sx))
     ax.set_yticks(range(sy))
     if title is None:
-        params = adata.uns[key].get("params", {})
+        params = _get_result(adata, key).get("params", {})
         qe, te = params.get("quantization_error"), params.get("topographic_error")
         title = "SOM U-matrix"
         if qe is not None and te is not None:
@@ -3541,7 +3543,7 @@ def som_component_plane(
     if gene not in adata.var_names:
         raise KeyError(f"'{gene}' not found in var_names")
 
-    weights: np.ndarray = adata.uns[key]["weights"]
+    weights: np.ndarray = _get_result(adata, key)["weights"]
     sx, sy, n_feat = weights.shape
 
     if n_feat != adata.n_vars:
@@ -3619,7 +3621,7 @@ def som_hits(
     if key not in adata.uns:
         raise KeyError(f"uns['{key}'] not found. Run ab.tl.som() first")
 
-    hit_counts: np.ndarray = adata.uns[key]["hit_counts"]
+    hit_counts: np.ndarray = _get_result(adata, key)["hit_counts"]
     sx, sy = hit_counts.shape
 
     if figsize is None:
@@ -3727,7 +3729,7 @@ def som_quality_plot(
             "the codebook being saved; re-run the tl function that wrote it"
         )
 
-    weights: np.ndarray = adata.uns[key]["weights"]
+    weights: np.ndarray = _get_result(adata, key)["weights"]
     sx, sy, n_feat = weights.shape
     codebook = weights.reshape(-1, n_feat).astype(np.float64)
     grid = np.array([(i, j) for i in range(sx) for j in range(sy)], dtype=np.float64)
@@ -3770,7 +3772,7 @@ def som_quality_plot(
     trust = 1.0 - 2.0 * np.clip(rank_c[knn_g] - k, 0, None).sum() / norm
     cont = 1.0 - 2.0 * np.clip(rank_g[knn_c] - k, 0, None).sum() / norm
 
-    params = adata.uns[key].get("params", {})
+    params = _get_result(adata, key).get("params", {})
     qe, te = params.get("quantization_error"), params.get("topographic_error")
 
     fig, ax = plt.subplots(figsize=figsize)
@@ -3860,7 +3862,7 @@ def som_stability_plot(
         raise KeyError(
             f"uns['{key}'] not found. Run ab.tl.som_stability() first"
         )
-    st = adata.uns[key]
+    st = _get_result(adata, key)
     ks = np.asarray(st["k"], dtype=float)
     ari = np.asarray(st["mean_ari"], dtype=float)
     ari_sd = np.asarray(st.get("sd_ari", np.zeros_like(ari)), dtype=float)

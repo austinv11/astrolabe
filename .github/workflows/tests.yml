@@ -19,3 +19,54 @@ jobs:
       - run: uv sync --extra dev --extra cohort --extra communication
         if: matrix.extras != 'dev'
       - run: uv run --no-sync pytest -q
+
+  spatialdata:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - run: uv sync --extra dev --extra spatialdata
+      - run: uv run --no-sync pytest -q tests/test_spatialdata_interchange.py
+
+  spatial-inference-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --extra dev --extra spatial-inference
+      # Explicit CI setup; ordinary package imports/fits never download INLA.
+      - run: uv run --no-sync python benchmarks/prepare_inla.py --download
+      - run: |
+          uv run --no-sync python -c "import os, sys; open(os.environ['GITHUB_ENV'], 'a').write('ASTROLABE_INLA_PYTHON=' + sys.executable + '\n')"
+      - run: uv run --no-sync pytest -q tests/test_conditional.py tests/test_he.py tests/test_if.py tests/test_correctness_roadmap.py
+      - run: uv run --no-sync python benchmarks/inla_reference.py --output inla-reference.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inla-reference-${{ matrix.os }}
+          path: inla-reference.json
+
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv build
+      - run: uv venv --python 3.12 .wheel-smoke
+      - run: uv pip install --python .wheel-smoke/bin/python dist/*.whl
+      - run: bin/python ../benchmarks/wheel_smoke.py --fixture ../tests/data/xenium_4_tiny
+        working-directory: .wheel-smoke

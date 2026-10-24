@@ -466,7 +466,8 @@ def merge_micronuclei(
     keep_mask = np.array([n not in micronuclei_set for n in obs_names], dtype=bool)
     keep_indices = np.where(keep_mask)[0]
 
-    adata._inplace_subset_obs(keep_mask)
+    from astrolabe._state import _subset_cells
+    _subset_cells(adata, keep_mask, inplace=True, parent=mdata, modality=xenium_key)
 
     # Recompute merged primaries' cell_area from the expanded boundaries so
     # obs stays consistent with obsm['cell_boundaries'] (full union area,

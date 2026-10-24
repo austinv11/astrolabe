@@ -1,10 +1,28 @@
 # Statistical inference and analysis extensions
 
+For TMA masks, measured panels, donor-level niche/state workflows, explicit
+integrations and memory controls, see [spatial workflows](spatial-workflows.md)
+and the [validation record](spatial-validation.md).
+
 Astrolabe uses AnnData/MuData and micron coordinates. Cells are already segmented
 and images registered. Independent libraries have independent coordinate frames:
 `tl.spatial_neighbors` isolates `obs['library_id']` automatically.
 
 ## Statistical defaults
+
+Global `moran`, `moran_bv`, and `geary_c` use inclusive permutation tails with
+the plus-one correction. `alternative='two-sided'` doubles the smaller corrected
+tail; `'greater'` and `'less'` select one tail. `p_sim` is unadjusted. Constant
+fields and edgeless graphs return missing statistics/p-values, `n_valid=0`, and
+`status='not_tested'`; nonfinite input values are rejected. Tied, defined nulls
+remain testable and yield p=1 when every draw equals the observation.
+
+Global permutations stay within the graph's library groups. Multi-library tests
+require `n_perms > 0` and omit pooled analytic p-values. With one library,
+`moran` and `geary_c` support analytic inference with `n_perms=0`; `moran_bv`
+requires permutations and shuffles only the second field. Results report null
+moments and valid-draw counts. An explicitly pooled graph (`library_key=None`)
+requests exchangeability across all cells.
 
 `moran_local`, `moran_local_bv`, and `getis_ord` calculate empirical equal-tail
 permutation p-values. The plus-one correction applies to each tail before
@@ -34,7 +52,7 @@ permutations for useful FDR power. A lack of discoveries at coarse resolution
 does not establish the absence of spatial structure. Ripley p-values remain
 pointwise across radii; their envelope is not a simultaneous confidence band.
 
-Local Moran/Getis, SVG, ICG, native LR, gradient, replicate-neighborhood and
+Global/local Moran, Geary/Getis, SVG, ICG, native LR, gradient, replicate-neighborhood and
 pointwise Ripley/CLQ results include `n_valid`, `p_min` and
 `resolution_limited` (with metric suffixes for gradients). `p_min` is the
 theoretical Monte Carlo floor: one-tail
@@ -74,7 +92,19 @@ or reproduce Giotto's method exactly. Gene/pair BH is global by default.
 Gradient significance reuses the fitted layer, graph, coordinates, smoothing and
 group definitions. It checks source fingerprints and rejects stale gradients or
 conflicting overrides. Undefined directional coherence has NaN significance.
+Grouped tests calibrate noise and shuffle expression using only the selected
+group's values and induced graph; excluded cells do not enter its null.
 The smooth surrogate null models graph-matched noise, not every biological null.
+
+`nhood_enrichment` shuffles cell-type labels within libraries by default,
+preserving each library's composition. `library_key='auto'` follows the graph's
+grouping; a column name overrides it, and `None` requests pooled shuffling.
+Missing labels and graph edges between the selected libraries are rejected.
+Zero-variance nulls have missing z-scores and `status='zero_variance'`.
+
+`colocation_quotient` excludes each focal cell by its index. Distinct cells at
+identical coordinates remain eligible neighbors. Distance ties follow the
+KD-tree query order, retaining exactly `k` other cells per focal cell.
 
 `ligrec` scores actual spatial edges, including when GPU routing is enabled.
 Missing/null zero-edge groups are excluded from valid permutation counts.
@@ -146,7 +176,11 @@ Neighborhood contrasts use each sample's mean contact fraction minus the
 finite-population target-type expectation, with equal sample weights. Conditions
 are permuted at sample level within optional blocks, or paired differences are
 sign-flipped at donor level. Confidence intervals resample biological units.
-Missing cell types yield untestable comparisons rather than zero scores.
+Each sample score requires both sender and receiver types; same-type scores
+require at least two cells of that type. Missing types produce missing scores.
+`n_tested` and `n_reference` count usable samples, or complete donor pairs for
+paired tests. Fewer than two usable biological units per condition yields
+`status='insufficient_replicates'`, missing inference, and `n_valid=0`.
 
 ## Complex-aware communication
 
@@ -190,12 +224,19 @@ coverage is reported. Select a library explicitly for multi-library data.
 
 Affine transforms move centroids, boundaries, Arrow transcripts and GeoDataFrame
 annotations together, including MuData parent stores. Image transforms compose
-once per descriptor. Derived spatial results/graphs are invalidated. Filtering
-refreshes parent MuData observation/variable indexes. Expression embeddings stay
-available.
-Derived spatial gene columns, including SVG scores, p-values and significance
-flags, are also cleared after a crop removes cells or coordinates are transformed.
-Unrelated gene annotations remain available.
+once per descriptor. Coordinate transforms and package cell-selection functions
+(including QC filters and crops) invalidate derived spatial results and graphs.
+This includes registered custom output keys, cohort contrasts, SVG gene columns,
+and matching MuData parent mirrors. Other modalities' results and unrelated
+annotations/embeddings remain available. A selection that keeps every cell
+preserves results; copy operations preserve the source object. Filtering also
+refreshes parent MuData observation/variable indexes.
+
+`io.concat_samples({'sample_A': a, 'sample_B': b})` uses the supplied aliases for
+cell IDs, observation labels, spatial descriptor keys, and transcript library
+labels. Each input must describe a single library; conflicting parent/modality
+spatial IDs and multi-library inputs are rejected. Descriptors are copied, so
+concatenation leaves the input metadata unchanged.
 
 `io.save` round-trips typed tables, including MultiIndex rows/columns, using
 Arrow IPC and typed axis metadata without pickle. It writes a sibling temporary

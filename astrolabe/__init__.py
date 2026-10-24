@@ -46,9 +46,9 @@ Typical workflow
 
 import mudata
 
-# Opt into mudata 0.4 behavior now: update() does not pull obs/var columns
-# from individual modalities. Use mdata.pull_obs()/pull_var() explicitly.
-mudata.set_options(pull_on_update=False)
+# Keep observation/feature metadata pulls explicit.
+if hasattr(mudata, "set_options"):
+    mudata.set_options(pull_on_update=False)
 
 from astrolabe import io, pp, tl, pl, seg, pipeline, datasets
 from astrolabe._summary import summary, Summary

@@ -1,0 +1,204 @@
+{
+  "source": "https://zenodo.org/records/11237477",
+  "license": "CC-BY-4.0",
+  "sha256": {
+    "baysor": "4d9b49c36f4c1091e552310a4f9acd31690073008a638da9c2179d8c6784966c",
+    "watershed": "30020ac5c732f66bc98f09d40aa6fadc9963eec2e7530ca3388ad5bd8d2b4a27",
+    "reference": "2668f67d1097bbefab26064f25fb8ef0610564d304d2ba6025a50830177fdb5d"
+  },
+  "pixel_size_um": 0.108,
+  "crop_pixels": [
+    3500,
+    5500
+  ],
+  "interior_pixels": [
+    3800,
+    5200
+  ],
+  "input_transcripts": 47498,
+  "input_nuclei": 142,
+  "reference_cells_scored": 8,
+  "reference_positive_transcripts": 7091,
+  "extranuclear_transcripts_scored": 344,
+  "label_mapping": "unique nuclear majority >=90%; nuclear molecules excluded from scoring",
+  "limitations": [
+    "Geometric agreement, not known pre-spillage molecular origin",
+    "Only accepted reference cells completely inside the interior are scored",
+    "Published comparators used the full crop; Proseg uses a smaller context window",
+    "2D published benchmark collapses z stacks 2, 3, 4; no seed option in Proseg 3.2"
+  ],
+  "baseline": {
+    "watershed": {
+      "correct": 298,
+      "scored": 344,
+      "transcript_accuracy": 0.8662790697674418,
+      "mean_cell_accuracy": 0.9172735965015377,
+      "per_cell_accuracy": [
+        0.7832167832167832,
+        0.9642857142857143,
+        0.8333333333333334,
+        0.875,
+        1.0,
+        0.8823529411764706,
+        1.0,
+        1.0
+      ]
+    },
+    "published_baysor": {
+      "correct": 67,
+      "scored": 344,
+      "transcript_accuracy": 0.19476744186046513,
+      "mean_cell_accuracy": 0.10992102972267132,
+      "per_cell_accuracy": [
+        0.36363636363636365,
+        0.0,
+        0.08333333333333333,
+        0.25,
+        0.0,
+        0.0196078431372549,
+        0.16279069767441862,
+        0.0
+      ]
+    }
+  },
+  "runs": [
+    {
+      "repeat": 0,
+      "diffusion": false,
+      "seconds": 28.16900139999052,
+      "correct": 166,
+      "scored": 344,
+      "transcript_accuracy": 0.48255813953488375,
+      "mean_cell_accuracy": 0.47131793074711137,
+      "per_cell_accuracy": [
+        0.5664335664335665,
+        0.32142857142857145,
+        0.4166666666666667,
+        0.4375,
+        0.34782608695652173,
+        0.37254901960784315,
+        0.5581395348837209,
+        0.75
+      ],
+      "accounting": {
+        "background": 24121,
+        "assigned": 23377
+      }
+    },
+    {
+      "repeat": 0,
+      "diffusion": true,
+      "seconds": 32.44371369999135,
+      "correct": 161,
+      "scored": 344,
+      "transcript_accuracy": 0.4680232558139535,
+      "mean_cell_accuracy": 0.4682661097679424,
+      "per_cell_accuracy": [
+        0.5734265734265734,
+        0.32142857142857145,
+        0.4444444444444444,
+        0.6875,
+        0.21739130434782608,
+        0.3333333333333333,
+        0.4186046511627907,
+        0.75
+      ],
+      "accounting": {
+        "assigned": 25203,
+        "background": 22295
+      }
+    },
+    {
+      "repeat": 1,
+      "diffusion": false,
+      "seconds": 28.265802399997483,
+      "correct": 166,
+      "scored": 344,
+      "transcript_accuracy": 0.48255813953488375,
+      "mean_cell_accuracy": 0.49223784773006357,
+      "per_cell_accuracy": [
+        0.5734265734265734,
+        0.21428571428571427,
+        0.6111111111111112,
+        0.625,
+        0.4782608695652174,
+        0.3137254901960784,
+        0.37209302325581395,
+        0.75
+      ],
+      "accounting": {
+        "background": 23797,
+        "assigned": 23701
+      }
+    },
+    {
+      "repeat": 1,
+      "diffusion": true,
+      "seconds": 34.34329589999106,
+      "correct": 173,
+      "scored": 344,
+      "transcript_accuracy": 0.502906976744186,
+      "mean_cell_accuracy": 0.41734762441070433,
+      "per_cell_accuracy": [
+        0.6363636363636364,
+        0.25,
+        0.5555555555555556,
+        0.4375,
+        0.391304347826087,
+        0.35294117647058826,
+        0.46511627906976744,
+        0.25
+      ],
+      "accounting": {
+        "assigned": 25685,
+        "background": 21813
+      }
+    },
+    {
+      "repeat": 2,
+      "diffusion": false,
+      "seconds": 27.853021499991883,
+      "correct": 174,
+      "scored": 344,
+      "transcript_accuracy": 0.5058139534883721,
+      "mean_cell_accuracy": 0.49953803787890505,
+      "per_cell_accuracy": [
+        0.5804195804195804,
+        0.2857142857142857,
+        0.6388888888888888,
+        0.5,
+        0.391304347826087,
+        0.43137254901960786,
+        0.4186046511627907,
+        0.75
+      ],
+      "accounting": {
+        "assigned": 24755,
+        "background": 22743
+      }
+    },
+    {
+      "repeat": 2,
+      "diffusion": true,
+      "seconds": 32.99016169999959,
+      "correct": 176,
+      "scored": 344,
+      "transcript_accuracy": 0.5116279069767442,
+      "mean_cell_accuracy": 0.47660904954507743,
+      "per_cell_accuracy": [
+        0.5944055944055944,
+        0.2857142857142857,
+        0.5555555555555556,
+        0.5625,
+        0.391304347826087,
+        0.4117647058823529,
+        0.5116279069767442,
+        0.5
+      ],
+      "accounting": {
+        "assigned": 26020,
+        "background": 21478
+      }
+    }
+  ]
+}

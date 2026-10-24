@@ -87,20 +87,21 @@ def _local_family(result, method, alpha, *, getis=False):
     return result
 
 
-def _permutation_blocks(adata, neighbors_key):
+def _permutation_blocks(adata, neighbors_key, *, library_key="auto"):
     """Use the graph's library grouping for exchangeable expression draws."""
-    library_key = adata.uns.get(neighbors_key, {}).get("params", {}).get("library_key", "library_id")
-    if library_key is None or library_key not in adata.obs:
+    if library_key is None:
         return [np.arange(adata.n_obs)], library_key
-    labels = adata.obs[library_key]
-    if labels.isna().any():
-        raise ValueError("library labels must be present for spatial inference")
-    codes, levels = pd.factorize(labels, sort=False)
-    if len(levels) > 1:
+    from astrolabe._spatial_units import _unit_keys, _units
+    library_key, core_key = _unit_keys(adata, library_key, "auto", neighbors_key)
+    units, _ = _units(adata, library_key, core_key)
+    codes = np.zeros(adata.n_obs, dtype=int)
+    for code, (_, indices) in enumerate(units):
+        codes[indices] = code
+    if len(units) > 1:
         graph = _get_conn_matrix(adata, neighbors_key).tocoo()
         if ((graph.data != 0) & (codes[graph.row] != codes[graph.col])).any():
-            raise ValueError("spatial inference graph contains edges across libraries")
-    return [np.flatnonzero(codes == i) for i in range(len(levels))], library_key
+            raise ValueError("spatial inference graph contains edges across libraries or cores")
+    return [indices for _, indices in units], library_key
 
 
 def _local_by_library(adata, function, args, kwargs, *, getis=False):
@@ -116,7 +117,13 @@ def _local_by_library(adata, function, args, kwargs, *, getis=False):
         # the original; each library is processed and released in turn.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", PermutationResolutionWarning)
-            parts.append(function(adata[block].copy(), *args, **kwargs))
+            subset = adata[block].copy()
+            # The parent graph was checked before partitioning and has no
+            # cross-unit edges. This induced block is the intended local graph,
+            # not a graph to be rebuilt after an arbitrary external subset.
+            subset.uns.pop("_astrolabe_dependencies", None)
+            subset.uns.pop("_astrolabe_spatial_results", None)
+            parts.append(function(subset, *args, **kwargs))
     result = pd.concat(parts)
     keys = result.index.get_level_values("key").unique()
     result = result.reindex(pd.MultiIndex.from_product([keys, adata.obs_names], names=["key", "obs_name"]))
@@ -136,6 +143,98 @@ def _shuffle_blocks(values, rng, blocks):
     for block in blocks:
         shuffled[block] = rng.permutation(values[block])
     return shuffled
+
+
+def _global_autocorrelation(adata, x_keys, y_keys, *, kind, layer, neighbors_key,
+                            n_perms, seed, alternative, key_added):
+    """Global scores with explicit tails and graph-defined exchangeability."""
+    import esda
+    from scipy.stats import norm
+
+    if not isinstance(n_perms, (int, np.integer)) or n_perms < 0:
+        raise ValueError("n_perms must be a nonnegative integer")
+    if alternative not in ("two-sided", "greater", "less"):
+        raise ValueError("alternative must be greater, less, or two-sided")
+    if not x_keys:
+        raise ValueError("at least one field is required")
+    if kind == "bivariate" and n_perms == 0:
+        raise ValueError("moran_bv has no analytic normal approximation; n_perms must be > 0")
+    blocks, library_key = _permutation_blocks(adata, neighbors_key)
+    multiple = len(blocks) > 1
+    if multiple and n_perms == 0:
+        raise ValueError("multiple libraries require n_perms > 0 for global spatial inference")
+    conn = _get_conn_matrix(adata, neighbors_key).tocsr(copy=True).astype(float)
+    conn.setdiag(0)
+    conn.eliminate_zeros()
+    if not np.isfinite(conn.data).all() or (conn.data < 0).any():
+        raise ValueError("spatial weights must be finite and nonnegative")
+    w = _build_weights(adata, neighbors_key) if adata.n_obs >= 3 and conn.nnz else None
+    weights = w.sparse.astype(float) if w is not None else conn
+    edges = weights.tocoo()
+    weight_sum = float(weights.sum())
+    rng = np.random.default_rng(seed)
+    score_key, expected_key = ("C", "EC") if kind == "geary" else ("I", "EI")
+    rows = []
+    for xkey, ykey in zip(x_keys, y_keys):
+        x = _extract_values(adata, xkey, layer)
+        y = _extract_values(adata, ykey, layer)
+        if not np.isfinite(x).all() or not np.isfinite(y).all():
+            raise ValueError("global spatial inference requires finite field values")
+        row = {score_key: np.nan, expected_key: np.nan, "z_norm": np.nan,
+               "p_norm": np.nan, "z_sim": np.nan, "p_sim": np.nan,
+               "null_mean": np.nan, "null_std": np.nan, "n_valid": 0, "status": "not_tested"}
+        if w is not None and np.ptp(x) > 0 and np.ptp(y) > 0:
+            xc, yc = x - x.mean(), y - y.mean()
+            if kind == "geary":
+                denominator = 2 * weight_sum * (yc @ yc)
+                def statistic(values):
+                    return (len(y)-1) * np.sum(edges.data * (values[edges.row]-values[edges.col])**2) / denominator
+            elif kind == "bivariate":
+                denominator = np.sqrt((xc @ xc) * (yc @ yc))
+                def statistic(values):
+                    return (xc @ (weights @ values)) / denominator
+            else:
+                denominator = weight_sum * (yc @ yc)
+                def statistic(values):
+                    return len(y) * (values @ (weights @ values)) / denominator
+            observed = float(statistic(yc))
+            if np.isfinite(observed):
+                row[score_key] = observed
+                if not multiple and kind != "bivariate":
+                    analytic = (esda.Geary(y, w, permutations=0) if kind == "geary"
+                                else esda.Moran(y, w, permutations=0))
+                    z = float(analytic.z_norm)
+                    row[expected_key] = float(analytic.EC if kind == "geary" else analytic.EI)
+                    row["z_norm"] = z
+                    row["p_norm"] = float(2*norm.sf(abs(z)) if alternative == "two-sided"
+                                          else norm.sf(z) if alternative == "greater" else norm.cdf(z))
+                if n_perms:
+                    sims = np.array([statistic(_shuffle_blocks(yc, rng, blocks)) for _ in range(n_perms)])
+                    sims[~np.isfinite(sims)] = np.nan
+                    p, nv = permutation_p(np.asarray(observed), sims, alternative=alternative)
+                    row.update(p_sim=float(p), n_valid=int(nv))
+                    if nv:
+                        mean, std = float(np.nanmean(sims)), float(np.nanstd(sims))
+                        row.update(null_mean=mean, null_std=std)
+                        if std > 0 and not np.allclose(sims[np.isfinite(sims)], observed, rtol=100*np.finfo(float).eps, atol=0):
+                            row["z_sim"] = (observed-mean)/std
+                        if multiple or kind == "bivariate":
+                            row[expected_key] = mean
+                    if np.isfinite(p):
+                        row["status"] = "tested"
+                elif np.isfinite(row["p_norm"]):
+                    row["status"] = "analytic"
+        rows.append(row)
+    index = (pd.MultiIndex.from_tuples(list(zip(x_keys, y_keys)), names=["x", "y"])
+             if kind == "bivariate" else pd.Index(x_keys, name="key"))
+    result = pd.DataFrame(rows, index=index)
+    annotate_permutation_resolution(result, "p_sim", "n_valid", alternative=alternative,
+                                   method=None, label=f"global {kind}")
+    result.attrs.update(library_key=library_key, n_libraries=len(blocks),
+                        alternative=alternative, n_perms=int(n_perms),
+                        null="within-library expression permutations" if n_perms else "analytic normality")
+    adata.uns[key_added] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +462,8 @@ def _boundary_silhouette(
 def _extract_values(adata: ad.AnnData, key: str, layer: str | None) -> np.ndarray:
     """Return a 1-D float64 array for *key*, checking var_names then obs columns."""
     if key in adata.var_names:
+        from astrolabe._coverage import _require_measured
+        _require_measured(adata, [key])
         idx = adata.var_names.get_loc(key)
         mat = adata.layers[layer] if layer is not None else adata.X
         col = mat[:, idx]
@@ -452,89 +553,62 @@ def moran(
     neighbors_key: str = "spatial_neighbors",
     n_perms: int = 1000,
     seed: int | None = None,
+    alternative: str = "two-sided",
     key_added: str = "moran",
 ) -> pd.DataFrame:
-    """Global Moran's I (Moran 1950) for one or more expression or obs keys.
+    """Global Moran's I for expression or numeric observation fields.
 
-    Each key is first looked up in ``var_names`` (gene expression); if absent,
-    it falls back to ``obs`` columns (QC metrics, cell area, etc.).
+    Gene names take precedence over observation columns. ``layer`` selects
+    expression values. MuData inputs accept ``modality``. The result is stored
+    in ``uns[key_added]`` and mirrored to the MuData parent when applicable.
 
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
+    ``p_sim`` uses inclusive permutation tails with a plus-one correction.
+    ``alternative`` is ``'two-sided'`` (default), ``'greater'``, or ``'less'``.
+    Permutations stay within the library grouping recorded by the graph;
+    build the graph with ``library_key=None`` to request a pooled null.
+    ``seed`` initializes a local RNG without modifying numpy's global state.
+
+    With a single library, ``n_perms=0`` uses analytic normality inference.
+    Multiple libraries require permutations; analytic diagnostics are missing.
+    Undefined statistics (constant fields or edgeless graphs) have missing
+    p-values and ``status='not_tested'``. Nonfinite input values are rejected.
 
     Parameters
     ----------
     data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+        AnnData or MuData input; MuData accepts a ``modality`` keyword.
     keys
-        One or more gene / obs column names to test.
-    modality
-        For :class:`~mudata.MuData`: modality key (defaults to
-        ``uns['default_modality']``).
+        Gene names or numeric observation columns to test.
     layer
-        Expression layer to use.  ``None`` uses ``X``.
+        Expression layer; ``None`` uses ``X``.
     neighbors_key
-        Key in ``uns`` written by :func:`~astrolabe.tl.spatial_neighbors`.
+        Stored graph metadata key.
     n_perms
-        Permutations for empirical p-values (``0`` uses normality approximation only).
+        Number of within-library permutations; zero selects analytic inference.
     seed
-        Seed for the permutation RNG (reproducible ``p_sim``). ``None``
-        (default) uses numpy's unseeded global state, matching prior behavior.
+        Seed for the local permutation RNG.
+    alternative
+        ``'two-sided'``, ``'greater'``, or ``'less'``.
     key_added
-        ``uns`` key where the result DataFrame is stored.
+        Result key in ``uns``.
 
     Returns
     -------
-    pd.DataFrame
-        One row per key with columns ``I``, ``EI``, ``z_norm``, ``p_norm``,
-        and (when ``n_perms > 0``) ``z_sim``, ``p_sim``.
+    pandas.DataFrame
+        One row per field, with unadjusted inference and null diagnostics.
 
-        .. note::
-            The two p-value columns use different conventions, inherited
-            from ``esda.Moran``: ``p_norm`` is a **two-tailed** analytic
-            (normal-approximation) p-value, while ``p_sim`` is esda's
-            **one-tailed, data-directed** permutation p-value (the tail is
-            picked from the sign of the observed deviation, never doubled).
-            The two are therefore not directly comparable at the same
-            nominal alpha — ``p_sim`` is roughly half of a two-tailed
-            equivalent for the same evidence.
-
-        Also stored in ``adata.uns[key_added]``, and mirrored to
-        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
-
-    Examples
-    --------
-    >>> ab.tl.spatial_neighbors(mdata)
-    >>> result = ab.tl.moran(mdata, ["EPCAM", "CD3D", "MKI67"])
-    >>> result.sort_values("I", ascending=False)
+    Notes
+    -----
+    Columns include ``I``, ``EI``, ``z_norm``, ``p_norm``,
+    ``z_sim``, ``p_sim``, ``null_mean``, ``null_std``, ``n_valid``, ``status``,
+    ``p_min``, and ``resolution_limited``. ``EI`` is the analytic expectation
+    for a single library and the simulation mean for multiple libraries.
+    P-values are unadjusted; define the testing family before selecting fields.
     """
-    import esda
-
-    if isinstance(keys, str):
-        keys = [keys]
-
-    w = _build_weights(adata, neighbors_key)
-    log.info("moran: %d keys, %d cells, n_perms=%d", len(keys), adata.n_obs, n_perms)
-
-    rows = []
-    for key in keys:
-        y = _extract_values(adata, key, layer)
-        with _seeded_numpy_state(seed):
-            mi = esda.Moran(y, w, permutations=n_perms, two_tailed=True)
-        row: dict[str, float] = {
-            "I": mi.I,
-            "EI": mi.EI,
-            "z_norm": mi.z_norm,
-            "p_norm": mi.p_norm,
-        }
-        if n_perms > 0:
-            row["z_sim"] = mi.z_sim
-            row["p_sim"] = mi.p_sim
-        rows.append(row)
-
-    result = pd.DataFrame(rows, index=pd.Index(keys, name="key"))
-    adata.uns[key_added] = result
-    log.info("moran: done — top I=%.3f (%s)", result["I"].max(), result["I"].idxmax())
-    return result
+    keys = [keys] if isinstance(keys, str) else list(keys)
+    return _global_autocorrelation(adata, keys, keys, kind="moran", layer=layer,
+        neighbors_key=neighbors_key, n_perms=n_perms, seed=seed,
+        alternative=alternative, key_added=key_added)
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
@@ -549,6 +623,10 @@ def moran_local(
     alpha: float = 0.05,
     n_jobs: int = 1,
     seed: int | None = None,
+    max_working_bytes: int = 256*1024**2,
+    disk_backed: bool = False,
+    scratch_dir=None,
+    chunk_size: int | None = None,
     key_added: str = "moran_local",
 ) -> pd.DataFrame:
     """Local spatial association with empirical two-sided permutation p-values.
@@ -570,7 +648,8 @@ def moran_local(
 
     scoped = _local_by_library(adata, moran_local, (keys,), dict(
         layer=layer, neighbors_key=neighbors_key, n_perms=n_perms, p_adjust_method=p_adjust_method,
-        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added))
+        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added,
+        max_working_bytes=max_working_bytes, disk_backed=disk_backed, scratch_dir=scratch_dir, chunk_size=chunk_size))
     if scoped is not None:
         return scoped
     w = _build_weights(adata, neighbors_key)
@@ -580,13 +659,14 @@ def moran_local(
     for key in keys:
         y = _extract_values(adata, key, layer)
         lmi = esda.Moran_Local(
-            y, w, permutations=n_perms, n_jobs=n_jobs, seed=seed, keep_simulations=True
+            y, w, permutations=0, n_jobs=n_jobs, seed=seed, keep_simulations=False
         )
 
         if n_perms > 0:
-            p_sim, n_valid = permutation_p(lmi.Is, lmi.rlisas)
-            p_dir = _directed_perm_p(lmi.Is, lmi.rlisas)
-            z_sim = lmi.z_sim
+            from astrolabe.tl._local_stream import _conditional_summary
+            p_sim, n_valid, p_dir, z_sim = _conditional_summary(
+                lmi, n_perms, seed, max_working_bytes=max_working_bytes,
+                disk_backed=disk_backed, scratch_dir=scratch_dir, chunk_size=chunk_size)
             p_adj = _adj_pvalues(p_sim, p_adjust_method)
         else:
             n_valid = np.zeros(adata.n_obs, dtype=int)
@@ -618,7 +698,6 @@ def moran_local(
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
-
 def moran_bv(
     adata: ad.AnnData,
     x: str | list[str],
@@ -628,85 +707,57 @@ def moran_bv(
     neighbors_key: str = "spatial_neighbors",
     n_perms: int = 1000,
     seed: int | None = None,
+    alternative: str = "two-sided",
     key_added: str = "moran_bv",
 ) -> pd.DataFrame:
-    """Global bivariate Moran's I for pairs of expression / obs keys.
+    """Global bivariate Moran's I for paired expression or observation fields.
 
-    Measures the degree to which high values of *x* are surrounded by
-    high values of *y* in space — e.g. ligand-receptor co-localisation
-    or tumor-immune co-expression.
-
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
-    Each key is looked up in ``var_names`` first, then ``obs`` columns.
+    Tests association of each ``x`` field with the spatial lag of its paired
+    ``y`` field. Only ``y`` is permuted, within the graph's library grouping.
+    Set ``library_key=None`` when building the graph for a pooled null.
+    At least one permutation is required; there is no analytic approximation.
+    ``alternative`` selects inclusive ``'two-sided'``, ``'greater'``, or
+    ``'less'`` tails with the plus-one correction. ``seed`` controls a local RNG.
 
     Parameters
     ----------
     data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+        AnnData or MuData input; MuData accepts a ``modality`` keyword.
     x, y
-        One or more paired gene / obs column names.  Lengths must match.
-    modality
-        For :class:`~mudata.MuData`: modality key.
+        Paired field names, supplied as single names or lists of matching
+        lengths. Gene names precede observation columns.
     layer
-        Expression layer to use.  ``None`` uses ``X``.
+        Expression layer; ``None`` uses ``X``.
     neighbors_key
-        Key in ``uns`` written by :func:`~astrolabe.tl.spatial_neighbors`.
+        Stored graph metadata key.
     n_perms
-        Permutations used to obtain ``EI``/``z_sim``/``p_sim``.  Must be > 0:
-        unlike univariate Moran's I, ``esda.Moran_BV`` has no analytic
-        normal-approximation null, so permutations are required.
+        Positive number of permutations of the second field within libraries.
     seed
-        Seed for the permutation RNG (``esda.Moran_BV`` accepts no ``seed=``
-        of its own; the global numpy RNG is seeded around the call and
-        restored after). ``None`` (default) is unseeded, matching prior
-        behavior.
+        Seed for the local permutation RNG.
+    alternative
+        ``'two-sided'``, ``'greater'``, or ``'less'``.
     key_added
-        ``uns`` key where the result DataFrame is stored.
+        Result key in ``uns``.
 
     Returns
     -------
-    pd.DataFrame
-        MultiIndex ``(x, y)`` rows with columns ``I``, ``EI``, ``z_sim``,
-        ``p_sim``.  Also stored in ``adata.uns[key_added]``, and mirrored to
-        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
+    pandas.DataFrame
+        One row per ``(x, y)`` pair, with unadjusted permutation inference.
 
-    Examples
-    --------
-    >>> result = ab.tl.moran_bv(mdata, ["EPCAM", "CD274"], ["CXCL12", "PDCD1"])
-    >>> result.sort_values("I", ascending=False)
+    Notes
+    -----
+    Results contain ``I``, simulation expectation
+    ``EI``, ``z_sim``, ``p_sim``, ``null_mean``, ``null_std``, valid-draw counts,
+    status and permutation-resolution diagnostics. Analytic columns are missing.
+    Constant fields and edgeless graphs are not tested; nonfinite inputs raise.
+    P-values are unadjusted. ``layer`` selects expression; MuData accepts
+    ``modality``. Results are stored in ``uns[key_added]`` and mirrored to the
+    MuData parent when applicable.
     """
-    import esda
-
     x_keys, y_keys = _normalize_pairs(x, y)
-
-    w = _build_weights(adata, neighbors_key)
-    log.info("moran_bv: %d pairs, %d cells, n_perms=%d", len(x_keys), adata.n_obs, n_perms)
-
-    if n_perms <= 0:
-        raise ValueError(
-            "moran_bv: esda.Moran_BV has no analytic normal approximation; "
-            "n_perms must be > 0 to obtain z/p-values."
-        )
-
-    rows = []
-    for xk, yk in zip(x_keys, y_keys):
-        xv = _extract_values(adata, xk, layer)
-        yv = _extract_values(adata, yk, layer)
-        with _seeded_numpy_state(seed):
-            mi = esda.Moran_BV(xv, yv, w, permutations=n_perms)
-        row: dict[str, float] = {
-            "I": mi.I,
-            "EI": mi.EI_sim,
-            "z_sim": mi.z_sim,
-            "p_sim": mi.p_sim,
-        }
-        rows.append(row)
-
-    idx = pd.MultiIndex.from_tuples(list(zip(x_keys, y_keys)), names=["x", "y"])
-    result = pd.DataFrame(rows, index=idx)
-    adata.uns[key_added] = result
-    log.info("moran_bv: done")
-    return result
+    return _global_autocorrelation(adata, x_keys, y_keys, kind="bivariate", layer=layer,
+        neighbors_key=neighbors_key, n_perms=n_perms, seed=seed,
+        alternative=alternative, key_added=key_added)
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
@@ -722,6 +773,10 @@ def moran_local_bv(
     alpha: float = 0.05,
     n_jobs: int = 1,
     seed: int | None = None,
+    max_working_bytes: int = 256*1024**2,
+    disk_backed: bool = False,
+    scratch_dir=None,
+    chunk_size: int | None = None,
     key_added: str = "moran_local_bv",
 ) -> pd.DataFrame:
     """Local spatial association with empirical two-sided permutation p-values.
@@ -742,7 +797,8 @@ def moran_local_bv(
 
     scoped = _local_by_library(adata, moran_local_bv, (x_keys, y_keys), dict(
         layer=layer, neighbors_key=neighbors_key, n_perms=n_perms, p_adjust_method=p_adjust_method,
-        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added))
+        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added,
+        max_working_bytes=max_working_bytes, disk_backed=disk_backed, scratch_dir=scratch_dir, chunk_size=chunk_size))
     if scoped is not None:
         return scoped
     w = _build_weights(adata, neighbors_key)
@@ -754,13 +810,14 @@ def moran_local_bv(
         xv = _extract_values(adata, xk, layer)
         yv = _extract_values(adata, yk, layer)
         lmi = esda.Moran_Local_BV(
-            xv, yv, w, permutations=n_perms, n_jobs=n_jobs, seed=seed, keep_simulations=True
+            xv, yv, w, permutations=0, n_jobs=n_jobs, seed=seed, keep_simulations=False
         )
 
         if n_perms > 0:
-            p_sim, n_valid = permutation_p(lmi.Is, lmi.rlisas)
-            p_dir = _directed_perm_p(lmi.Is, lmi.rlisas)
-            z_sim = np.asarray(getattr(lmi, "z_sim", np.full(adata.n_obs, np.nan)))
+            from astrolabe.tl._local_stream import _conditional_summary
+            p_sim, n_valid, p_dir, z_sim = _conditional_summary(
+                lmi, n_perms, seed, max_working_bytes=max_working_bytes,
+                disk_backed=disk_backed, scratch_dir=scratch_dir, chunk_size=chunk_size)
             p_adj = _adj_pvalues(p_sim, p_adjust_method)
         else:
             n_valid = np.zeros(adata.n_obs, dtype=int)
@@ -805,6 +862,10 @@ def getis_ord(
     alpha: float = 0.05,
     n_jobs: int = 1,
     seed: int | None = None,
+    max_working_bytes: int = 256*1024**2,
+    disk_backed: bool = False,
+    scratch_dir=None,
+    chunk_size: int | None = None,
     key_added: str = "getis_ord",
 ) -> pd.DataFrame:
     """Local spatial association with empirical two-sided permutation p-values.
@@ -826,7 +887,8 @@ def getis_ord(
 
     scoped = _local_by_library(adata, getis_ord, (keys,), dict(
         layer=layer, neighbors_key=neighbors_key, n_perms=n_perms, p_adjust_method=p_adjust_method,
-        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added), getis=True)
+        alpha=alpha, n_jobs=n_jobs, seed=seed, key_added=key_added,
+        max_working_bytes=max_working_bytes, disk_backed=disk_backed, scratch_dir=scratch_dir, chunk_size=chunk_size), getis=True)
     if scoped is not None:
         return scoped
     w = _build_weights(adata, neighbors_key, row_standardize=False)
@@ -848,17 +910,18 @@ def getis_ord(
     for key in keys:
         y = _extract_values(adata, key, layer)
         lG = esda.G_Local(
-            y, w, permutations=n_perms, transform="r", star=1,
-            n_jobs=n_jobs, seed=seed, keep_simulations=True,
+            y, w, permutations=0, transform="r", star=1,
+            n_jobs=n_jobs, seed=seed, keep_simulations=False,
         )
 
         z_norm = np.asarray(lG.Zs, dtype=np.float64)
         p_norm = np.minimum(2.0 * sp_stats.norm.sf(np.abs(z_norm)), 1.0)
 
         if n_perms > 0:
-            z_sim = np.asarray(lG.z_sim)
-            p_sim, n_valid = permutation_p(np.asarray(lG.Gs), np.asarray(lG.sim).T)
-            p_dir = _directed_perm_p(np.asarray(lG.Gs), np.asarray(lG.sim).T)
+            from astrolabe.tl._local_stream import _conditional_summary
+            p_sim, n_valid, p_dir, z_sim = _conditional_summary(
+                lG, n_perms, seed, getis=True, max_working_bytes=max_working_bytes,
+                disk_backed=disk_backed, scratch_dir=scratch_dir, chunk_size=chunk_size)
         else:
             n_valid = np.zeros(adata.n_obs, dtype=int)
             z_sim = np.full(adata.n_obs, np.nan)
@@ -1178,6 +1241,11 @@ def ripley_l(
     n_perms: int = 1000,
     seed: int | None = None,
     n_jobs: int = 1,
+    tissue_support: str | None = "auto",
+    library_key: str | None = "auto",
+    core_key: str | None = "auto",
+    radii=None,
+    edge_correction: str = "border",
     key_added: str = "ripley_l",
 ) -> dict[str, pd.DataFrame]:
     """Ripley's L function (Ripley 1976; Besag 1977) for cell-type point patterns.
@@ -1264,8 +1332,22 @@ def ripley_l(
     >>> curves = ab.tl.ripley_l(mdata, groupby="leiden")
     >>> curves["0"].plot(y=["L_obs", "L_hi", "L_lo"])   # cluster 0
     """
-    from astrolabe._utils import _check_single_library
+    from astrolabe._utils import _check_single_spatial_unit as _check_single_library
 
+    from astrolabe._spatial_units import _unit_keys, _units
+    library_key, core_key = _unit_keys(adata, library_key, core_key)
+    if tissue_support == "auto":
+        tissue_support = adata.uns.get("spatial_units", {}).get("support_key")
+    if core_key is not None and tissue_support is None:
+        raise ValueError("TMA Ripley analysis requires observed per-core tissue support")
+    units, _ = _units(adata, library_key, core_key)
+    if len(units) > 1 and tissue_support is None:
+        raise ValueError("multiple libraries require observed per-unit tissue support for Ripley analysis")
+    if tissue_support is not None or len(units) > 1 or radii is not None:
+        from astrolabe.tl._tissue_stats import _ripley_masked
+        return _ripley_masked(adata, groupby, spatial_key=spatial_key, tissue_support=tissue_support,
+                             library_key=library_key, core_key=core_key, radii=radii, support=support,
+                             edge_correction=edge_correction, n_perms=n_perms, seed=seed, key_added=key_added)
     _check_single_library(adata)
 
     if spatial_key not in adata.obsm:
@@ -1573,6 +1655,8 @@ def spatially_variable_genes(
         raise ValueError("n_perms must be a nonnegative integer")
 
     genes = list(adata.var_names)
+    from astrolabe._coverage import _require_measured
+    _require_measured(adata, genes)
     log.info(
         "spatially_variable_genes: flavor='%s', %d genes, %d cells",
         flavor,
@@ -1615,97 +1699,59 @@ def geary_c(
     neighbors_key: str = "spatial_neighbors",
     n_perms: int = 1000,
     seed: int | None = None,
+    alternative: str = "two-sided",
     key_added: str = "geary_c",
 ) -> pd.DataFrame:
-    """Global Geary's C (Geary 1954) spatial autocorrelation for one or more keys.
+    """Global Geary's C for expression or numeric observation fields.
 
-    Geary's C is a complementary measure to Moran's I.  Values significantly
-    below 1 indicate positive spatial autocorrelation (nearby cells are
-    similar); values above 1 indicate negative autocorrelation.
+    Values below one indicate positive spatial autocorrelation. Permutations
+    respect the graph's library grouping; build the graph with
+    ``library_key=None`` for a pooled null. ``alternative`` selects inclusive
+    ``'two-sided'`` (default), ``'less'`` (positive autocorrelation), or
+    ``'greater'`` tails. ``seed`` controls a local RNG.
 
-    Requires :func:`~astrolabe.tl.spatial_neighbors` to have been run first.
+    ``n_perms=0`` provides analytic normality inference for a single library.
+    Multiple libraries require permutations, with missing analytic diagnostics.
+    Undefined statistics receive missing p-values and ``status='not_tested'``;
+    nonfinite inputs raise. P-values are unadjusted.
 
     Parameters
     ----------
     data
-        :class:`~anndata.AnnData` or :class:`~mudata.MuData`.
+        AnnData or MuData input; MuData accepts a ``modality`` keyword.
     keys
-        One or more gene / obs column names to test.
-    modality
-        For :class:`~mudata.MuData`: modality key.
+        Gene names or numeric observation columns to test.
     layer
-        Expression layer.  ``None`` uses ``X``.
+        Expression layer; ``None`` uses ``X``.
     neighbors_key
-        ``uns`` key written by :func:`~astrolabe.tl.spatial_neighbors`.
+        Stored graph metadata key.
     n_perms
-        Permutations for empirical p-values (``0`` uses normality
-        approximation only).
+        Number of within-library permutations; zero selects analytic inference.
     seed
-        Seed for the permutation RNG (``esda.Geary`` accepts no ``seed=`` of
-        its own; the global numpy RNG is seeded around the call and restored
-        after). ``None`` (default) is unseeded, matching prior behavior.
+        Seed for the local permutation RNG.
+    alternative
+        ``'two-sided'``, ``'greater'``, or ``'less'``.
     key_added
-        ``uns`` key where the result DataFrame is stored.
+        Result key in ``uns``.
 
     Returns
     -------
-    pd.DataFrame
-        One row per key with columns ``C``, ``EC``, ``z_norm``, ``p_norm``,
-        and (when ``n_perms > 0``) ``z_sim``, ``p_sim``.
+    pandas.DataFrame
+        One row per field, with unadjusted inference and null diagnostics.
 
-        .. note::
-            As in :func:`moran`, the two p-value columns use different
-            conventions: ``p_norm`` is **two-tailed** (esda's one-tailed
-            analytic value, doubled here to align with ``esda.Moran``'s
-            ``two_tailed=True``), while ``p_sim`` is esda's **one-tailed,
-            data-directed** permutation p-value (tail picked from the sign
-            of the observed deviation, never doubled) — roughly half the
-            two-tailed equivalent for the same evidence.
-
-        Also stored in ``adata.uns[key_added]``, and mirrored to
-        ``mdata.uns[key_added][<modality>]`` when called on a MuData.
-
-    Examples
-    --------
-    >>> ab.tl.spatial_neighbors(mdata)
-    >>> result = ab.tl.geary_c(mdata, ["EPCAM", "CD3D"])
-    >>> result.sort_values("C")
+    Notes
+    -----
+    Columns include ``C``, ``EC``, ``z_norm``, ``p_norm``,
+    ``z_sim``, ``p_sim``, null moments, valid-draw counts, status, and
+    permutation-resolution diagnostics. ``EC`` is the analytic expectation for
+    a single library and the simulation mean for multiple libraries. ``layer``
+    selects expression and MuData accepts ``modality``. Results are stored in
+    ``uns[key_added]`` and mirrored to the MuData parent when applicable.
     """
-    import esda
-
-    if isinstance(keys, str):
-        keys = [keys]
-
-    w = _build_weights(adata, neighbors_key)
-    log.info("geary_c: %d keys, %d cells, n_perms=%d", len(keys), adata.n_obs, n_perms)
-
-    rows = []
-    for key in keys:
-        y = _extract_values(adata, key, layer)
-        with _seeded_numpy_state(seed):
-            gc = esda.Geary(y, w, permutations=n_perms)
-        row: dict[str, float] = {
-            "C": gc.C,
-            "EC": gc.EC,
-            "z_norm": gc.z_norm,
-            # esda.Geary.p_norm is one-tailed by esda's own design (only the
-            # sign-matching tail, never doubled) -- esda.Moran.p_norm is
-            # two-tailed (moran() above passes two_tailed=True). Left as-is,
-            # the same nominal alpha would be ~2x more lenient for geary_c
-            # than for moran. Doubled here (capped at 1.0) to match moran's
-            # two-tailed p_norm. (spatially_variable_genes uses its own
-            # one-sided convention on both flavors -- see _svg_geary.)
-            "p_norm": min(2.0 * gc.p_norm, 1.0),
-        }
-        if n_perms > 0:
-            row["z_sim"] = gc.z_sim
-            row["p_sim"] = gc.p_sim
-        rows.append(row)
-
-    result = pd.DataFrame(rows, index=pd.Index(keys, name="key"))
-    adata.uns[key_added] = result
-    log.info("geary_c: done — min C=%.3f (%s)", result["C"].min(), result["C"].idxmin())
-    return result
+    keys = [keys] if isinstance(keys, str) else list(keys)
+    return _global_autocorrelation(adata, keys, keys, kind="geary", layer=layer,
+        neighbors_key=neighbors_key, n_perms=n_perms, seed=seed,
+        alternative=alternative, key_added=key_added)
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
@@ -1742,19 +1788,10 @@ def colocation_quotient(
     (attraction); ``CLQ < 1``: under-represented (avoidance); ``CLQ ≈ 1``:
     no spatial association.
 
-    This is a genuinely spatial, **asymmetric** statistic (``CLQ_{A→B} !=
-    CLQ_{B→A}`` in general, and shuffling point coordinates changes the
-    result) — unlike this function's previous implementation, which computed
-    a symmetric, coordinate-*invariant* same-location co-occurrence lift
-    between gene pairs (whether two genes were ever detected in the same
-    cell/bin, independent of any cell's position). That statistic is not the
-    published CLQ and has been replaced rather than kept alongside it.
-    **This is a breaking change**: the function now takes a categorical
-    ``groupby`` column (e.g. cell type, Leiden cluster) instead of gene
-    pairs, and no longer has a ``mode='pixel'``/``transcripts=`` path — a
-    segmentation-free, gene-level analog of nearest-neighbor CLQ has no
-    natural single "location" for a transcript the way a same-location
-    lift did, so it isn't offered here.
+    The statistic is asymmetric (``CLQ_{A→B} != CLQ_{B→A}`` in general).
+    Each focal cell is excluded by index, while distinct cells at identical
+    coordinates remain eligible neighbors. Distance ties follow the KD-tree
+    query order, retaining exactly ``k`` other cells per focal cell.
 
     Requires ``obsm[spatial_key]`` (no separate ``spatial_neighbors`` graph
     needed — the k-NN graph is derived internally from ``k``).
@@ -1785,8 +1822,8 @@ def colocation_quotient(
     n_perms
         Label-permutation null (coordinates and the k-NN graph fixed,
         category labels reshuffled) for an empirical two-sided p-value:
-        the rank-based ``(2·min(#perms ≥ obs, #perms ≤ obs) + 1) /
-        (n_perms + 1)``, computed against the permutation distribution
+        ``min(1, 2·(min(#perms ≥ obs, #perms ≤ obs) + 1) /
+        (n_perms + 1))``, computed against the permutation distribution
         itself rather than against deviation from a hardcoded 1.0 (the
         null mean of CLQ is not exactly 1 in finite samples — especially
         on the diagonal — and the distribution is right-skewed).
@@ -1814,7 +1851,7 @@ def colocation_quotient(
     >>> clq = ab.tl.colocation_quotient(mdata, groupby="cell_type", n_perms=200)
     >>> clq.query("category_a != category_b").sort_values("clq", ascending=False).head(10)
     """
-    from astrolabe._utils import _check_single_library
+    from astrolabe._utils import _check_single_spatial_unit as _check_single_library
 
     _check_single_library(adata)
 
@@ -1860,11 +1897,10 @@ def colocation_quotient(
 
     from scipy.spatial import cKDTree
     tree = cKDTree(coords)
-    # k+1 is always >= 2, so cKDTree.query always returns a 2-D (n, k+1)
-    # array here (it only collapses to 1-D when the scalar k=1 is passed
-    # directly). Column 0 is each point itself (distance 0); drop it.
+    # Coincident cells may precede the query itself. Remove self by identity;
+    # other zero-distance cells remain eligible. KDTree order breaks ties.
     _, nn_idx = tree.query(coords, k=k + 1)
-    nn_idx = nn_idx[:, 1:]
+    nn_idx = np.asarray([row[row != i][:k] for i, row in enumerate(nn_idx)])
 
     def _clq_matrix(codes_arr: np.ndarray) -> np.ndarray:
         """Full (n_types x n_types) CLQ matrix for one label assignment.

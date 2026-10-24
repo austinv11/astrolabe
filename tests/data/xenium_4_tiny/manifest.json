@@ -1,0 +1,14 @@
+{
+  "vendor": "10x Genomics",
+  "xoa_version": "4.0.0",
+  "license": "CC-BY-4.0",
+  "archive_md5": "50c04dea5e751e1c7508ff24528242e8",
+  "sha256": {
+    "cell_boundaries.parquet": "8d0309239bea32672733d045dd31f237cc13e8cd4b3459fdbe35a7c77833057b",
+    "cell_feature_matrix.h5": "1e20d87cffd9784d678e4ca90511c5ac2fe61becea363e81a8ecab87e6abfa73",
+    "cells.parquet": "8f2f5a00782c356c521671e3267c45cea567e7365428726228443ae704256246",
+    "experiment.xenium": "c44938ee3c0895c8d270fa1541739145d49143e95c0efe96132a0a179d1cd233",
+    "nucleus_boundaries.parquet": "14b6c61380605841490328dd38d08ece166a7a4e074510fdcf3a8b5561ac5ae9",
+    "transcripts.parquet": "065a258da4d06a2274cefc249f11d504c917919b35be2093b6923a8f75b4e3b5"
+  }
+}

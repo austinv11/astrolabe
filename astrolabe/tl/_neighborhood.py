@@ -24,8 +24,9 @@ import scipy.sparse as sp
 from joblib import Parallel, delayed
 
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
-from astrolabe._utils import _check_single_library, _spawn_rngs, from_kwarg, with_adata
-from astrolabe.tl._spatial_stats import _get_conn_matrix
+from astrolabe._utils import _check_single_spatial_unit as _check_single_library
+from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
+from astrolabe.tl._spatial_stats import _get_conn_matrix, _permutation_blocks, _shuffle_blocks
 
 __all__ = [
     "nhood_enrichment",
@@ -82,6 +83,7 @@ def nhood_enrichment(
     groupby: str,
     *,
     neighbors_key: str = "spatial_neighbors",
+    library_key: str | None = "auto",
     n_perms: int = 1000,
     seed: int = 0,
     n_jobs: int = 1,
@@ -108,6 +110,11 @@ def nhood_enrichment(
         Modality key when *data* is :class:`~mudata.MuData`.
     neighbors_key
         ``uns`` key written by :func:`~astrolabe.tl.spatial_neighbors`.
+    library_key
+        ``'auto'`` uses the graph's library grouping. A column name overrides
+        that grouping; ``None`` explicitly requests pooled label permutations.
+        Labels are shuffled only within each library. Missing labels and
+        graph edges crossing the chosen library boundaries are rejected.
     n_perms
         Number of label permutations for the null distribution.
     seed
@@ -129,12 +136,19 @@ def nhood_enrichment(
         (n_types × n_types) int array of observed edge counts.
     ``groups``
         List of cell-type labels corresponding to matrix rows/columns.
+    ``status``
+        ``'tested'`` where the null has positive variance; otherwise
+        ``'zero_variance'`` with a missing z-score. ``metadata`` records the
+        library grouping, seed, and number of permutations.
 
     Examples
     --------
     >>> ab.tl.nhood_enrichment(mdata, 'leiden')
     >>> ab.pl.nhood_enrichment_plot(mdata, 'leiden')
     """
+    if not isinstance(n_perms, (int, np.integer)) or n_perms < 2:
+        raise ValueError("n_perms must be an integer of at least two")
+    blocks, library_key = _permutation_blocks(adata, neighbors_key, library_key=library_key)
     codes, categories = _category_codes(adata, groupby)
     n_types = len(categories)
 
@@ -149,8 +163,7 @@ def nhood_enrichment(
     # (numpy's mean-then-deviations), which avoids the same catastrophic-
     # cancellation failure mode a single-pass sum-of-squares formula would hit.
     def _one_perm(child_rng: "np.random.Generator") -> np.ndarray:
-        perm_codes = codes.copy()
-        child_rng.shuffle(perm_codes)
+        perm_codes = _shuffle_blocks(codes, child_rng, blocks)
         Cp = _one_hot(perm_codes, n_types)
         return (Cp.T @ adj @ Cp).toarray().astype(np.float64)
 
@@ -163,12 +176,15 @@ def nhood_enrichment(
     perm_std = perm_stack.std(axis=0)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        zscore = np.where(perm_std > 0, (obs_counts - perm_mean) / perm_std, 0.0)
+        zscore = np.where(perm_std > 0, (obs_counts - perm_mean) / perm_std, np.nan)
 
     adata.uns[key_added] = {
         "zscore": zscore,
         "counts": obs_counts.astype(np.int64),
         "groups": categories,
+        "status": np.where(perm_std > 0, "tested", "zero_variance"),
+        "metadata": {"library_key": library_key, "n_libraries": len(blocks),
+                     "n_perms": int(n_perms), "seed": seed},
     }
     log.info("nhood_enrichment: %d cell types, %d permutations.", n_types, n_perms)
 
@@ -607,6 +623,8 @@ def expression_by_distance(
     else:
         mat = adata.layers[layer] if layer is not None else adata.X
         gene_names = adata.var_names.tolist()
+    from astrolabe._coverage import _require_measured
+    _require_measured(adata, gene_names)
 
     if sp.issparse(mat):
         mat = mat.toarray()
@@ -665,11 +683,16 @@ def expression_by_distance(
 @with_adata(mirror_uns=from_kwarg("key_added"))
 def ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", layer=None,
            n_perms=100, seed=None, expr_frac_threshold=.1, report_alpha=.05,
-           corr_method="fdr_bh", n_jobs=1, min_valid_perms=20, library_key="library_id",
-           max_scratch_bytes=256*1024**2, key_added="ligrec"):
+           corr_method="fdr_bh", n_jobs=1, min_valid_perms=20, library_key="auto",
+           max_scratch_bytes=256*1024**2, coverage_policy="error", key_added="ligrec"):
     """Complex-aware spatial-edge ligand/receptor association.
 
     Uses minimum-subunit expression and within-library label permutations.
+    ``library_key='auto'`` follows the graph grouping; ``None`` explicitly
+    pools permutations. A named column must exist and contain complete labels.
+    ``coverage_policy='error'`` rejects partial-panel interactions. ``'eligible'``
+    uses only libraries measuring all subunits, reported in ``eligible_libraries``.
+    Interactions measured by no library are explicitly untested.
     Missing subunits, expression gates and too few valid null scores are
     explicitly untested. ``n_valid`` and ``status`` accompany p-values;
     zero-edge permutations are excluded from the denominator. Scratch space
@@ -682,7 +705,7 @@ def ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", layer
                    n_perms=n_perms, seed=seed, expr_frac_threshold=expr_frac_threshold,
                    report_alpha=report_alpha, corr_method=corr_method, n_jobs=n_jobs,
                    min_valid_perms=min_valid_perms, library_key=library_key,
-                   max_scratch_bytes=max_scratch_bytes, key_added=key_added)
+                   max_scratch_bytes=max_scratch_bytes, coverage_policy=coverage_policy, key_added=key_added)
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))

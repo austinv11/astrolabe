@@ -160,7 +160,7 @@ def read_cosmx(
     # 3. Cell boundaries                                                   #
     # ------------------------------------------------------------------ #
     if load_boundaries:
-        poly_path = _find_glob(path, "*_polygons.csv", "polygons", required=False)
+        poly_path = _find_glob(path, "*polygons.csv", "polygons", required=False)
         if poly_path is not None:
             _attach_boundaries(adata, poly_path, pixel_size_um)
         else:
@@ -317,6 +317,9 @@ def _attach_boundaries(
             file_mb,
         )
     poly_df = pd.read_csv(poly_path)
+    # Published CosMx exports use cellID in polygons and cell_ID in counts.
+    if "cellID" in poly_df and "cell_ID" not in poly_df:
+        poly_df = poly_df.rename(columns={"cellID": "cell_ID"})
 
     # Build compound cell_id key (same scheme as obs_names)
     if "fov" in poly_df.columns and "cell_ID" in poly_df.columns:

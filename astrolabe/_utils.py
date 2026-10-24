@@ -348,6 +348,8 @@ def _resolve_field(
 
     # axis == "obs"
     if key in adata.var_names:
+        from astrolabe._coverage import _require_measured
+        _require_measured(adata, [key])
         idx = adata.var_names.get_loc(key)
         mat = adata.layers[layer] if layer is not None else adata.X
         x_col = mat[:, idx]
@@ -356,6 +358,8 @@ def _resolve_field(
         return np.asarray(x_col).astype(np.float64), False
 
     if key in adata.obs.columns:
+        from astrolabe._dependencies import _assert_fresh
+        _assert_fresh(adata, "obs", key)
         col = adata.obs[key]
         if hasattr(col, "cat") or col.dtype == object:
             return col.astype(str).to_numpy(), True
@@ -597,6 +601,7 @@ def with_adata(
     fn: _F | None = None,
     *,
     mirror_uns: str | _KeyFromParam | Callable[[inspect.BoundArguments], str] | None = None,
+    spatial_result: bool | None = None,
 ) -> _F | Callable[[_F], _F]:
     """Decorator: prepend ``data`` / ``modality`` args that resolve to AnnData before calling *fn*.
 
@@ -611,6 +616,9 @@ def with_adata(
 
     Parameters
     ----------
+    spatial_result
+        Explicitly register outputs as depending on spatial observations.
+        ``None`` uses the spatial-analysis module convention.
     mirror_uns
         Optional. When given, and *data* is a :class:`~mudata.MuData`, the
         ``uns`` entry *fn* wrote is additionally mirrored to
@@ -639,7 +647,7 @@ def with_adata(
     >>> my_stat(mdata)  # also mirrored to mdata.uns["my_stat"]["xenium"]
     """
     def _decorate(fn: _F) -> _F:
-        sig = inspect.signature(fn) if mirror_uns is not None else None
+        sig = inspect.signature(fn)
 
         def _resolve_mirror_key(adata: ad.AnnData, args: tuple, kwargs: dict) -> str | None:
             if isinstance(mirror_uns, str):
@@ -659,21 +667,37 @@ def with_adata(
         def wrapper(data: ad.AnnData | md.MuData, *args, modality: str | None = None, **kwargs):
             adata, resolved_modality = _resolve_adata_and_modality(data, modality)
             spatial_modules = {"_spatial_stats", "_neighborhood", "_icg", "_gradient", "_niches", "_regions",
-                               "_communication", "_image_features", "_gene_modules", "_flux", "_subcellular"}
-            spatial_result = fn.__module__.rsplit(".", 1)[-1] in spatial_modules
-            before = {attr: set(getattr(adata, attr)) for attr in ("uns", "obs", "var", "obsm", "obsp")} if spatial_result else {}
+                               "_communication", "_image_features", "_gene_modules", "_flux", "_subcellular",
+                               "_graph", "_de", "_niche_cohort", "_sensitivity"}
+            tracks_spatial = (fn.__module__.rsplit(".", 1)[-1] in spatial_modules
+                              if spatial_result is None else spatial_result)
+            from astrolabe._dependencies import _inputs, _register, _invalidate_changed, _assert_sources_fresh
+            from astrolabe._state import _spatial_result_keys, _clear_spatial_mirrors
+            mirrored_before = _spatial_result_keys(adata) if resolved_modality is not None else set()
+            if fn.__module__.rsplit(".", 1)[-1] == "_graph":
+                _invalidate_changed(adata)
+            before = {attr: set(getattr(adata, attr)) for attr in ("uns", "obs", "var", "obsm", "obsp")} if tracks_spatial else {}
+            bound = sig.bind(adata, *args, **kwargs)
+            bound.apply_defaults()
+            dependencies = _inputs(adata, fn, bound.arguments) if tracks_spatial else {}
+            if tracks_spatial:
+                _assert_sources_fresh(adata, dependencies)
             old_obs, old_var = adata.obs_names.copy(), adata.var_names.copy()
             result = fn(adata, *args, **kwargs)
+            if fn.__module__.startswith("astrolabe.pp.") or fn.__module__.rsplit(".", 1)[-1] in {"_graph", "_de", "_cluster", "_embedding"}:
+                _invalidate_changed(adata)
+            if resolved_modality is not None:
+                _clear_spatial_mirrors(data, resolved_modality, mirrored_before - set(adata.uns))
             if resolved_modality is not None and (
                 not old_obs.equals(adata.obs_names) or not old_var.equals(adata.var_names)
             ):
                 data.update()
 
-            if spatial_result:
+            if tracks_spatial:
                 registry = adata.uns.setdefault("_astrolabe_spatial_results", {})
                 changed = {attr: sorted(set(getattr(adata, attr)) - before[attr])
                            for attr in ("uns", "obs", "var", "obsm", "obsp")}
-                changed["uns"] = [key for key in changed["uns"] if key != "_astrolabe_spatial_results"]
+                changed["uns"] = [key for key in changed["uns"] if not key.startswith("_astrolabe_")]
                 if mirror_uns is not None:
                     key = _resolve_mirror_key(adata, args, kwargs)
                     if key in adata.uns and key not in changed["uns"]:
@@ -681,6 +705,8 @@ def with_adata(
                 prior = registry.get(fn.__name__, {})
                 registry[fn.__name__] = {attr: sorted(set(prior.get(attr, [])) | set(keys))
                                         for attr, keys in changed.items()}
+                output_key = _resolve_mirror_key(adata, args, kwargs) if mirror_uns is not None else bound.arguments.get("key_added", fn.__name__)
+                _register(adata, fn.__name__ + ":" + str(output_key), dependencies, changed)
 
             if mirror_uns is not None and resolved_modality is not None:
                 uns_key = _resolve_mirror_key(adata, args, kwargs)
@@ -756,6 +782,15 @@ def _resolve_adata(
 
 
 _LIBRARY_ID_KEY = "library_id"
+
+
+def _check_single_spatial_unit(adata: ad.AnnData) -> None:
+    """Guard analyses whose statistic assumes one physical coordinate domain."""
+    _check_single_library(adata)
+    from astrolabe._spatial_units import _units
+    units, _ = _units(adata, neighbors_key="spatial_neighbors")
+    if len(units) > 1:
+        raise ValueError("This analysis requires a single spatial unit (library/core). Analyze unrelated cores separately and rebuild their graphs after subsetting.")
 
 
 def _check_single_library(adata: ad.AnnData) -> None:

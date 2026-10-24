@@ -1,0 +1,67 @@
+[
+  {
+    "scenario": "balanced",
+    "seed": 2026,
+    "repetitions": 1000,
+    "rejection_rate": 0.047,
+    "rejection_ci": [
+      0.03473506226679538,
+      0.06201263069307138
+    ],
+    "interval_coverage": 0.953,
+    "n_untestable": 0,
+    "gate_passed": true
+  },
+  {
+    "scenario": "imbalanced",
+    "seed": 2027,
+    "repetitions": 1000,
+    "rejection_rate": 0.056,
+    "rejection_ci": [
+      0.04257554968641811,
+      0.0721077462832996
+    ],
+    "interval_coverage": 0.944,
+    "n_untestable": 0,
+    "gate_passed": true
+  },
+  {
+    "scenario": "paired",
+    "seed": 2028,
+    "repetitions": 1000,
+    "rejection_rate": 0.031,
+    "rejection_ci": [
+      0.021158171970426676,
+      0.0437150850062412
+    ],
+    "interval_coverage": 0.969,
+    "n_untestable": 0,
+    "gate_passed": true
+  },
+  {
+    "scenario": "rare",
+    "seed": 2029,
+    "repetitions": 1000,
+    "rejection_rate": 0.034,
+    "rejection_ci": [
+      0.02365864810808812,
+      0.047189438615708845
+    ],
+    "interval_coverage": 0.966,
+    "n_untestable": 0,
+    "gate_passed": true
+  },
+  {
+    "scenario": "effect",
+    "seed": 2030,
+    "repetitions": 1000,
+    "rejection_rate": 1.0,
+    "rejection_ci": [
+      0.9963179161033608,
+      1.0
+    ],
+    "interval_coverage": 0.958,
+    "n_untestable": 0,
+    "gate_passed": true
+  }
+]

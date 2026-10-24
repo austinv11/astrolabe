@@ -200,6 +200,7 @@ def spatial_gene_modules(
     seed: int = 0,
     n_jobs: int = 1,
     layer: str | None = None,
+    max_working_bytes: int = 512*1024**2,
     key_added: str = "spatial_module",
 ) -> pd.DataFrame:
     """Cluster genes into spatial co-expression modules.
@@ -365,6 +366,15 @@ def spatial_gene_modules(
         gene_names = list(adata.var_names)
 
     n_genes = len(gene_names)
+    from astrolabe._coverage import _require_measured
+    _require_measured(adata, gene_names)
+    from astrolabe._memory import _budget
+    from joblib import effective_n_jobs
+    from astrolabe.tl._spatial_stats import _permutation_blocks
+    blocks, library_key = _permutation_blocks(adata, neighbors_key)
+    workers = effective_n_jobs(n_jobs) if n_perms else 1
+    required = 8*adata.n_obs*n_genes*(4+3*workers) + 8*n_genes*n_genes*(4+4*workers)
+    _budget(required, max_working_bytes, "Dense gene-module correlation and permutation workers")
     n_modules_eff = min(n_modules, n_genes)
     if clustering == "leiden":
         n_modules_eff = 0  # unused by leiden; count is data-determined
@@ -486,7 +496,9 @@ def spatial_gene_modules(
                 # independent and consumed in a fixed order, so the seed is
                 # identical regardless of n_jobs/thread scheduling.
                 perm_seed = int(rng.integers(0, 2**31 - 1))
-                perm = rng.permutation(Z_valid.shape[0])
+                perm = np.arange(Z_valid.shape[0])
+                for block in blocks:
+                    perm[block] = rng.permutation(block)
                 corr_p = _spatial_corr_matrix(Z_valid[perm], W_norm, correlation)
                 labels_p = _cluster_genes(
                     corr_p, n_modules_eff, clustering,

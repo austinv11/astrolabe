@@ -52,8 +52,11 @@ from astrolabe.io._he import read_he
 from astrolabe.io._concat import concat_samples
 from astrolabe.io._io import save, load, attach_modality
 from astrolabe.io._annotations import read_annotations
+from astrolabe.io._spatialdata import to_spatialdata, from_spatialdata
 
 __all__ = [
+    "to_spatialdata",
+    "from_spatialdata",
     "read_xenium",
     "read_xenium_transcripts",
     "read_merscope",

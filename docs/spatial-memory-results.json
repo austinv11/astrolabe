@@ -1,0 +1,54 @@
+[
+  {
+    "cells": 100000,
+    "genes": 1,
+    "neighbors": 4,
+    "permutations": 39,
+    "disk_backed": false,
+    "seconds": 3.3258295000050566,
+    "peak_rss_bytes": 584192000,
+    "working_budget_bytes": 268435456,
+    "result_sha256": "53a0539a26b2cdb0337da69beb001cda8fc0997d3045a082cb76bc647e669bcc",
+    "python": "3.12.12",
+    "esda": "2.9.0"
+  },
+  {
+    "cells": 100000,
+    "genes": 1,
+    "neighbors": 4,
+    "permutations": 39,
+    "disk_backed": true,
+    "seconds": 3.1829960999966715,
+    "peak_rss_bytes": 569987072,
+    "working_budget_bytes": 268435456,
+    "result_sha256": "53a0539a26b2cdb0337da69beb001cda8fc0997d3045a082cb76bc647e669bcc",
+    "python": "3.12.12",
+    "esda": "2.9.0"
+  },
+  {
+    "cells": 1000000,
+    "genes": 1,
+    "neighbors": 4,
+    "permutations": 39,
+    "disk_backed": false,
+    "seconds": 13.40840219999518,
+    "peak_rss_bytes": 2032951296,
+    "working_budget_bytes": 268435456,
+    "result_sha256": "754d47ac2d707e4d8f2f5f18c48a4bcf6ab9e4e1951a4d7341ef81abaa12375e",
+    "python": "3.12.12",
+    "esda": "2.9.0"
+  },
+  {
+    "cells": 1000000,
+    "genes": 1,
+    "neighbors": 4,
+    "permutations": 39,
+    "disk_backed": true,
+    "seconds": 10.489263699993899,
+    "peak_rss_bytes": 2007670784,
+    "working_budget_bytes": 268435456,
+    "result_sha256": "754d47ac2d707e4d8f2f5f18c48a4bcf6ab9e4e1951a4d7341ef81abaa12375e",
+    "python": "3.12.12",
+    "esda": "2.9.0"
+  }
+]

@@ -1,0 +1,587 @@
+{
+  "seeds": [
+    901,
+    902
+  ],
+  "schedule": "Proseg defaults",
+  "model": "Proseg defaults",
+  "truth": "two cores, 16 cells/core, 400 molecules/cell, 52 genes, genuine shared/boundary/rare expression",
+  "runs": [
+    {
+      "seed": 901,
+      "scenario": "clean",
+      "diffusion": false,
+      "elapsed_seconds": 2.0111724000016693,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.891875,
+          "originally_correct_changed": 0.108125,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.891875,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 1.0577706297959026e-06,
+          "boundary_gene_accuracy": 0.9266895761741123,
+          "shared_gene_accuracy": 0.87509130752374,
+          "rare_cell_accuracy": 0.915
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.88515625,
+          "originally_correct_changed": 0.11484375,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.88515625,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 1.0478746076899321e-06,
+          "boundary_gene_accuracy": 0.9129955947136564,
+          "shared_gene_accuracy": 0.8813432835820896,
+          "rare_cell_accuracy": 0.9175
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "clean",
+      "diffusion": true,
+      "elapsed_seconds": 2.28361679999216,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.8475,
+          "originally_correct_changed": 0.1525,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.85984375,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 2.3689066474907055,
+          "boundary_gene_accuracy": 0.8946162657502864,
+          "shared_gene_accuracy": 0.8246895544192842,
+          "rare_cell_accuracy": 0.885
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.8465625,
+          "originally_correct_changed": 0.1534375,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.86234375,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 2.3781558002853824,
+          "boundary_gene_accuracy": 0.8942731277533039,
+          "shared_gene_accuracy": 0.7992537313432836,
+          "rare_cell_accuracy": 0.8975
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "jitter",
+      "diffusion": false,
+      "elapsed_seconds": 2.478458999990835,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.9125,
+          "reconstructed_accuracy": 0.81625,
+          "originally_correct_changed": 0.14417808219178083,
+          "originally_wrong_recovered": 0.4035714285714286,
+          "foreground_fraction": 0.81734375,
+          "raw_position_rmse_um": 1.1252883696085991,
+          "inferred_position_rmse_um": 1.1252883639567355,
+          "boundary_gene_accuracy": 0.8579610538373424,
+          "shared_gene_accuracy": 0.7655222790357925,
+          "rare_cell_accuracy": 0.8775
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.91171875,
+          "reconstructed_accuracy": 0.8078125,
+          "originally_correct_changed": 0.15715509854327336,
+          "originally_wrong_recovered": 0.44601769911504424,
+          "foreground_fraction": 0.80875,
+          "raw_position_rmse_um": 1.1203909138925259,
+          "inferred_position_rmse_um": 1.1203909034985289,
+          "boundary_gene_accuracy": 0.8557268722466961,
+          "shared_gene_accuracy": 0.7753731343283582,
+          "rare_cell_accuracy": 0.8625
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "jitter",
+      "diffusion": true,
+      "elapsed_seconds": 2.837134400004288,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.9125,
+          "reconstructed_accuracy": 0.80765625,
+          "originally_correct_changed": 0.16866438356164384,
+          "originally_wrong_recovered": 0.5607142857142857,
+          "foreground_fraction": 0.82859375,
+          "raw_position_rmse_um": 1.1252883696085991,
+          "inferred_position_rmse_um": 2.712165853060929,
+          "boundary_gene_accuracy": 0.872852233676976,
+          "shared_gene_accuracy": 0.7326515704894083,
+          "rare_cell_accuracy": 0.8875
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.91171875,
+          "reconstructed_accuracy": 0.824375,
+          "originally_correct_changed": 0.15646958011996573,
+          "originally_wrong_recovered": 0.6265486725663717,
+          "foreground_fraction": 0.84421875,
+          "raw_position_rmse_um": 1.1203909138925259,
+          "inferred_position_rmse_um": 2.7166504099876736,
+          "boundary_gene_accuracy": 0.8579295154185022,
+          "shared_gene_accuracy": 0.7910447761194029,
+          "rare_cell_accuracy": 0.885
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "leak",
+      "diffusion": false,
+      "elapsed_seconds": 4.07607390001067,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.90890625,
+          "reconstructed_accuracy": 0.81546875,
+          "originally_correct_changed": 0.11174144748151968,
+          "originally_wrong_recovered": 0.08919382504288165,
+          "foreground_fraction": 0.826875,
+          "raw_position_rmse_um": 2.269829420269229,
+          "inferred_position_rmse_um": 2.2698294174803664,
+          "boundary_gene_accuracy": 0.8671248568155785,
+          "shared_gene_accuracy": 0.7910883856829802,
+          "rare_cell_accuracy": 0.82
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.90765625,
+          "reconstructed_accuracy": 0.8053125,
+          "originally_correct_changed": 0.12136340161817868,
+          "originally_wrong_recovered": 0.08460236886632826,
+          "foreground_fraction": 0.816875,
+          "raw_position_rmse_um": 2.2951720885389673,
+          "inferred_position_rmse_um": 2.295172095717135,
+          "boundary_gene_accuracy": 0.8502202643171806,
+          "shared_gene_accuracy": 0.7529850746268657,
+          "rare_cell_accuracy": 0.805
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "leak",
+      "diffusion": true,
+      "elapsed_seconds": 2.846826400011196,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.90890625,
+          "reconstructed_accuracy": 0.82734375,
+          "originally_correct_changed": 0.12515042117930206,
+          "originally_wrong_recovered": 0.35334476843910806,
+          "foreground_fraction": 0.86328125,
+          "raw_position_rmse_um": 2.269829420269229,
+          "inferred_position_rmse_um": 3.161778640897073,
+          "boundary_gene_accuracy": 0.8934707903780069,
+          "shared_gene_accuracy": 0.8130021913805697,
+          "rare_cell_accuracy": 0.88
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.90765625,
+          "reconstructed_accuracy": 0.80953125,
+          "originally_correct_changed": 0.13926665519022208,
+          "originally_wrong_recovered": 0.3062605752961083,
+          "foreground_fraction": 0.8421875,
+          "raw_position_rmse_um": 2.2951720885389673,
+          "inferred_position_rmse_um": 3.2810687436402937,
+          "boundary_gene_accuracy": 0.8425110132158591,
+          "shared_gene_accuracy": 0.7440298507462687,
+          "rare_cell_accuracy": 0.855
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "far",
+      "diffusion": false,
+      "elapsed_seconds": 2.3649110999976983,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.855625,
+          "reconstructed_accuracy": 0.77640625,
+          "originally_correct_changed": 0.09715120525931337,
+          "originally_wrong_recovered": 0.027056277056277056,
+          "foreground_fraction": 0.79890625,
+          "raw_position_rmse_um": 5.674573550673072,
+          "inferred_position_rmse_um": 5.674573545862039,
+          "boundary_gene_accuracy": 0.8155784650630011,
+          "shared_gene_accuracy": 0.7450693937180424,
+          "rare_cell_accuracy": 0.8
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.85015625,
+          "reconstructed_accuracy": 0.7759375,
+          "originally_correct_changed": 0.09189487226612755,
+          "originally_wrong_recovered": 0.026068821689259645,
+          "foreground_fraction": 0.80125,
+          "raw_position_rmse_um": 5.737930221347417,
+          "inferred_position_rmse_um": 5.737930218577997,
+          "boundary_gene_accuracy": 0.8006607929515418,
+          "shared_gene_accuracy": 0.7753731343283582,
+          "rare_cell_accuracy": 0.7775
+        }
+      ]
+    },
+    {
+      "seed": 901,
+      "scenario": "far",
+      "diffusion": true,
+      "elapsed_seconds": 2.8099629000062123,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.855625,
+          "reconstructed_accuracy": 0.78015625,
+          "originally_correct_changed": 0.10902118334550767,
+          "originally_wrong_recovered": 0.12337662337662338,
+          "foreground_fraction": 0.83671875,
+          "raw_position_rmse_um": 5.674573550673072,
+          "inferred_position_rmse_um": 6.160456915080366,
+          "boundary_gene_accuracy": 0.8213058419243986,
+          "shared_gene_accuracy": 0.7794010226442659,
+          "rare_cell_accuracy": 0.8225
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.85015625,
+          "reconstructed_accuracy": 0.7775,
+          "originally_correct_changed": 0.10751700055136923,
+          "originally_wrong_recovered": 0.1251303441084463,
+          "foreground_fraction": 0.839375,
+          "raw_position_rmse_um": 5.737930221347417,
+          "inferred_position_rmse_um": 6.2101507492723,
+          "boundary_gene_accuracy": 0.8149779735682819,
+          "shared_gene_accuracy": 0.7664179104477612,
+          "rare_cell_accuracy": 0.7875
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "clean",
+      "diffusion": false,
+      "elapsed_seconds": 2.294571199992788,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.873125,
+          "originally_correct_changed": 0.126875,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.873125,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 1.0676532455675776e-06,
+          "boundary_gene_accuracy": 0.9118572927597062,
+          "shared_gene_accuracy": 0.8638073739653875,
+          "rare_cell_accuracy": 0.9
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.88765625,
+          "originally_correct_changed": 0.11234375,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.88765625,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 1.0469633363250318e-06,
+          "boundary_gene_accuracy": 0.9200913242009132,
+          "shared_gene_accuracy": 0.9128440366972477,
+          "rare_cell_accuracy": 0.905
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "clean",
+      "diffusion": true,
+      "elapsed_seconds": 4.811470700005884,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.8425,
+          "originally_correct_changed": 0.1575,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.85609375,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 2.343574992357791,
+          "boundary_gene_accuracy": 0.906610703043022,
+          "shared_gene_accuracy": 0.8066215199398044,
+          "rare_cell_accuracy": 0.89
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 1.0,
+          "reconstructed_accuracy": 0.841875,
+          "originally_correct_changed": 0.158125,
+          "originally_wrong_recovered": null,
+          "foreground_fraction": 0.85359375,
+          "raw_position_rmse_um": 0.0,
+          "inferred_position_rmse_um": 2.3029193341571372,
+          "boundary_gene_accuracy": 0.8995433789954338,
+          "shared_gene_accuracy": 0.8279816513761468,
+          "rare_cell_accuracy": 0.8975
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "jitter",
+      "diffusion": false,
+      "elapsed_seconds": 2.5902788000094006,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.90671875,
+          "reconstructed_accuracy": 0.811875,
+          "originally_correct_changed": 0.15112872652076512,
+          "originally_wrong_recovered": 0.45226130653266333,
+          "foreground_fraction": 0.81328125,
+          "raw_position_rmse_um": 1.1357438054071476,
+          "inferred_position_rmse_um": 1.135743800324872,
+          "boundary_gene_accuracy": 0.8593913955928646,
+          "shared_gene_accuracy": 0.744920993227991,
+          "rare_cell_accuracy": 0.8675
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.9028125,
+          "reconstructed_accuracy": 0.8171875,
+          "originally_correct_changed": 0.13793700242298373,
+          "originally_wrong_recovered": 0.4003215434083601,
+          "foreground_fraction": 0.82046875,
+          "raw_position_rmse_um": 1.1275536315910466,
+          "inferred_position_rmse_um": 1.127553650706149,
+          "boundary_gene_accuracy": 0.8561643835616438,
+          "shared_gene_accuracy": 0.786697247706422,
+          "rare_cell_accuracy": 0.8425
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "jitter",
+      "diffusion": true,
+      "elapsed_seconds": 2.8421059000102105,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.90671875,
+          "reconstructed_accuracy": 0.8309375,
+          "originally_correct_changed": 0.15078407720144751,
+          "originally_wrong_recovered": 0.6532663316582915,
+          "foreground_fraction": 0.85078125,
+          "raw_position_rmse_um": 1.1357438054071476,
+          "inferred_position_rmse_um": 2.6008523778669503,
+          "boundary_gene_accuracy": 0.8782791185729276,
+          "shared_gene_accuracy": 0.8276899924755455,
+          "rare_cell_accuracy": 0.885
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.9028125,
+          "reconstructed_accuracy": 0.80984375,
+          "originally_correct_changed": 0.16666666666666666,
+          "originally_wrong_recovered": 0.5916398713826366,
+          "foreground_fraction": 0.8315625,
+          "raw_position_rmse_um": 1.1275536315910466,
+          "inferred_position_rmse_um": 2.6664417312490856,
+          "boundary_gene_accuracy": 0.8755707762557078,
+          "shared_gene_accuracy": 0.7217125382262997,
+          "rare_cell_accuracy": 0.8375
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "leak",
+      "diffusion": false,
+      "elapsed_seconds": 2.2970419000048423,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.9021875,
+          "reconstructed_accuracy": 0.79515625,
+          "originally_correct_changed": 0.1279875303082785,
+          "originally_wrong_recovered": 0.08626198083067092,
+          "foreground_fraction": 0.8065625,
+          "raw_position_rmse_um": 2.325479717282184,
+          "inferred_position_rmse_um": 2.3254797215039584,
+          "boundary_gene_accuracy": 0.8373557187827911,
+          "shared_gene_accuracy": 0.7486832204665161,
+          "rare_cell_accuracy": 0.805
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.90484375,
+          "reconstructed_accuracy": 0.80375,
+          "originally_correct_changed": 0.12087722327749957,
+          "originally_wrong_recovered": 0.08702791461412152,
+          "foreground_fraction": 0.8134375,
+          "raw_position_rmse_um": 2.3013141260667953,
+          "inferred_position_rmse_um": 2.3013141306260274,
+          "boundary_gene_accuracy": 0.8458904109589042,
+          "shared_gene_accuracy": 0.7561162079510704,
+          "rare_cell_accuracy": 0.825
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "leak",
+      "diffusion": true,
+      "elapsed_seconds": 3.061369899995043,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.9021875,
+          "reconstructed_accuracy": 0.805,
+          "originally_correct_changed": 0.14426740561136128,
+          "originally_wrong_recovered": 0.33706070287539935,
+          "foreground_fraction": 0.8371875,
+          "raw_position_rmse_um": 2.325479717282184,
+          "inferred_position_rmse_um": 3.234326068067172,
+          "boundary_gene_accuracy": 0.8342077649527807,
+          "shared_gene_accuracy": 0.7614747930775019,
+          "rare_cell_accuracy": 0.8575
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.90484375,
+          "reconstructed_accuracy": 0.80703125,
+          "originally_correct_changed": 0.14228975997237092,
+          "originally_wrong_recovered": 0.3251231527093596,
+          "foreground_fraction": 0.8396875,
+          "raw_position_rmse_um": 2.3013141260667953,
+          "inferred_position_rmse_um": 3.199626571757712,
+          "boundary_gene_accuracy": 0.8458904109589042,
+          "shared_gene_accuracy": 0.746177370030581,
+          "rare_cell_accuracy": 0.81
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "far",
+      "diffusion": false,
+      "elapsed_seconds": 4.11850240000058,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.85046875,
+          "reconstructed_accuracy": 0.77359375,
+          "originally_correct_changed": 0.09259599485577806,
+          "originally_wrong_recovered": 0.012539184952978056,
+          "foreground_fraction": 0.80296875,
+          "raw_position_rmse_um": 5.813699293205461,
+          "inferred_position_rmse_um": 5.813699290089191,
+          "boundary_gene_accuracy": 0.8048268625393494,
+          "shared_gene_accuracy": 0.7486832204665161,
+          "rare_cell_accuracy": 0.785
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.85234375,
+          "reconstructed_accuracy": 0.7628125,
+          "originally_correct_changed": 0.10907424381301559,
+          "originally_wrong_recovered": 0.02328042328042328,
+          "foreground_fraction": 0.78703125,
+          "raw_position_rmse_um": 5.753285315166988,
+          "inferred_position_rmse_um": 5.753285293924574,
+          "boundary_gene_accuracy": 0.7888127853881278,
+          "shared_gene_accuracy": 0.7018348623853211,
+          "rare_cell_accuracy": 0.7525
+        }
+      ]
+    },
+    {
+      "seed": 902,
+      "scenario": "far",
+      "diffusion": true,
+      "elapsed_seconds": 2.8722683000087272,
+      "cores": [
+        {
+          "core": "a",
+          "n_input": 6400,
+          "initial_accuracy": 0.85046875,
+          "reconstructed_accuracy": 0.78078125,
+          "originally_correct_changed": 0.10527282748484292,
+          "originally_wrong_recovered": 0.13270637408568442,
+          "foreground_fraction": 0.840625,
+          "raw_position_rmse_um": 5.813699293205461,
+          "inferred_position_rmse_um": 6.226111360973915,
+          "boundary_gene_accuracy": 0.7911857292759706,
+          "shared_gene_accuracy": 0.7840481565086531,
+          "rare_cell_accuracy": 0.8225
+        },
+        {
+          "core": "b",
+          "n_input": 6400,
+          "initial_accuracy": 0.85234375,
+          "reconstructed_accuracy": 0.7696875,
+          "originally_correct_changed": 0.11879010082493126,
+          "originally_wrong_recovered": 0.1259259259259259,
+          "foreground_fraction": 0.8234375,
+          "raw_position_rmse_um": 5.753285315166988,
+          "inferred_position_rmse_um": 6.238178739549785,
+          "boundary_gene_accuracy": 0.8082191780821918,
+          "shared_gene_accuracy": 0.7270642201834863,
+          "rare_cell_accuracy": 0.815
+        }
+      ]
+    }
+  ]
+}

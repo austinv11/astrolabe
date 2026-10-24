@@ -1,0 +1,29 @@
+{
+  "source": "https://github.com/pachterlab/SFEData",
+  "vendors": {
+    "merscope": {
+      "cells": 1058,
+      "genes": 88,
+      "counts": 74469,
+      "boundaries": 1058,
+      "raw_alignment_qc_graph_roundtrip": "passed",
+      "files": {
+        "cell_by_gene.csv": "234031fa945f85e9c0e27a68524c56ece35063229687a399119738b3934e599b",
+        "cell_metadata.csv": "f25c0bc5952f479a6390bc67d5891fe4de6b5bc1391081f5ae0efe6defc96998",
+        "cell_boundaries.parquet": "204c3464291d5297b4f1d45f3f3ba46bac34b83b3666505b68682d76e40e5b3a"
+      }
+    },
+    "cosmx": {
+      "cells": 27,
+      "genes": 960,
+      "counts": 58633,
+      "boundaries": 27,
+      "raw_alignment_qc_graph_roundtrip": "passed",
+      "files": {
+        "Run5642_S3_Quarter_exprMat_file.csv": "794fdcba442432636a8e3e9cf917a1de6efa8feaa673361b0a6bd1b816b032f7",
+        "Run5642_S3_Quarter_metadata_file.csv": "7d59c0f96a85505b47b7809a619b962b9b0af6fb6884433917b68394d052d04f",
+        "Run5642_S3_Quarter-polygons.csv": "35402439cd3d1a4e6e7d7956df71c071381a3b6f158055587c541cb6cb2020b3"
+      }
+    }
+  }
+}

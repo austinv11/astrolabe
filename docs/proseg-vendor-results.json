@@ -1,0 +1,20 @@
+{
+  "elapsed_seconds": 26.87022949999664,
+  "original_cells": 358,
+  "original_transcripts": 20999,
+  "original_matrix_total": 31714,
+  "meaning": "integration and accounting; no independent assignment truth",
+  "units": {
+    "2e38e77b22c314a4": {
+      "reconstructed_cells": 354,
+      "hard_count_total": 15014,
+      "expected_count_total": 14837.99,
+      "accounting": {
+        "assigned": 15014,
+        "background": 5950,
+        "filtered": 35
+      },
+      "roundtrip": "passed"
+    }
+  }
+}

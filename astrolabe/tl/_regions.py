@@ -7,7 +7,7 @@ import shapely
 from astrolabe._utils import with_adata, from_kwarg
 
 
-def _regions(adata, regions, region_key, library_key):
+def _regions(adata, regions, region_key, library_key, core_key=None):
     if isinstance(regions, str):
         regions = adata.uns[regions]
     if region_key not in regions or not hasattr(regions, "geometry"):
@@ -18,15 +18,18 @@ def _regions(adata, regions, region_key, library_key):
         raise ValueError("regions must contain nonempty valid polygons")
     if not regions.geometry.geom_type.isin(["Polygon", "MultiPolygon"]).all():
         raise ValueError("regions must be polygons")
-    if library_key in adata.obs and adata.obs[library_key].nunique() > 1 and library_key not in regions:
-        raise ValueError("multiple libraries require per-region library labels")
-    dissolve_keys = [region_key] + ([library_key] if library_key in regions else [])
+    for key in (library_key, core_key):
+        if key in adata.obs and adata.obs[key].nunique() > 1 and key not in regions:
+            raise ValueError("multiple libraries/cores require per-region unit labels")
+        if key in regions and regions[key].isna().any():
+            raise ValueError("Region library/core labels must be complete")
+    dissolve_keys = list(dict.fromkeys([region_key] + [key for key in (library_key, core_key) if key in regions]))
     return regions.dissolve(by=dissolve_keys, as_index=False)
 
 
 @with_adata(mirror_uns=from_kwarg("key_added"))
 def assign_regions(adata: ad.AnnData, regions="annotations", *, region_key="region_id",
-                   library_key="library_id", spatial_key="spatial", overlaps="error", key_added="region"):
+                   library_key="auto", core_key="auto", spatial_key="spatial", overlaps="error", key_added="region"):
     """Assign centroids covered by polygons, including polygon boundaries.
 
     Holes exclude cells. ``overlaps='membership'`` returns every membership;
@@ -34,7 +37,9 @@ def assign_regions(adata: ad.AnnData, regions="annotations", *, region_key="regi
     """
     if overlaps not in ("error", "membership"):
         raise ValueError("overlaps must be error or membership")
-    regions = _regions(adata, regions, region_key, library_key)
+    from astrolabe._spatial_units import _unit_keys
+    library_key, core_key = _unit_keys(adata, library_key, core_key)
+    regions = _regions(adata, regions, region_key, library_key, core_key)
     coords = np.asarray(adata.obsm[spatial_key], dtype=float)
     if not np.isfinite(coords).all():
         raise ValueError("spatial coordinates must be finite")
@@ -44,10 +49,11 @@ def assign_regions(adata: ad.AnnData, regions="annotations", *, region_key="regi
     counts = np.zeros(adata.n_obs, dtype=int)
     for _, row in regions.iterrows():
         mask = np.asarray(shapely.covers(row.geometry, points))
-        if library_key in regions:
-            if library_key not in adata.obs:
-                raise ValueError("regions with library labels require matching cell labels")
-            mask &= adata.obs[library_key].to_numpy() == row[library_key]
+        for key in (library_key, core_key):
+            if key in regions:
+                if key not in adata.obs:
+                    raise ValueError("regions with unit labels require matching cell labels")
+                mask &= adata.obs[key].to_numpy() == row[key]
         for idx in np.flatnonzero(mask):
             rows.append((adata.obs_names[idx], row[region_key]))
         counts[mask] += 1
@@ -64,14 +70,16 @@ def assign_regions(adata: ad.AnnData, regions="annotations", *, region_key="regi
 
 @with_adata
 def distance_to_region(adata: ad.AnnData, regions="annotations", *, region,
-                       region_key="region_id", library_key="library_id", spatial_key="spatial",
+                       region_key="region_id", library_key="auto", core_key="auto", spatial_key="spatial",
                        signed=True, key_added="distance_to_region"):
     """Distance in microns to one region's boundary; negative inside.
 
     Disconnected components with the same ID are unioned per library.
     Cells in libraries without the requested region have NaN distance.
     """
-    regions = _regions(adata, regions, region_key, library_key)
+    from astrolabe._spatial_units import _unit_keys
+    library_key, core_key = _unit_keys(adata, library_key, core_key)
+    regions = _regions(adata, regions, region_key, library_key, core_key)
     chosen = regions[regions[region_key] == region]
     if chosen.empty:
         raise KeyError(region)
@@ -80,9 +88,13 @@ def distance_to_region(adata: ad.AnnData, regions="annotations", *, region,
         raise ValueError("spatial coordinates must be finite")
     points = shapely.points(coords)
     values = np.full(adata.n_obs, np.nan)
-    groups = chosen.groupby(library_key, observed=True) if library_key in chosen else [(None, chosen)]
-    for lib, frame in groups:
-        mask = np.ones(adata.n_obs, dtype=bool) if lib is None else adata.obs[library_key].to_numpy() == lib
+    columns = [key for key in (library_key, core_key) if key in chosen]
+    groups = chosen.groupby(columns, observed=True) if columns else [((), chosen)]
+    for labels, frame in groups:
+        labels = labels if isinstance(labels, tuple) else (labels,)
+        mask = np.ones(adata.n_obs, dtype=bool)
+        for key, label in zip(columns, labels):
+            mask &= adata.obs[key].to_numpy() == label
         geometry = shapely.union_all(frame.geometry.to_numpy())
         dist = np.asarray(shapely.distance(points[mask], geometry.boundary if signed else geometry))
         if signed:

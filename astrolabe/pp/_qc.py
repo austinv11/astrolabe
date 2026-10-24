@@ -16,6 +16,7 @@ import scanpy as sc
 from astrolabe._gpu import _gpu_X, _require_rapids, gpu_enabled
 from astrolabe._shapes import _build_polygons
 from astrolabe._utils import with_adata
+from astrolabe._state import _subset_cells
 
 __all__ = [
     "filter_cells",
@@ -936,10 +937,10 @@ def filter_cells(
 
     if inplace:
         _sync_transcripts_after_cell_filter(adata.uns, removed_cell_ids)
-        adata._inplace_subset_obs(mask)
+        _subset_cells(adata, mask, inplace=True)
         return None
     else:
-        filtered = adata[mask].copy()
+        filtered = _subset_cells(adata, mask, inplace=False)
         _sync_transcripts_after_cell_filter(filtered.uns, removed_cell_ids)
         return filtered, mask
 
@@ -1201,10 +1202,10 @@ def filter_isolated(
 
     if inplace:
         _sync_transcripts_after_cell_filter(adata.uns, removed_cell_ids)
-        adata._inplace_subset_obs(mask)
+        _subset_cells(adata, mask, inplace=True)
         return None
     else:
-        filtered = adata[mask].copy()
+        filtered = _subset_cells(adata, mask, inplace=False)
         _sync_transcripts_after_cell_filter(filtered.uns, removed_cell_ids)
         return filtered, mask
 

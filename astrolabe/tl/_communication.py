@@ -58,28 +58,39 @@ def _members(row, side):
 
 def _ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", layer=None,
             n_perms=100, seed=None, expr_frac_threshold=.1, report_alpha=.05,
-            corr_method="fdr_bh", n_jobs=1, min_valid_perms=20, library_key="library_id",
-            max_scratch_bytes=256*1024**2, key_added="ligrec"):
+            corr_method="fdr_bh", n_jobs=1, min_valid_perms=20, library_key="auto",
+            max_scratch_bytes=256*1024**2, coverage_policy="error", key_added="ligrec"):
     from astrolabe.tl._neighborhood import _category_codes
-    from astrolabe.tl._spatial_stats import _get_conn_matrix
+    from astrolabe.tl._spatial_stats import _get_conn_matrix, _permutation_blocks
     if not {"ligand", "receptor"}.issubset(lr_pairs):
         raise ValueError("lr_pairs must have ligand and receptor columns")
     if n_perms < 0 or min_valid_perms < 1 or not 0 <= expr_frac_threshold <= 1 or max_scratch_bytes < 1024:
         raise ValueError("invalid permutation, gate or memory parameters")
     codes, categories = _category_codes(adata, groupby)
     conn = _get_conn_matrix(adata, neighbors_key).tocsr()
-    labels = adata.obs[library_key] if library_key is not None and library_key in adata.obs else None
-    if labels is not None:
-        if labels.isna().any():
-            raise ValueError("library labels must be present")
-        library_codes = pd.factorize(labels)[0]
-    else:
-        library_codes = np.zeros(adata.n_obs, dtype=int)
-    blocks = [np.flatnonzero(library_codes == v) for v in np.unique(library_codes)]
+    blocks, library_key = _permutation_blocks(adata, neighbors_key, library_key=library_key)
+    library_codes = np.zeros(adata.n_obs, dtype=int)
+    for code, block in enumerate(blocks):
+        library_codes[block] = code
     mat = adata.layers[layer] if layer is not None else adata.X
     if hasattr(mat, "get"):
         mat = mat.get()  # CPU fallback retains the graph/layer statistic.
     present = set(adata.var_names)
+    from astrolabe._coverage import _coverage
+    if coverage_policy not in ("error", "eligible"):
+        raise ValueError("coverage_policy must be error or eligible")
+    pair_coverage = []
+    coverage_labels = None
+    for _, row in lr_pairs.iterrows():
+        members = _members(row, "ligand") + _members(row, "receptor")
+        if not set(members).issubset(present):
+            pair_coverage.append(None)
+            continue
+        coverage, coverage_labels = _coverage(adata, members)
+        if coverage.any() and not coverage.all() and coverage_policy == "error":
+            raise ValueError("Partial measured-feature coverage for an interaction; "
+                             "select a common panel or use coverage_policy='eligible'")
+        pair_coverage.append(coverage)
     n_types = len(categories); n_ct = n_types**2; n_lr = len(lr_pairs)
     if not n_lr:
         raise ValueError("lr_pairs is empty")
@@ -87,8 +98,7 @@ def _ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", laye
     n_valid = np.zeros((n_lr, n_ct), dtype=int)
     status = np.full((n_lr, n_ct), "not_tested", dtype=object)
     type_counts = np.bincount(codes, minlength=n_types)
-    measured_pairs = sum(set(_members(row, "ligand")+_members(row, "receptor")).issubset(present)
-                         for _, row in lr_pairs.iterrows())
+    measured_pairs = sum(value is not None and value.any() for value in pair_coverage)
     family_size = int(measured_pairs*np.count_nonzero(type_counts)**2)
     seed = np.random.SeedSequence(seed)
     permutation_seeds = seed.spawn(n_perms)
@@ -118,10 +128,12 @@ def _ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", laye
             np.minimum(result, values, out=result)
         return result
 
-    def scores(ligand, receptor, labels):
+    def scores(ligand, receptor, labels, active):
         sums = np.zeros(n_ct); counts = np.zeros(n_ct)
         for start in range(0, conn.nnz, edge_chunk):
             src, dst = edges(start)
+            keep = active[src] & active[dst]
+            src, dst = src[keep], dst[keep]
             indices = labels[src]*n_types + labels[dst]
             values = (ligand[src] + receptor[dst]) / 2
             sums += np.bincount(indices, weights=values, minlength=n_ct)
@@ -133,20 +145,27 @@ def _ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", laye
         if not set(lm+rm).issubset(present):
             status[pi] = "missing_subunit"
             return
+        coverage = pair_coverage[pi]
+        if not coverage.any():
+            status[pi] = "unmeasured"
+            return
+        active = np.isin(coverage_labels, coverage.index[coverage])
+        active_blocks = [block[active[block]] for block in blocks]
+        active_counts = np.bincount(codes[active], minlength=n_types)
         ligand, receptor = expression(lm), expression(rm)
-        lf = np.divide(np.bincount(codes, weights=ligand > 0, minlength=n_types), type_counts,
-                       out=np.zeros(n_types), where=type_counts > 0)
-        rf = np.divide(np.bincount(codes, weights=receptor > 0, minlength=n_types), type_counts,
-                       out=np.zeros(n_types), where=type_counts > 0)
+        lf = np.divide(np.bincount(codes[active], weights=ligand[active] > 0, minlength=n_types), active_counts,
+                       out=np.zeros(n_types), where=active_counts > 0)
+        rf = np.divide(np.bincount(codes[active], weights=receptor[active] > 0, minlength=n_types), active_counts,
+                       out=np.zeros(n_types), where=active_counts > 0)
         gate = ((lf[:,None] >= expr_frac_threshold) & (rf[None,:] >= expr_frac_threshold)).ravel()
-        observed = scores(ligand, receptor, codes)
+        observed = scores(ligand, receptor, codes, active)
         exceed = np.zeros(n_ct, dtype=int)
         for child_seed in permutation_seeds:
             rng = np.random.default_rng(child_seed)
             shuffled = codes.copy()
-            for block in blocks:
+            for block in active_blocks:
                 shuffled[block] = rng.permutation(shuffled[block])
-            simulated = scores(ligand, receptor, shuffled)
+            simulated = scores(ligand, receptor, shuffled, active)
             valid = np.isfinite(simulated)
             n_valid[pi] += valid
             tolerance = 100*np.finfo(float).eps*np.abs(observed)
@@ -166,15 +185,19 @@ def _ligrec(adata, groupby, lr_pairs, *, neighbors_key="spatial_neighbors", laye
     index = pd.MultiIndex.from_arrays([lr_pairs.ligand, lr_pairs.receptor], names=["ligand", "receptor"])
     columns = pd.MultiIndex.from_product([categories, categories], names=["sender", "receiver"])
     frame = lambda values: pd.DataFrame(values, index=index, columns=columns)
+    coverage_frame = pd.DataFrame([{} if value is None else value.to_dict()
+                                   for value in pair_coverage], index=index).fillna(False).astype(bool)
     floors, limited, resolution = permutation_resolution(
         pvalues, n_valid, alternative="greater", method=corr_method,
         alpha=report_alpha, label="ligand-receptor tests", family_size=family_size)
     result = {"means": frame(means), "pvalues": frame(pvalues), "n_valid": frame(n_valid),
+              "eligible_libraries": coverage_frame,
               "p_min": frame(floors), "resolution_limited": frame(limited),
               "status": frame(status), "metadata": {"groupby": groupby, "layer": layer,
                "n_perms": n_perms, "min_valid_perms": min_valid_perms, "expr_frac_threshold": expr_frac_threshold,
                "report_alpha": report_alpha, "corr_method": corr_method, "neighbors_key": neighbors_key,
-               "library_key": library_key, "spatial_restricted": True, "complex_rule": "minimum subunit",
+               "library_key": library_key, "n_libraries": len(blocks), "coverage_policy": coverage_policy,
+               "spatial_restricted": True, "complex_rule": "minimum subunit",
                "resource": dict(lr_pairs.attrs), "max_scratch_bytes": max_scratch_bytes,
                "permutation_resolution": resolution}}
     result["metadata"].update(family_size=family_size,
@@ -192,6 +215,9 @@ def ligrec_local(adata, lr_pairs, *, layer=None, neighbors_key="spatial_neighbor
     Requires astrolabe[communication]. Local association is not a measurement
     of ligand transport or causal signaling. Complexes use LIANA conventions.
     """
+    from astrolabe._coverage import _require_measured
+    _require_measured(adata, [gene for _, row in lr_pairs.iterrows()
+                             for side in ("ligand", "receptor") for gene in _members(row, side)])
     try:
         import liana as li
     except ImportError as exc:

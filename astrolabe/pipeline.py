@@ -531,7 +531,8 @@ def filter_merscope(
         if max_volume is not None:
             keep &= volume <= max_volume
         n_before = adata.n_obs
-        adata._inplace_subset_obs(keep)
+        from astrolabe._state import _subset_cells
+        _subset_cells(adata, keep, inplace=True, parent=mdata, modality=merscope_key)
         _log_step("filter_volume", n_before, adata.n_obs)
 
     # Shared steps

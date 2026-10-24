@@ -99,5 +99,8 @@ __all__ = [
     "harmony",
 ]
 from astrolabe.pp._pseudobulk import pseudobulk
+from astrolabe.pp._coverage import select_analysis_panel
+from astrolabe.pp._tissue import set_tissue_support
 from astrolabe.pp._image_features import extract_image_features
 __all__ += ["pseudobulk", "extract_image_features"]
+__all__ += ["select_analysis_panel", "set_tissue_support"]

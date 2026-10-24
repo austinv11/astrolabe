@@ -1,0 +1,5999 @@
+{
+  "manifest": {
+    "mode": "sensitivity",
+    "replicates_per_scenario": 10,
+    "cases": [
+      {
+        "directory": "case-00000",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00001",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00002",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00003",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00004",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00005",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00006",
+        "scenario": "donor_condition_null",
+        "seed": 6201,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00007",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00008",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00009",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00010",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00011",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00012",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00013",
+        "scenario": "donor_condition_null",
+        "seed": 6202,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00014",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00015",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00016",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00017",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00018",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00019",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00020",
+        "scenario": "donor_condition_null",
+        "seed": 6203,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00021",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00022",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00023",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00024",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00025",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00026",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00027",
+        "scenario": "donor_condition_null",
+        "seed": 6204,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00028",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00029",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00030",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00031",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00032",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00033",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00034",
+        "scenario": "donor_condition_null",
+        "seed": 6205,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00035",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00036",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00037",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00038",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00039",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00040",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00041",
+        "scenario": "donor_condition_null",
+        "seed": 6206,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00042",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00043",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00044",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00045",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00046",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00047",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00048",
+        "scenario": "donor_condition_null",
+        "seed": 6207,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00049",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00050",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00051",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00052",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00053",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00054",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00055",
+        "scenario": "donor_condition_null",
+        "seed": 6208,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00056",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00057",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00058",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00059",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00060",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00061",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00062",
+        "scenario": "donor_condition_null",
+        "seed": 6209,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00063",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00064",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00065",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00066",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00067",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00068",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00069",
+        "scenario": "donor_condition_null",
+        "seed": 6210,
+        "truth": 0.0,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00070",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00071",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00072",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00073",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00074",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00075",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00076",
+        "scenario": "donor_condition",
+        "seed": 6201,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00077",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00078",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00079",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00080",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00081",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00082",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00083",
+        "scenario": "donor_condition",
+        "seed": 6202,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00084",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00085",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00086",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00087",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00088",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00089",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00090",
+        "scenario": "donor_condition",
+        "seed": 6203,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00091",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00092",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00093",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00094",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00095",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00096",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00097",
+        "scenario": "donor_condition",
+        "seed": 6204,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00098",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00099",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00100",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00101",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00102",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00103",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00104",
+        "scenario": "donor_condition",
+        "seed": 6205,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00105",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00106",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00107",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00108",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00109",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00110",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00111",
+        "scenario": "donor_condition",
+        "seed": 6206,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00112",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00113",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00114",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00115",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00116",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00117",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00118",
+        "scenario": "donor_condition",
+        "seed": 6207,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00119",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00120",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00121",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00122",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00123",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00124",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00125",
+        "scenario": "donor_condition",
+        "seed": 6208,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 144,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00126",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00127",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00128",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00129",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00130",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00131",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00132",
+        "scenario": "donor_condition",
+        "seed": 6209,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 147,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00133",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "default",
+        "prior_settings": {},
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00134",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "spatial_sd_half",
+        "prior_settings": {
+          "spatial_sd_u": 0.5
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00135",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "spatial_sd_double",
+        "prior_settings": {
+          "spatial_sd_u": 2.0
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00136",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "phi_more_iid",
+        "prior_settings": {
+          "phi_alpha": 0.6666666666666666
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00137",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "phi_more_spatial",
+        "prior_settings": {
+          "phi_alpha": 0.3333333333333333
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00138",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "donor_rate_tenth",
+        "prior_settings": {
+          "donor_rate": 5e-06
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      },
+      {
+        "directory": "case-00139",
+        "scenario": "donor_condition",
+        "seed": 6210,
+        "truth": 0.5,
+        "prior": "donor_rate_tenfold",
+        "prior_settings": {
+          "donor_rate": 0.0005
+        },
+        "n_cells": 141,
+        "n_donors": 8
+      }
+    ],
+    "nominal_credible_level": 0.95,
+    "selection": "All predefined settings retained; no default selection or tuning",
+    "method": "Shipped INLA worker; exact prior-table identity per fit; identical graph/prior computations cached only within this benchmark"
+  },
+  "runs": [
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.27308184537374325,
+      "posterior_sd": 0.09669734837683568,
+      "credible_low": 0.08362780508364118,
+      "credible_high": 0.4631477562362352,
+      "probability_positive": 0.9976064144148628,
+      "probability_negative": 0.0023935855851372105,
+      "posterior_sign_error": 0.0023935855851372105,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 22.257216000012704
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.27111933320908765,
+      "posterior_sd": 0.09603904668998003,
+      "credible_low": 0.08282995316444125,
+      "credible_high": 0.4596592973792757,
+      "probability_positive": 0.9976019551856073,
+      "probability_negative": 0.002398044814392664,
+      "posterior_sign_error": 0.002398044814392664,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 3.062889000007999
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.27320747290434444,
+      "posterior_sd": 0.09633816529597454,
+      "credible_low": 0.08442670523545842,
+      "credible_high": 0.46244965272124366,
+      "probability_positive": 0.9977088874162375,
+      "probability_negative": 0.0022911125837624747,
+      "posterior_sign_error": 0.0022911125837624747,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 6.622889699996449
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.2730579288528592,
+      "posterior_sd": 0.09654255875442827,
+      "credible_low": 0.08390999290634868,
+      "credible_high": 0.46279198271863586,
+      "probability_positive": 0.9976458604318479,
+      "probability_negative": 0.0023541395681520734,
+      "posterior_sign_error": 0.0023541395681520734,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 15.78250199998729
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.2731418614456622,
+      "posterior_sd": 0.0965055484454414,
+      "credible_low": 0.0840625561347575,
+      "credible_high": 0.4628299638583655,
+      "probability_positive": 0.997651255681516,
+      "probability_negative": 0.0023487443184839907,
+      "posterior_sign_error": 0.0023487443184839907,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 17.565994699994917
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.2730676514493171,
+      "posterior_sd": 0.09658026000328974,
+      "credible_low": 0.08383776593089934,
+      "credible_high": 0.4629144675743473,
+      "probability_positive": 0.9976244627438262,
+      "probability_negative": 0.0023755372561738222,
+      "posterior_sign_error": 0.0023755372561738222,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.6290088999958243
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6201,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.2646961458229239,
+      "posterior_sd": 0.12095515689309494,
+      "credible_low": 0.02480127517868433,
+      "credible_high": 0.5016488936365384,
+      "probability_positive": 0.9843082928904686,
+      "probability_negative": 0.0156917071095314,
+      "posterior_sign_error": 0.0156917071095314,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 3.10061670000141
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.11604757387566138,
+      "posterior_sd": 0.33894340874033013,
+      "credible_low": -0.7846590181238814,
+      "credible_high": 0.5535352181334169,
+      "probability_positive": 0.36276148100152883,
+      "probability_negative": 0.6372385189984712,
+      "posterior_sign_error": 0.36276148100152883,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 19.05256169999484
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.11047415131209719,
+      "posterior_sd": 0.3378805108616053,
+      "credible_low": -0.7769567900398319,
+      "credible_high": 0.5569514285929107,
+      "probability_positive": 0.3687510827492968,
+      "probability_negative": 0.6312489172507032,
+      "posterior_sign_error": 0.3687510827492968,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.70766270000604
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.1166716114909905,
+      "posterior_sd": 0.33910932728578497,
+      "credible_low": -0.7855742903003436,
+      "credible_high": 0.553192540963336,
+      "probability_positive": 0.3621828964309264,
+      "probability_negative": 0.6378171035690736,
+      "posterior_sign_error": 0.3621828964309264,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.650562299997546
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.11598930199858161,
+      "posterior_sd": 0.338724897180651,
+      "credible_low": -0.7841375967798417,
+      "credible_high": 0.5531197695602929,
+      "probability_positive": 0.36279058029902667,
+      "probability_negative": 0.6372094197009733,
+      "posterior_sign_error": 0.36279058029902667,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 15.491915999999037
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.11463484138281536,
+      "posterior_sd": 0.3381831078976542,
+      "credible_low": -0.7816990762197809,
+      "credible_high": 0.5534700727150765,
+      "probability_positive": 0.36392277286721475,
+      "probability_negative": 0.6360772271327853,
+      "posterior_sign_error": 0.36392277286721475,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 16.950355499997386
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.11603925446078153,
+      "posterior_sd": 0.3387520264552803,
+      "credible_low": -0.7842713713194835,
+      "credible_high": 0.5531652943052833,
+      "probability_positive": 0.36270042829050275,
+      "probability_negative": 0.6372995717094972,
+      "posterior_sign_error": 0.36270042829050275,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.77845410000009
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6202,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.11600031432350692,
+      "posterior_sd": 0.3394733861151987,
+      "credible_low": -0.7856750689737498,
+      "credible_high": 0.5546480328237607,
+      "probability_positive": 0.3630088185128969,
+      "probability_negative": 0.6369911814871031,
+      "posterior_sign_error": 0.3630088185128969,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 5.097468000007211
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.01705238763956012,
+      "posterior_sd": 0.17072149740146464,
+      "credible_low": -0.3534018906213822,
+      "credible_high": 0.32044430733552365,
+      "probability_positive": 0.4588033508296252,
+      "probability_negative": 0.5411966491703748,
+      "posterior_sign_error": 0.4588033508296252,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 12.686731599998893
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.014312695350156435,
+      "posterior_sd": 0.16937470578800687,
+      "credible_low": -0.3479771657489915,
+      "credible_high": 0.32069837860254724,
+      "probability_positive": 0.4649278261026176,
+      "probability_negative": 0.5350721738973824,
+      "posterior_sign_error": 0.4649278261026176,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 7.027136300006532
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.017548895592054883,
+      "posterior_sd": 0.16955065074296666,
+      "credible_low": -0.35156147216638345,
+      "credible_high": 0.3176026943231702,
+      "probability_positive": 0.4573462549716746,
+      "probability_negative": 0.5426537450283254,
+      "posterior_sign_error": 0.4573462549716746,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.7020190000039292
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.01663367274320371,
+      "posterior_sd": 0.16972734159936406,
+      "credible_low": -0.3510162024296563,
+      "credible_high": 0.318896355593478,
+      "probability_positive": 0.45956668733335126,
+      "probability_negative": 0.5404333126666487,
+      "posterior_sign_error": 0.45956668733335126,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 16.692049499994027
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.017461081922705957,
+      "posterior_sd": 0.1701517847614201,
+      "credible_low": -0.3526763321775633,
+      "credible_high": 0.31890557009287096,
+      "probability_positive": 0.45768687375641526,
+      "probability_negative": 0.5423131262435847,
+      "posterior_sign_error": 0.45768687375641526,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 20.10284240001056
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.017139341611388255,
+      "posterior_sd": 0.16989641842633846,
+      "credible_low": -0.351846041513443,
+      "credible_high": 0.31871676713831676,
+      "probability_positive": 0.45839738176803624,
+      "probability_negative": 0.5416026182319638,
+      "posterior_sign_error": 0.45839738176803624,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.2620738000114216
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6203,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.017266710379345192,
+      "posterior_sd": 0.16877059966718908,
+      "credible_low": -0.34972034948097785,
+      "credible_high": 0.31632998130234985,
+      "probability_positive": 0.4578244004116555,
+      "probability_negative": 0.5421755995883445,
+      "posterior_sign_error": 0.4578244004116555,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.5170776000013575
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.17211416392824694,
+      "posterior_sd": 0.14539200733915247,
+      "credible_low": -0.4595167863317849,
+      "credible_high": 0.11399629353822616,
+      "probability_positive": 0.1154470642030222,
+      "probability_negative": 0.8845529357969778,
+      "posterior_sign_error": 0.1154470642030222,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.2335291000053985
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.17260354254025392,
+      "posterior_sd": 0.14537815467310497,
+      "credible_low": -0.45998317090714125,
+      "credible_high": 0.11347976286619621,
+      "probability_positive": 0.11476113904171326,
+      "probability_negative": 0.8852388609582867,
+      "posterior_sign_error": 0.11476113904171326,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.516883999996935
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.1718560737568216,
+      "posterior_sd": 0.14477270533637274,
+      "credible_low": -0.4580119174893247,
+      "credible_high": 0.11301178011218707,
+      "probability_positive": 0.11483160298724904,
+      "probability_negative": 0.885168397012751,
+      "posterior_sign_error": 0.11483160298724904,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 6.277810999992653
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.17193991823646254,
+      "posterior_sd": 0.1447978780662624,
+      "credible_low": -0.45817239361204276,
+      "credible_high": 0.11297258791293438,
+      "probability_positive": 0.11475551871825329,
+      "probability_negative": 0.8852444812817467,
+      "posterior_sign_error": 0.11475551871825329,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.4686384000087855
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.17215998197328855,
+      "posterior_sd": 0.1453798991230364,
+      "credible_low": -0.4595211718234936,
+      "credible_high": 0.11392806319901339,
+      "probability_positive": 0.11538081970585534,
+      "probability_negative": 0.8846191802941447,
+      "posterior_sign_error": 0.11538081970585534,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 3.4940411999996286
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.1720886667855025,
+      "posterior_sd": 0.14519657601230912,
+      "credible_low": -0.4590935259669803,
+      "credible_high": 0.11362768763454822,
+      "probability_positive": 0.11518547172745341,
+      "probability_negative": 0.8848145282725466,
+      "posterior_sign_error": 0.11518547172745341,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 3.6827799000020605
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6204,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.1721373725638672,
+      "posterior_sd": 0.14569574663633686,
+      "credible_low": -0.4601265214505356,
+      "credible_high": 0.11456836761822836,
+      "probability_positive": 0.11591304677928405,
+      "probability_negative": 0.884086953220716,
+      "posterior_sign_error": 0.11591304677928405,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.35170929999731
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.17522642453232712,
+      "posterior_sd": 0.20201204014133053,
+      "credible_low": -0.2211860238639225,
+      "credible_high": 0.5770698517886526,
+      "probability_positive": 0.811716656658322,
+      "probability_negative": 0.18828334334167793,
+      "posterior_sign_error": 0.18828334334167793,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.984069300000556
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.16580421860923505,
+      "posterior_sd": 0.19805484269786547,
+      "credible_low": -0.22239305965249745,
+      "credible_high": 0.5604207771119868,
+      "probability_positive": 0.8033399620496678,
+      "probability_negative": 0.19666003795033218,
+      "posterior_sign_error": 0.19666003795033218,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.7205119999998715
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.1761361881517432,
+      "posterior_sd": 0.20040336404198397,
+      "credible_low": -0.21711682076968378,
+      "credible_high": 0.5745889795401755,
+      "probability_positive": 0.8147037387562952,
+      "probability_negative": 0.18529626124370477,
+      "posterior_sign_error": 0.18529626124370477,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.529075600003125
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.17495106293863316,
+      "posterior_sd": 0.20070965450410802,
+      "credible_low": -0.21888650926096487,
+      "credible_high": 0.5741109074045083,
+      "probability_positive": 0.8127914917446056,
+      "probability_negative": 0.18720850825539437,
+      "posterior_sign_error": 0.18720850825539437,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.1809099999954924
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.1757460441706811,
+      "posterior_sd": 0.2017995780560948,
+      "credible_low": -0.22025189627882863,
+      "credible_high": 0.5771254952307051,
+      "probability_positive": 0.8126811719664306,
+      "probability_negative": 0.1873188280335693,
+      "posterior_sign_error": 0.1873188280335693,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9990448000025935
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.17525958529114474,
+      "posterior_sd": 0.20122165682586596,
+      "credible_low": -0.21959738071671991,
+      "credible_high": 0.5754847553645084,
+      "probability_positive": 0.812660149533685,
+      "probability_negative": 0.187339850466315,
+      "posterior_sign_error": 0.187339850466315,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.2050833999965107
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6205,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.17550630579885565,
+      "posterior_sd": 0.20124851727545587,
+      "credible_low": -0.219408591506746,
+      "credible_high": 0.5757186500290272,
+      "probability_positive": 0.8129313474766517,
+      "probability_negative": 0.1870686525233483,
+      "posterior_sign_error": 0.1870686525233483,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.3273737999988953
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.2786150628762193,
+      "posterior_sd": 0.23393016760894766,
+      "credible_low": -0.7406962829165775,
+      "credible_high": 0.18277881914719185,
+      "probability_positive": 0.11374550151006724,
+      "probability_negative": 0.8862544984899328,
+      "posterior_sign_error": 0.11374550151006724,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9777565999975195
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.28823624908877593,
+      "posterior_sd": 0.2337006450988097,
+      "credible_low": -0.7498577844958929,
+      "credible_high": 0.17264706878749614,
+      "probability_positive": 0.10595126952496281,
+      "probability_negative": 0.8940487304750372,
+      "posterior_sign_error": 0.10595126952496281,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9321711000084179
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.2768651774295413,
+      "posterior_sd": 0.2329304441135866,
+      "credible_low": -0.7368553059707088,
+      "credible_high": 0.1824820952887503,
+      "probability_positive": 0.11431216729613991,
+      "probability_negative": 0.8856878327038601,
+      "posterior_sign_error": 0.11431216729613991,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.671044599992456
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.2782955151230212,
+      "posterior_sd": 0.23360370919483395,
+      "credible_low": -0.739729942025974,
+      "credible_high": 0.18244640561490832,
+      "probability_positive": 0.11369015065035615,
+      "probability_negative": 0.8863098493496439,
+      "posterior_sign_error": 0.11369015065035615,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.966939599995385
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.2798108593668017,
+      "posterior_sd": 0.23307528459871674,
+      "credible_low": -0.740197184485581,
+      "credible_high": 0.17987787006695488,
+      "probability_positive": 0.11191817345906308,
+      "probability_negative": 0.8880818265409369,
+      "posterior_sign_error": 0.11191817345906308,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.825423000002047
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.2792654073451096,
+      "posterior_sd": 0.23402276649484297,
+      "credible_low": -0.7415223580405355,
+      "credible_high": 0.18227327969366558,
+      "probability_positive": 0.1132613850050016,
+      "probability_negative": 0.8867386149949984,
+      "posterior_sign_error": 0.1132613850050016,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9552323999960208
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6206,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": -0.2796682414750354,
+      "posterior_sd": 0.23252232726307007,
+      "credible_low": -0.7389036693384148,
+      "credible_high": 0.17875952077803264,
+      "probability_positive": 0.1114046410077737,
+      "probability_negative": 0.8885953589922263,
+      "posterior_sign_error": 0.1114046410077737,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.938098300001002
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.1167171683879977,
+      "posterior_sd": 0.0915430261140828,
+      "credible_low": -0.06283852463283543,
+      "credible_high": 0.2964496626186546,
+      "probability_positive": 0.8992406218245661,
+      "probability_negative": 0.10075937817543387,
+      "posterior_sign_error": 0.10075937817543387,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.78411400000914
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.12470580725462428,
+      "posterior_sd": 0.09190875818410019,
+      "credible_low": -0.05547340832436895,
+      "credible_high": 0.30516413409068227,
+      "probability_positive": 0.912881876059994,
+      "probability_negative": 0.08711812394000594,
+      "posterior_sign_error": 0.08711812394000594,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9495393999968655
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.10982657308032662,
+      "posterior_sd": 0.09109270904243562,
+      "credible_low": -0.0689797182268201,
+      "credible_high": 0.2885769487160555,
+      "probability_positive": 0.8864962927437938,
+      "probability_negative": 0.11350370725620619,
+      "posterior_sign_error": 0.11350370725620619,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.173210000008112
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.11535802962633214,
+      "posterior_sd": 0.09189366689219905,
+      "credible_low": -0.06488598440057657,
+      "credible_high": 0.29577314326048715,
+      "probability_positive": 0.895727381849787,
+      "probability_negative": 0.10427261815021308,
+      "posterior_sign_error": 0.10427261815021308,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0959440000005998
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.11754801628549322,
+      "posterior_sd": 0.09128383857375033,
+      "credible_low": -0.06148913389718906,
+      "credible_high": 0.29677796254884314,
+      "probability_positive": 0.9014639567581447,
+      "probability_negative": 0.09853604324185528,
+      "posterior_sign_error": 0.09853604324185528,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6514688000024762
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.11654803574222262,
+      "posterior_sd": 0.09138538023621559,
+      "credible_low": -0.06269835240063176,
+      "credible_high": 0.2959677262784027,
+      "probability_positive": 0.899292768030439,
+      "probability_negative": 0.10070723196956102,
+      "posterior_sign_error": 0.10070723196956102,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.010917100007646
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6207,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.11490370524286564,
+      "posterior_sd": 0.09381037530788823,
+      "credible_low": -0.06923791206139669,
+      "credible_high": 0.2990212613176273,
+      "probability_positive": 0.8901552365009221,
+      "probability_negative": 0.10984476349907787,
+      "posterior_sign_error": 0.10984476349907787,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6548136999917915
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.36286177901746286,
+      "posterior_sd": 0.1380152636136208,
+      "credible_low": 0.08902769584554848,
+      "credible_high": 0.6341251960992422,
+      "probability_positive": 0.9944374744089909,
+      "probability_negative": 0.005562525591009078,
+      "posterior_sign_error": 0.005562525591009078,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6886507000017446
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.36587676130333063,
+      "posterior_sd": 0.1278727196970327,
+      "credible_low": 0.11089123119258565,
+      "credible_high": 0.6161164124667385,
+      "probability_positive": 0.9966883098020328,
+      "probability_negative": 0.0033116901979671626,
+      "posterior_sign_error": 0.0033116901979671626,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.3222477000090294
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.36262990976386816,
+      "posterior_sd": 0.13889526976764505,
+      "credible_low": 0.08734182060481716,
+      "credible_high": 0.6356032564881872,
+      "probability_positive": 0.9942856974978899,
+      "probability_negative": 0.00571430250211015,
+      "posterior_sign_error": 0.00571430250211015,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.496178700006567
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.362806830541868,
+      "posterior_sd": 0.1380382329522363,
+      "credible_low": 0.08895635976793398,
+      "credible_high": 0.6340324181120843,
+      "probability_positive": 0.9944476048322115,
+      "probability_negative": 0.0055523951677885425,
+      "posterior_sign_error": 0.0055523951677885425,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.395470799994655
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3620718983210275,
+      "posterior_sd": 0.13895305548849457,
+      "credible_low": 0.08641817966212123,
+      "credible_high": 0.6351009768281275,
+      "probability_positive": 0.994185074284851,
+      "probability_negative": 0.005814925715148916,
+      "posterior_sign_error": 0.005814925715148916,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6897348999918904
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3622310325147741,
+      "posterior_sd": 0.14015987288666776,
+      "credible_low": 0.08436362559632193,
+      "credible_high": 0.6376789341164564,
+      "probability_positive": 0.9938884880048102,
+      "probability_negative": 0.006111511995189797,
+      "posterior_sign_error": 0.006111511995189797,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.1141951000026893
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6208,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3620807957609069,
+      "posterior_sd": 0.14062051911244544,
+      "credible_low": 0.0833490078255803,
+      "credible_high": 0.6384660274229306,
+      "probability_positive": 0.9937774995317323,
+      "probability_negative": 0.006222500468267646,
+      "posterior_sign_error": 0.006222500468267646,
+      "probability_tail_truncated": false,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.13439350000408
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.13101144250402721,
+      "posterior_sd": 0.08139324187379379,
+      "credible_low": -0.028612704287845986,
+      "credible_high": 0.2908669423335317,
+      "probability_positive": 0.9464535558929081,
+      "probability_negative": 0.05354644410709189,
+      "posterior_sign_error": 0.05354644410709189,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.1267498999950476
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.13238690861794597,
+      "posterior_sd": 0.08193056601696738,
+      "credible_low": -0.028270845250741444,
+      "credible_high": 0.2933612026783224,
+      "probability_positive": 0.9471702235746793,
+      "probability_negative": 0.05282977642532071,
+      "posterior_sign_error": 0.05282977642532071,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7410739000042668
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.1307585126850335,
+      "posterior_sd": 0.08132845960822156,
+      "credible_low": -0.028738866372903654,
+      "credible_high": 0.29048365086996797,
+      "probability_positive": 0.9462517860194299,
+      "probability_negative": 0.05374821398057009,
+      "posterior_sign_error": 0.05374821398057009,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.858784600000945
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.1313754870533269,
+      "posterior_sd": 0.08208403839576124,
+      "credible_low": -0.029604570729026697,
+      "credible_high": 0.29257554329834756,
+      "probability_positive": 0.9454496298981242,
+      "probability_negative": 0.05455037010187584,
+      "posterior_sign_error": 0.05455037010187584,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.127991999994265
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.13072615020540496,
+      "posterior_sd": 0.08062680325361328,
+      "credible_low": -0.027396696414080463,
+      "credible_high": 0.28908551978513847,
+      "probability_positive": 0.9477249138186447,
+      "probability_negative": 0.05227508618135536,
+      "posterior_sign_error": 0.05227508618135536,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.680293499986874
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.1309031575174547,
+      "posterior_sd": 0.08128767956090187,
+      "credible_low": -0.028513304722878885,
+      "credible_high": 0.2905542988114529,
+      "probability_positive": 0.9465384188932132,
+      "probability_negative": 0.05346158110678673,
+      "posterior_sign_error": 0.05346158110678673,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7584135000070091
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6209,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.14718322324685312,
+      "posterior_sd": 0.10824721982077076,
+      "credible_low": -0.06364568624864592,
+      "credible_high": 0.36593522930995487,
+      "probability_positive": 0.9193215799075346,
+      "probability_negative": 0.08067842009246542,
+      "posterior_sign_error": 0.08067842009246542,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7345280999870738
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.008315953782225237,
+      "posterior_sd": 0.1552407262900828,
+      "credible_low": -0.29881525367115286,
+      "credible_high": 0.3143355286219261,
+      "probability_positive": 0.5224214895014023,
+      "probability_negative": 0.4775785104985976,
+      "posterior_sign_error": 0.4775785104985976,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6717458000057377
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.01473121809896902,
+      "posterior_sd": 0.1528624656487497,
+      "credible_low": -0.28766441749027283,
+      "credible_high": 0.3161123830016451,
+      "probability_positive": 0.5398390277436113,
+      "probability_negative": 0.46016097225638875,
+      "posterior_sign_error": 0.46016097225638875,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6315442000050098
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.004070277271751858,
+      "posterior_sd": 0.15731053723087077,
+      "credible_low": -0.30722280088498183,
+      "credible_high": 0.31424438625481643,
+      "probability_positive": 0.5111030008038071,
+      "probability_negative": 0.4888969991961929,
+      "posterior_sign_error": 0.4888969991961929,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.4833405000099447
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.008129327760784148,
+      "posterior_sd": 0.15531490851132812,
+      "credible_low": -0.2991708792167357,
+      "credible_high": 0.31432716122512455,
+      "probability_positive": 0.521921771403555,
+      "probability_negative": 0.478078228596445,
+      "posterior_sign_error": 0.478078228596445,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.720575800005463
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.008482553815811143,
+      "posterior_sd": 0.1550381785973303,
+      "credible_low": -0.2982067454135581,
+      "credible_high": 0.3140879230499729,
+      "probability_positive": 0.522870712680692,
+      "probability_negative": 0.47712928731930804,
+      "posterior_sign_error": 0.47712928731930804,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7607679000066128
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.008322954578972383,
+      "posterior_sd": 0.1551632444433232,
+      "credible_low": -0.2986583727325619,
+      "credible_high": 0.3141901570153071,
+      "probability_positive": 0.5224530998250643,
+      "probability_negative": 0.4775469001749357,
+      "posterior_sign_error": 0.4775469001749357,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8964151000109268
+    },
+    {
+      "scenario": "donor_condition_null",
+      "seed": 6210,
+      "truth": 0.0,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.00826582684703407,
+      "posterior_sd": 0.15579605373919278,
+      "credible_low": -0.29992444203206775,
+      "credible_high": 0.3153712321675536,
+      "probability_positive": 0.5221935204685482,
+      "probability_negative": 0.4778064795314519,
+      "posterior_sign_error": 0.4778064795314519,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7221162000059849
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6953147237307985,
+      "posterior_sd": 0.09778897700266324,
+      "credible_low": 0.5036099043409513,
+      "credible_high": 0.8873378236104172,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.122979199994006
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6841405941728997,
+      "posterior_sd": 0.12158687600507681,
+      "credible_low": 0.4428844522096866,
+      "credible_high": 0.9230632041396034,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8489764999976614
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6955714398769017,
+      "posterior_sd": 0.0975221404623279,
+      "credible_low": 0.504401568474915,
+      "credible_high": 0.8870771835487127,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0905228999909014
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6965494877720543,
+      "posterior_sd": 0.09706865623430556,
+      "credible_low": 0.5063422329685237,
+      "credible_high": 0.8871972699366839,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7073913999920478
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.689241830838779,
+      "posterior_sd": 0.11376520830358845,
+      "credible_low": 0.4632196925002302,
+      "credible_high": 0.9123282694665379,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7305058000056306
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6954135892969698,
+      "posterior_sd": 0.09755286445589546,
+      "credible_low": 0.5041878462688671,
+      "credible_high": 0.8869854942082547,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8030203999951482
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6201,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6875690693990403,
+      "posterior_sd": 0.1178297999074672,
+      "credible_low": 0.45405217417836896,
+      "credible_high": 0.9191457952412896,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6912962999922456
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.41181300691067524,
+      "posterior_sd": 0.31302406513762393,
+      "credible_low": -0.20528474185338702,
+      "credible_high": 1.0307561816231243,
+      "probability_positive": 0.9083622599673654,
+      "probability_negative": 0.09163774003263454,
+      "posterior_sign_error": 0.09163774003263454,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7642659999983152
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.41199635827219,
+      "posterior_sd": 0.31251018330507496,
+      "credible_low": -0.20411335395997682,
+      "credible_high": 1.0299409881469699,
+      "probability_positive": 0.9088023155332334,
+      "probability_negative": 0.09119768446676652,
+      "posterior_sign_error": 0.09119768446676652,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.691229599993676
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.41163889825024247,
+      "posterior_sd": 0.31249544873977814,
+      "credible_low": -0.20432786039414325,
+      "credible_high": 1.0293964084491112,
+      "probability_positive": 0.908555922083134,
+      "probability_negative": 0.09144407791686603,
+      "posterior_sign_error": 0.09144407791686603,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8920036000054097
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.4119648822913794,
+      "posterior_sd": 0.3123871607351576,
+      "credible_low": -0.20380209765537982,
+      "credible_high": 1.0295340222135239,
+      "probability_positive": 0.9088160815942871,
+      "probability_negative": 0.09118391840571292,
+      "posterior_sign_error": 0.09118391840571292,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8533235999930184
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.4115454893742206,
+      "posterior_sd": 0.31246126894980925,
+      "credible_low": -0.20442078670444142,
+      "credible_high": 1.029353498116138,
+      "probability_positive": 0.9085988399108886,
+      "probability_negative": 0.09140116008911138,
+      "posterior_sign_error": 0.09140116008911138,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7111531999980798
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.4115788109809279,
+      "posterior_sd": 0.31026662194078136,
+      "credible_low": -0.19998282515838406,
+      "credible_high": 1.024967282401913,
+      "probability_positive": 0.9100885943255113,
+      "probability_negative": 0.0899114056744888,
+      "posterior_sign_error": 0.0899114056744888,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6422887000080664
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6202,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.4118385088635197,
+      "posterior_sd": 0.3130333233468346,
+      "credible_low": -0.205269378253727,
+      "credible_high": 1.0307870186970864,
+      "probability_positive": 0.9083632992569981,
+      "probability_negative": 0.09163670074300184,
+      "posterior_sign_error": 0.09163670074300184,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.1700216000026558
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.38970233250364916,
+      "posterior_sd": 0.18469026863133978,
+      "credible_low": 0.025664100718788663,
+      "credible_high": 0.7545525917897129,
+      "probability_positive": 0.9817999321174824,
+      "probability_negative": 0.018200067882517653,
+      "posterior_sign_error": 0.018200067882517653,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.890810800003237
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.39067720192537275,
+      "posterior_sd": 0.18695728993295904,
+      "credible_low": 0.02207758274531557,
+      "credible_high": 0.7601580750113395,
+      "probability_positive": 0.9808959996687121,
+      "probability_negative": 0.019104000331287927,
+      "posterior_sign_error": 0.019104000331287927,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9709643999958644
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.38958554633253933,
+      "posterior_sd": 0.185456880284051,
+      "credible_low": 0.02403777377753974,
+      "credible_high": 0.7559347178857481,
+      "probability_positive": 0.9814099029476328,
+      "probability_negative": 0.018590097052367197,
+      "posterior_sign_error": 0.018590097052367197,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8169089000002714
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3898654603969407,
+      "posterior_sd": 0.18569513890795722,
+      "credible_low": 0.023829784574628143,
+      "credible_high": 0.7567029320171752,
+      "probability_positive": 0.9813536572179146,
+      "probability_negative": 0.018646342782085396,
+      "posterior_sign_error": 0.018646342782085396,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9215878999966662
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3896337711090053,
+      "posterior_sd": 0.18535492232519368,
+      "credible_low": 0.024281626270323764,
+      "credible_high": 0.7558004831611878,
+      "probability_positive": 0.9814647181810024,
+      "probability_negative": 0.018535281818997534,
+      "posterior_sign_error": 0.018535281818997534,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9207797999988543
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3896915816465913,
+      "posterior_sd": 0.18467071894984802,
+      "credible_low": 0.025692307692599003,
+      "credible_high": 0.7545027313567974,
+      "probability_positive": 0.981807290053892,
+      "probability_negative": 0.01819270994610797,
+      "posterior_sign_error": 0.01819270994610797,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.2856100000062725
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6203,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.38975498218278565,
+      "posterior_sd": 0.18597842390349395,
+      "credible_low": 0.023161288898575494,
+      "credible_high": 0.7571559744606888,
+      "probability_positive": 0.9811903379674761,
+      "probability_negative": 0.0188096620325239,
+      "posterior_sign_error": 0.0188096620325239,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 6.547200000000885
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3369539126538425,
+      "posterior_sd": 0.12729890005774525,
+      "credible_low": 0.0848061326279459,
+      "credible_high": 0.5872850016500574,
+      "probability_positive": 0.9948651249270543,
+      "probability_negative": 0.00513487507294569,
+      "posterior_sign_error": 0.00513487507294569,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.6910104999988107
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.33352826936329916,
+      "posterior_sd": 0.12372511157931458,
+      "credible_low": 0.0880768257199345,
+      "credible_high": 0.576198785745462,
+      "probability_positive": 0.9955674269953371,
+      "probability_negative": 0.004432573004662927,
+      "posterior_sign_error": 0.004432573004662927,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.639329900004668
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3397309113577357,
+      "posterior_sd": 0.12730708918344072,
+      "credible_low": 0.08807202114837426,
+      "credible_high": 0.5902455038959193,
+      "probability_positive": 0.9952489884188778,
+      "probability_negative": 0.004751011581122287,
+      "posterior_sign_error": 0.004751011581122287,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.847982499995851
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.3371053800836169,
+      "posterior_sd": 0.12663536782679038,
+      "credible_low": 0.08617944435047686,
+      "credible_high": 0.5860846414847338,
+      "probability_positive": 0.994985091768443,
+      "probability_negative": 0.00501490823155708,
+      "posterior_sign_error": 0.00501490823155708,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.7099765000020852
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.33704460245988965,
+      "posterior_sd": 0.12735127902038357,
+      "credible_low": 0.08477644878589419,
+      "credible_high": 0.5874545008661551,
+      "probability_positive": 0.994825056295054,
+      "probability_negative": 0.005174943704946018,
+      "posterior_sign_error": 0.005174943704946018,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.079809999995632
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.33707711059835965,
+      "posterior_sd": 0.12727038429854484,
+      "credible_low": 0.08495057965209823,
+      "credible_high": 0.587367347630934,
+      "probability_positive": 0.9948556884337388,
+      "probability_negative": 0.005144311566261192,
+      "posterior_sign_error": 0.005144311566261192,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8845219999930123
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6204,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.33671575511452445,
+      "posterior_sd": 0.12793606483579514,
+      "credible_low": 0.08343035004310417,
+      "credible_high": 0.5882827778434385,
+      "probability_positive": 0.9947372609457925,
+      "probability_negative": 0.005262739054207527,
+      "posterior_sign_error": 0.005262739054207527,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6658973000012338
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.647300354860985,
+      "posterior_sd": 0.20102413510159858,
+      "credible_low": 0.2529762204875543,
+      "credible_high": 1.0474483298426762,
+      "probability_positive": 0.9989612347423965,
+      "probability_negative": 0.0010387652576034634,
+      "posterior_sign_error": 0.0010387652576034634,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6488769999996293
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6399938844484999,
+      "posterior_sd": 0.19675887735490089,
+      "credible_low": 0.2542606220822159,
+      "credible_high": 1.0319367321767439,
+      "probability_positive": 0.9990950693855949,
+      "probability_negative": 0.0009049306144050798,
+      "posterior_sign_error": 0.0009049306144050798,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 5.066112599990447
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6507132639318735,
+      "posterior_sd": 0.20044600814631222,
+      "credible_low": 0.2572994876644892,
+      "credible_high": 1.049298672029248,
+      "probability_positive": 0.9990617616163401,
+      "probability_negative": 0.0009382383836598813,
+      "posterior_sign_error": 0.0009382383836598813,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0537183999986155
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6475862297087885,
+      "posterior_sd": 0.20011550521867472,
+      "credible_low": 0.25504250926484173,
+      "credible_high": 1.0455627191868895,
+      "probability_positive": 0.9989552089939169,
+      "probability_negative": 0.001044791006083178,
+      "posterior_sign_error": 0.001044791006083178,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0456505000038305
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6471790477644854,
+      "posterior_sd": 0.20167245534048323,
+      "credible_low": 0.2514639696219574,
+      "credible_high": 1.0488923598138433,
+      "probability_positive": 0.9989383383244214,
+      "probability_negative": 0.0010616616755786353,
+      "posterior_sign_error": 0.0010616616755786353,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6574450000043726
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.646701911603435,
+      "posterior_sd": 0.19981128886328736,
+      "credible_low": 0.2548078440603888,
+      "credible_high": 1.0442416500875256,
+      "probability_positive": 0.9989819819793151,
+      "probability_negative": 0.0010180180206849272,
+      "posterior_sign_error": 0.0010180180206849272,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9178583999891998
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6205,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6475378062894623,
+      "posterior_sd": 0.20139593164738223,
+      "credible_low": 0.25244900692779787,
+      "credible_high": 1.048055878390776,
+      "probability_positive": 0.9989038323068923,
+      "probability_negative": 0.0010961676931076736,
+      "posterior_sign_error": 0.0010961676931076736,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0046665999980178
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.18094398621052496,
+      "posterior_sd": 0.20979520928416517,
+      "credible_low": -0.23332972196380766,
+      "credible_high": 0.5947726252652249,
+      "probability_positive": 0.8100153749637646,
+      "probability_negative": 0.1899846250362353,
+      "posterior_sign_error": 0.1899846250362353,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.164604400008102
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.17938648253383688,
+      "posterior_sd": 0.2109888014003309,
+      "credible_low": -0.23711770500180612,
+      "credible_high": 0.5954822474233443,
+      "probability_positive": 0.8064947155130624,
+      "probability_negative": 0.1935052844869376,
+      "posterior_sign_error": 0.1935052844869376,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7806884000019636
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.18223330337848473,
+      "posterior_sd": 0.20844791533765475,
+      "credible_low": -0.22943486880560218,
+      "credible_high": 0.5934535791391577,
+      "probability_positive": 0.8133703740084723,
+      "probability_negative": 0.1866296259915277,
+      "posterior_sign_error": 0.1866296259915277,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0435436999978265
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.18089290590344992,
+      "posterior_sd": 0.21024266818898332,
+      "credible_low": -0.23428847422933863,
+      "credible_high": 0.5956259893992859,
+      "probability_positive": 0.8094637019959887,
+      "probability_negative": 0.19053629800401126,
+      "posterior_sign_error": 0.19053629800401126,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9545810999989044
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.18092800072819018,
+      "posterior_sd": 0.21014780774048678,
+      "credible_low": -0.23401889009807306,
+      "credible_high": 0.595440224961303,
+      "probability_positive": 0.8095721471555444,
+      "probability_negative": 0.1904278528444556,
+      "posterior_sign_error": 0.1904278528444556,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0210881999955745
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.18094446806757974,
+      "posterior_sd": 0.20976857329373427,
+      "credible_low": -0.23327661193782534,
+      "credible_high": 0.5947202550593498,
+      "probability_positive": 0.8100455160259721,
+      "probability_negative": 0.18995448397402787,
+      "posterior_sign_error": 0.18995448397402787,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7355147000052966
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6206,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.18092670936172978,
+      "posterior_sd": 0.21025924994299774,
+      "credible_low": -0.23426452477595958,
+      "credible_high": 0.5956762991411932,
+      "probability_positive": 0.8094734195923023,
+      "probability_negative": 0.19052658040769765,
+      "posterior_sign_error": 0.19052658040769765,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": false,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9129662000050303
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.676156828914286,
+      "posterior_sd": 0.08755678049866018,
+      "credible_low": 0.5043383415392644,
+      "credible_high": 0.8478555943786779,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9718677000055322
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6774307236104278,
+      "posterior_sd": 0.08736968391658617,
+      "credible_low": 0.5059781387053472,
+      "credible_high": 0.848750302043098,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.111273499991512
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6751034138938553,
+      "posterior_sd": 0.08767939808250919,
+      "credible_low": 0.5030358713876371,
+      "credible_high": 0.8470459086136695,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.912080900001456
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6757250941286612,
+      "posterior_sd": 0.08769194767433264,
+      "credible_low": 0.503646343918962,
+      "credible_high": 0.8476963513468443,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.779578000001493
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6766008068246643,
+      "posterior_sd": 0.08737884877515555,
+      "credible_low": 0.5051269566842275,
+      "credible_high": 0.8479452446490249,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7351086999988183
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6761570532007611,
+      "posterior_sd": 0.08737882863089938,
+      "credible_low": 0.504687358945822,
+      "credible_high": 0.847508231756099,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6956927999999607
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6207,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.6759841348041646,
+      "posterior_sd": 0.08917968233825915,
+      "credible_low": 0.500981693005206,
+      "credible_high": 0.8508760304718178,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6380229000060353
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9080721530718053,
+      "posterior_sd": 0.12907895750979265,
+      "credible_low": 0.6520565467944691,
+      "credible_high": 1.1616887348916223,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9183912000007695
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9079694391473536,
+      "posterior_sd": 0.1214830955074326,
+      "credible_low": 0.6663605657003995,
+      "credible_high": 1.1458859068714164,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9727198000036879
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9103046171048905,
+      "posterior_sd": 0.13148316953719116,
+      "credible_low": 0.6500699253335562,
+      "credible_high": 1.1690235594095273,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.5387659999978496
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9083945187784861,
+      "posterior_sd": 0.12924251473800463,
+      "credible_low": 0.6520529739533265,
+      "credible_high": 1.1623487507197845,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.603358100008336
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9079288161255398,
+      "posterior_sd": 0.12875234608710845,
+      "credible_low": 0.6525932952571565,
+      "credible_high": 1.160855980815675,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.813303899994935
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9082753777691044,
+      "posterior_sd": 0.128710430207584,
+      "credible_low": 0.6529013667377905,
+      "credible_high": 1.1611467562262228,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7070554999954766
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6208,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 144,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.9079702023357136,
+      "posterior_sd": 0.1302750669500914,
+      "credible_low": 0.6497541208960762,
+      "credible_high": 1.164010342576173,
+      "probability_positive": 1.0,
+      "probability_negative": 0.0,
+      "posterior_sign_error": 0.0,
+      "probability_tail_truncated": true,
+      "covered": false,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.929900599992834
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.5553728066085998,
+      "posterior_sd": 0.13590499159336858,
+      "credible_low": 0.2878484061261246,
+      "credible_high": 0.8239820132698856,
+      "probability_positive": 0.9999434126539716,
+      "probability_negative": 5.658734602838292e-05,
+      "posterior_sign_error": 5.658734602838292e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7580544999946142
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.556588140243026,
+      "posterior_sd": 0.13589897533963152,
+      "credible_low": 0.28903169340724205,
+      "credible_high": 0.8252301511216047,
+      "probability_positive": 0.9999420085078343,
+      "probability_negative": 5.799149216572719e-05,
+      "posterior_sign_error": 5.799149216572719e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7666431999969063
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.5552199063613718,
+      "posterior_sd": 0.13530390008216844,
+      "credible_low": 0.28889858019199666,
+      "credible_high": 0.8226209440274468,
+      "probability_positive": 0.9999478655386594,
+      "probability_negative": 5.2134461340562174e-05,
+      "posterior_sign_error": 5.2134461340562174e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8483323999971617
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.5552092619006231,
+      "posterior_sd": 0.13530368042593297,
+      "credible_low": 0.28888527595771923,
+      "credible_high": 0.8226221608798484,
+      "probability_positive": 0.9999478037400289,
+      "probability_negative": 5.2196259971049116e-05,
+      "posterior_sign_error": 5.2196259971049116e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9835242999979528
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.5556907243404224,
+      "posterior_sd": 0.13635757054214673,
+      "credible_low": 0.28725887235356684,
+      "credible_high": 0.8252031937515029,
+      "probability_positive": 0.9999399360391467,
+      "probability_negative": 6.006396085331928e-05,
+      "posterior_sign_error": 6.006396085331928e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.201093800002127
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.5553374206553123,
+      "posterior_sd": 0.1351830706358488,
+      "credible_low": 0.2892398514430646,
+      "credible_high": 0.8225289435404063,
+      "probability_positive": 0.9999481736093884,
+      "probability_negative": 5.182639061163762e-05,
+      "posterior_sign_error": 5.182639061163762e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.20920230000047
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6209,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 147,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.5554573680214158,
+      "posterior_sd": 0.1363446682357909,
+      "credible_low": 0.2870637185387529,
+      "credible_high": 0.8249291624264695,
+      "probability_positive": 0.9999405939532896,
+      "probability_negative": 5.940604671035254e-05,
+      "posterior_sign_error": 5.940604671035254e-05,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9572457000031136
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "default",
+      "prior_settings": {},
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.46811633752620907,
+      "posterior_sd": 0.149252269935713,
+      "credible_low": 0.17356337073097544,
+      "credible_high": 0.7627150637199716,
+      "probability_positive": 0.9986658270616141,
+      "probability_negative": 0.001334172938385925,
+      "posterior_sign_error": 0.001334172938385925,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8512215999944601
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "spatial_sd_half",
+      "prior_settings": {
+        "spatial_sd_u": 0.5
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.46976081034506795,
+      "posterior_sd": 0.14788842779585162,
+      "credible_low": 0.17777129659470697,
+      "credible_high": 0.7616268452429271,
+      "probability_positive": 0.9988193440199156,
+      "probability_negative": 0.001180655980084402,
+      "posterior_sign_error": 0.001180655980084402,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.6932189000071958
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "spatial_sd_double",
+      "prior_settings": {
+        "spatial_sd_u": 2.0
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.4679029794547405,
+      "posterior_sd": 0.14947703945706414,
+      "credible_low": 0.1729329630899597,
+      "credible_high": 0.7629183199313572,
+      "probability_positive": 0.9986641781453856,
+      "probability_negative": 0.00133582185461447,
+      "posterior_sign_error": 0.00133582185461447,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.8819430000003194
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "phi_more_iid",
+      "prior_settings": {
+        "phi_alpha": 0.6666666666666666
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.46832431321672746,
+      "posterior_sd": 0.14918958431472112,
+      "credible_low": 0.17389265919939567,
+      "credible_high": 0.7628065602472671,
+      "probability_positive": 0.9986806091362961,
+      "probability_negative": 0.0013193908637039245,
+      "posterior_sign_error": 0.0013193908637039245,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9113579999975627
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "phi_more_spatial",
+      "prior_settings": {
+        "phi_alpha": 0.3333333333333333
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.46815139140662076,
+      "posterior_sd": 0.1489295992417022,
+      "credible_low": 0.17422293805318761,
+      "credible_high": 0.7621087313701278,
+      "probability_positive": 0.9986765310013105,
+      "probability_negative": 0.0013234689986895691,
+      "posterior_sign_error": 0.0013234689986895691,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.9480116000049748
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "donor_rate_tenth",
+      "prior_settings": {
+        "donor_rate": 5e-06
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.46814728509828807,
+      "posterior_sd": 0.14906372990602132,
+      "credible_low": 0.1739643399180732,
+      "credible_high": 0.7623753778434813,
+      "probability_positive": 0.9986795660673191,
+      "probability_negative": 0.0013204339326808947,
+      "posterior_sign_error": 0.0013204339326808947,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 1.7677347999997437
+    },
+    {
+      "scenario": "donor_condition",
+      "seed": 6210,
+      "truth": 0.5,
+      "prior": "donor_rate_tenfold",
+      "prior_settings": {
+        "donor_rate": 0.0005
+      },
+      "n_cells": 141,
+      "n_donors": 8,
+      "gene": "gene",
+      "status": "fitted",
+      "posterior_mean": 0.4682071565566492,
+      "posterior_sd": 0.15001477525285936,
+      "credible_low": 0.17214772519917004,
+      "credible_high": 0.7643097180809194,
+      "probability_positive": 0.9986041346994237,
+      "probability_negative": 0.0013958653005763603,
+      "posterior_sign_error": 0.0013958653005763603,
+      "probability_tail_truncated": false,
+      "covered": true,
+      "excludes_zero": true,
+      "prior_identity_verified": true,
+      "engine_sha256": "5933d7d37bdaa52af8dca061c69ec09f0adb38449f0eab3482012a58cf6872cb",
+      "seconds": 2.0297343999991426
+    }
+  ],
+  "summary": {
+    "donor_condition/default": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 7,
+        "rate": 0.7,
+        "exact_95_interval": [
+          0.34754714993999203,
+          0.9332604888222655
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.026974644299137557,
+      "mean_posterior_sd": 0.16354145547526702,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 7,
+            "rate": 0.7,
+            "exact_95_interval": [
+              0.34754714993999203,
+              0.9332604888222655
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.026974644299137557,
+          "mean_posterior_sd": 0.16354145547526702
+        }
+      }
+    },
+    "donor_condition/donor_rate_tenfold": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.026196169292900535,
+      "mean_posterior_sd": 0.16622469863609718,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.026196169292900535,
+          "mean_posterior_sd": 0.16622469863609718
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.007745654331758223,
+        "max_absolute_sd_change": 0.020040822904803954,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition/donor_rate_tenth": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 7,
+        "rate": 0.7,
+        "exact_95_interval": [
+          0.34754714993999203,
+          0.9332604888222655
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.02693246089173294,
+      "mean_posterior_sd": 0.16296765111824446,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 7,
+            "rate": 0.7,
+            "exact_95_interval": [
+              0.34754714993999203,
+              0.9332604888222655
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.02693246089173294,
+          "mean_posterior_sd": 0.16296765111824446
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.0005984432575499854,
+        "max_absolute_sd_change": 0.0027574431968425683,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition/phi_more_iid": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 7,
+        "rate": 0.7,
+        "exact_95_interval": [
+          0.34754714993999203,
+          0.9332604888222655
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.027161753418072764,
+      "mean_posterior_sd": 0.163357222426486,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 7,
+            "rate": 0.7,
+            "exact_95_interval": [
+              0.34754714993999203,
+              0.9332604888222655
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.027161753418072764,
+          "mean_posterior_sd": 0.163357222426486
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.0012347640412557759,
+        "max_absolute_sd_change": 0.0010048702766174422,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition/phi_more_spatial": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.02639444809718174,
+      "mean_posterior_sd": 0.16521713063260576,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.02639444809718174,
+          "mean_posterior_sd": 0.16521713063260576
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.00607289289201951,
+        "max_absolute_sd_change": 0.01597623130092521,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition/spatial_sd_double": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 7,
+        "rate": 0.7,
+        "exact_95_interval": [
+          0.34754714993999203,
+          0.9332604888222655
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.027800427994263556,
+      "mean_posterior_sd": 0.16356189893124978,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 7,
+            "rate": 0.7,
+            "exact_95_interval": [
+              0.34754714993999203,
+              0.9332604888222655
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.027800427994263556,
+          "mean_posterior_sd": 0.16356189893124978
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.0034129090708884258,
+        "max_absolute_sd_change": 0.002404212027398517,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition/spatial_sd_half": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "mean_bias": 0.025147190406197385,
+      "mean_posterior_sd": 0.16451673221371593,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "mean_bias": 0.025147190406197385,
+          "mean_posterior_sd": 0.16451673221371593
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.01117412955789876,
+        "max_absolute_sd_change": 0.023797899002413567,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition_null/default": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.048338542527809565,
+      "mean_posterior_sd": 0.1653888727499641,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.048338542527809565,
+          "mean_posterior_sd": 0.1653888727499641
+        }
+      }
+    },
+    "donor_condition_null/donor_rate_tenfold": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.04875633639776846,
+      "mean_posterior_sd": 0.17071399018306427,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.04875633639776846,
+          "mean_posterior_sd": 0.17071399018306427
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.01617178074282591,
+        "max_absolute_sd_change": 0.02685397794697697,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition_null/donor_rate_tenth": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.04817997468911038,
+      "mean_posterior_sd": 0.1653665881345035,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.04817997468911038,
+          "mean_posterior_sd": 0.1653665881345035
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.0006503444688902849,
+        "max_absolute_sd_change": 0.0021446092730469657,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition_null/phi_more_iid": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.04828202586725345,
+      "mean_posterior_sd": 0.16514368860511724,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.04828202586725345,
+          "mean_posterior_sd": 0.16514368860511724
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.0013591387616655598,
+        "max_absolute_sd_change": 0.001302385637222514,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition_null/phi_more_spatial": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.04836497595984686,
+      "mean_posterior_sd": 0.16509970787955522,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.04836497595984686,
+          "mean_posterior_sd": 0.16509970787955522
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.0014127324928460139,
+        "max_absolute_sd_change": 0.0009377918748737779,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition_null/spatial_sd_double": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.04736871755876594,
+      "mean_posterior_sd": 0.16517316324658424,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.04736871755876594,
+          "mean_posterior_sd": 0.16517316324658424
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.006890595307671082,
+        "max_absolute_sd_change": 0.0020698109407879806,
+        "zero_exclusion_changes": 0
+      }
+    },
+    "donor_condition_null/spatial_sd_half": {
+      "attempted": 10,
+      "fitted": 10,
+      "failed": 0,
+      "covered": {
+        "count": 8,
+        "rate": 0.8,
+        "exact_95_interval": [
+          0.4439045376923585,
+          0.9747892736731665
+        ]
+      },
+      "excludes_zero": {
+        "count": 2,
+        "rate": 0.2,
+        "exact_95_interval": [
+          0.025210726326833497,
+          0.5560954623076415
+        ]
+      },
+      "mean_bias": 0.048899760880190914,
+      "mean_posterior_sd": 0.1635002415356222,
+      "by_donor_count": {
+        "8": {
+          "attempted": 10,
+          "fitted": 10,
+          "failed": 0,
+          "covered": {
+            "count": 8,
+            "rate": 0.8,
+            "exact_95_interval": [
+              0.4439045376923585,
+              0.9747892736731665
+            ]
+          },
+          "excludes_zero": {
+            "count": 2,
+            "rate": 0.2,
+            "exact_95_interval": [
+              0.025210726326833497,
+              0.5560954623076415
+            ]
+          },
+          "mean_bias": 0.048899760880190914,
+          "mean_posterior_sd": 0.1635002415356222
+        }
+      },
+      "paired_to_default": {
+        "n": 10,
+        "max_absolute_mean_change": 0.009621186212556643,
+        "max_absolute_sd_change": 0.010142543916588087,
+        "zero_exclusion_changes": 0
+      }
+    }
+  }
+}

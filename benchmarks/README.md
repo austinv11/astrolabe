@@ -1,5 +1,64 @@
 # astrolabe Benchmark Notebooks
 
+## Optional spatial inference and reconstruction checks
+
+`inla_reference.py` runs in an explicitly prepared pyINLA 0.1.11 environment:
+`python benchmarks/inla_reference.py --output analysis/inla-reference.json`.
+It compares a disconnected BYM2/shared-donor Gaussian fit with an analytic
+posterior and verifies the exact prior exported for a negative-binomial fit.
+Install the native engine explicitly first; see [the backend guide](../docs/g5-inla-proposal.md).
+
+Run the seeded public-adapter screen from the Astrolabe environment:
+`python benchmarks/inla_calibration.py --python PATH_TO_BACKEND_PYTHON --replicates 20 --output analysis/inla-calibration.json`.
+It reports Bayesian interval coverage, zero exclusion and exact binomial
+uncertainty across seven fixed scenarios. This small screen does not certify
+nominal calibration. The optional native regression is enabled with
+`ASTROLABE_INLA_PYTHON=PATH_TO_BACKEND_PYTHON` when running `tests/test_conditional.py`.
+Add `--measure-memory` to sample parent and summed backend RSS with `psutil`.
+`inla_fixed_design.py --python PATH_TO_BACKEND_PYTHON --replicates 200 --output analysis/inla-fixed.json`
+runs a separate, larger null check at one fixed unequal-core design. Its batching
+reuses the same graph prior calculation across independent simulated responses;
+it does not replace varying-design coverage experiments.
+
+Prepare the larger screens in the Astrolabe environment, then run their isolated
+worker in the backend environment (output directories must be new):
+
+```shell
+python benchmarks/inla_extended_validation.py --mode calibration --replicates 100 --output analysis/inla-extended
+PATH_TO_BACKEND_PYTHON benchmarks/inla_extended_worker.py analysis/inla-extended
+python benchmarks/inla_extended_summary.py --input analysis/inla-extended/results.json --output analysis/inla-extended-summary.json
+python benchmarks/inla_extended_validation.py --mode sensitivity --replicates 10 --output analysis/inla-sensitivity
+PATH_TO_BACKEND_PYTHON benchmarks/inla_extended_worker.py analysis/inla-sensitivity
+python benchmarks/inla_extended_summary.py --input analysis/inla-sensitivity/results.json --output analysis/inla-sensitivity-summary.json
+```
+
+The worker caches only identical graph/prior tables and verifies every native
+prior export. Sensitivity overrides are benchmark-only; no public defaults are
+selected from these results. `inla_matched_inputs.py` compares three saved
+calibration inputs in another backend environment without resimulating them.
+
+`proseg_validation.py` retains held-out clean, jitter, leakage and displacement
+controls; `proseg_vendor.py` exercises native count exports and real Xenium
+round-trip accounting. Both require a separately installed Proseg executable.
+Use each script's `--help` for paths. Results and efficacy limitations are in
+[the spatial validation record](../docs/spatial-validation.md).
+
+For the independent ComSeg boundary comparison:
+
+```shell
+python benchmarks/fetch_comseg.py --output analysis/comseg-input
+python benchmarks/proseg_independent.py --source analysis/comseg-input --executable PATH_TO_PROSEG --output analysis/comseg-validation --repeats 3
+```
+
+Downloading is explicit and bounded to three members, with CRC and SHA-256
+checks. This is a small 2D geometric comparison, not known molecular-origin
+ground truth. Every repetition and denominator is retained.
+
+`vendor_validation.py --merscope PATH_TO_VIZGEN_CROP --cosmx PATH_TO_COSMX_CROP --output analysis/vendor-validation.json`
+checks counts, centroids and boundaries directly against real SFEData exports,
+then exercises QC, graphs and H5MU persistence. Download URLs are in its docstring;
+the vendor crops are not bundled.
+
 Astrolabe reimplements several published algorithms from scratch instead of
 depending on the package that originated them, to keep the core dependency
 footprint lean and avoid pulling in heavy or conflicting dependency trees

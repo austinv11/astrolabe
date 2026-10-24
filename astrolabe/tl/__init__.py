@@ -97,6 +97,7 @@ rebin_visium_hd
     Aggregate native 2µm Visium HD bins into coarser (or custom) square bins.
 """
 
+from astrolabe._dependencies import validate_results
 from astrolabe.tl._graph import spatial_neighbors, transcriptional_neighbors, blend_neighbors
 from astrolabe.tl._cluster import cluster
 from astrolabe.tl._embedding import pca, umap
@@ -147,6 +148,7 @@ from astrolabe.tl._gradient import (
 from astrolabe.tl._visium_hd import rebin_visium_hd
 
 __all__ = [
+    "validate_results",
     "spatial_neighbors",
     "transcriptional_neighbors",
     "blend_neighbors",
@@ -199,7 +201,14 @@ __all__ = [
     "rebin_visium_hd",
 ]
 from astrolabe.tl._niches import niche_composition, niches
+from astrolabe.tl._niche_cohort import niche_abundance, diff_niche_abundance, fit_niche_model, map_niches, niche_pseudobulk
+__all__ += ["niche_abundance", "diff_niche_abundance", "fit_niche_model", "map_niches", "niche_pseudobulk"]
 from astrolabe.tl._regions import assign_regions, distance_to_region, region_summary
+from astrolabe.tl._sensitivity import spatial_scale_sensitivity
+from astrolabe.tl._subcellular_cohort import diff_subcellular
+from astrolabe.tl._conditional import conditional_expression
+__all__ += ["conditional_expression"]
+__all__ += ["spatial_scale_sensitivity", "diff_subcellular"]
 from astrolabe.tl._cohort import rank_genes_pseudobulk, diff_nhood_enrichment
 from astrolabe.tl._communication import import_ligrec_resource, ligrec_local
 

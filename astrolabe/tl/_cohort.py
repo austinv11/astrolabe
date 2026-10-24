@@ -95,7 +95,7 @@ def rank_genes_pseudobulk(adata: ad.AnnData, *, condition_key, contrast,
     return result
 
 
-@with_adata(mirror_uns=from_kwarg("key_added"))
+@with_adata(mirror_uns=from_kwarg("key_added"), spatial_result=True)
 def diff_nhood_enrichment(adata: ad.AnnData, groupby: str, *, sample_key, condition_key,
                           contrast, neighbors_key="spatial_neighbors", paired_key=None,
                           block_key=None, n_perms=999, n_boot=999, seed=0,
@@ -106,6 +106,13 @@ def diff_nhood_enrichment(adata: ad.AnnData, groupby: str, *, sample_key, condit
     blocks, or flip paired donor differences. Confidence intervals bootstrap
     biological samples/donors. This is an association test; supplied blocks
     must justify exchangeability. Technical sections share ``sample_key``.
+
+    A sample score requires both cell types, and same-type scores require at
+    least two cells of that type. Missing scores are excluded; paired tests
+    require both samples of each donor to have a score. ``n_tested`` and
+    ``n_reference`` count usable samples or complete donor pairs. Fewer than
+    two usable units per condition gives ``status='insufficient_replicates'``,
+    missing inference, and ``n_valid=0``.
     """
     if len(contrast) != 2 or contrast[0] == contrast[1] or n_perms < 0 or n_boot < 1:
         raise ValueError("invalid contrast or simulation counts")
@@ -133,11 +140,12 @@ def diff_nhood_enrichment(adata: ad.AnnData, groupby: str, *, sample_key, condit
         idx = np.flatnonzero(sample_labels == sample)
         local = conn[idx][:, idx]
         local_codes = codes[idx]
+        type_counts = np.bincount(local_codes, minlength=len(categories))
         degree = np.asarray(local.sum(axis=1)).ravel()
         n = len(idx)
         for pi, (a, b) in enumerate(pairs):
             source = (local_codes == a) & (degree > 0)
-            if source.any() and n > 1:
+            if source.any() and n > 1 and type_counts[b] > (a == b):
                 contacts = np.asarray(local[:, local_codes == b].sum(axis=1)).ravel()
                 expected = ((local_codes == b).sum() - (a == b)) / (n-1)
                 scores[si, pi] = np.mean(contacts[source] / degree[source]) - expected
@@ -169,7 +177,7 @@ def diff_nhood_enrichment(adata: ad.AnnData, groupby: str, *, sample_key, condit
             nt, nr = int(tt.sum()), int((~tt).sum())
             effect = yy[tt].mean()-yy[~tt].mean() if min(nt, nr) >= 2 else np.nan
             strata = sample_meta.loc[mask, block_key].to_numpy() if block_key else np.zeros(len(yy))
-            if block_key and not any(np.unique(tt[strata == v]).size > 1 for v in np.unique(strata)):
+            if block_key and min(nt, nr) >= 2 and not any(np.unique(tt[strata == v]).size > 1 for v in np.unique(strata)):
                 raise ValueError("condition is confounded with exchangeability blocks")
             null = []
             for _ in range(n_perms):
@@ -177,7 +185,7 @@ def diff_nhood_enrichment(adata: ad.AnnData, groupby: str, *, sample_key, condit
                 for block in np.unique(strata):
                     idx = np.flatnonzero(strata == block); shuffled[idx] = rng.permutation(shuffled[idx])
                 null.append(yy[shuffled].mean()-yy[~shuffled].mean() if min(nt,nr) else np.nan)
-            if block_key:
+            if block_key and min(nt, nr) >= 2:
                 blocks = [np.flatnonzero(strata == block) for block in np.unique(strata)]
                 boot = []
                 for _ in range(n_boot):
@@ -189,12 +197,16 @@ def diff_nhood_enrichment(adata: ad.AnnData, groupby: str, *, sample_key, condit
             else:
                 boot = [rng.choice(yy[tt], nt).mean()-rng.choice(yy[~tt], nr).mean() if min(nt,nr) else np.nan for _ in range(n_boot)]
             null = np.asarray(null)
+        if not np.isfinite(effect):
+            null = np.full(n_perms, np.nan)
         p, nv = permutation_p(np.asarray(effect), np.asarray(null))
         finite_boot = np.asarray(boot)[np.isfinite(boot)]
         ci = np.percentile(finite_boot, [2.5, 97.5]) if np.isfinite(effect) and finite_boot.size else [np.nan, np.nan]
         rows.append(dict(sender=categories[a], receiver=categories[b], effect=effect,
                          ci_low=ci[0], ci_high=ci[1], pvalue=float(p), n_valid=int(nv),
-                         n_tested=nt, n_reference=nr))
+                         n_tested=nt, n_reference=nr,
+                         status="insufficient_replicates" if min(nt, nr) < 2
+                         else "tested" if np.isfinite(p) else "not_tested"))
     result = pd.DataFrame(rows)
     result["padj"] = adjust_p(result.pvalue.to_numpy())
     annotate_permutation_resolution(result, "pvalue", "n_valid", label="replicate neighborhood contrasts")
