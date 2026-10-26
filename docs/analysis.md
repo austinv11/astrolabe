@@ -6,6 +6,20 @@ and images registered. Independent libraries have independent coordinate frames:
 
 ## Statistical defaults
 
+Global `moran`, `moran_bv`, and `geary_c` use inclusive permutation tails with
+the plus-one correction. `alternative='two-sided'` doubles the smaller corrected
+tail; `'greater'` and `'less'` select one tail. `p_sim` is unadjusted. Constant
+fields and edgeless graphs return missing statistics/p-values, `n_valid=0`, and
+`status='not_tested'`; nonfinite input values are rejected. Tied, defined nulls
+remain testable and yield p=1 when every draw equals the observation.
+
+Global permutations stay within the graph's library groups. Multi-library tests
+require `n_perms > 0` and omit pooled analytic p-values. With one library,
+`moran` and `geary_c` support analytic inference with `n_perms=0`; `moran_bv`
+requires permutations and shuffles only the second field. Results report null
+moments and valid-draw counts. An explicitly pooled graph (`library_key=None`)
+requests exchangeability across all cells.
+
 `moran_local`, `moran_local_bv`, and `getis_ord` calculate empirical equal-tail
 permutation p-values. The plus-one correction applies to each tail before
 doubling. `p_adj` corrects one family across every requested cell and field in
@@ -34,7 +48,7 @@ permutations for useful FDR power. A lack of discoveries at coarse resolution
 does not establish the absence of spatial structure. Ripley p-values remain
 pointwise across radii; their envelope is not a simultaneous confidence band.
 
-Local Moran/Getis, SVG, ICG, native LR, gradient, replicate-neighborhood and
+Global/local Moran, Geary/Getis, SVG, ICG, native LR, gradient, replicate-neighborhood and
 pointwise Ripley/CLQ results include `n_valid`, `p_min` and
 `resolution_limited` (with metric suffixes for gradients). `p_min` is the
 theoretical Monte Carlo floor: one-tail
@@ -74,7 +88,19 @@ or reproduce Giotto's method exactly. Gene/pair BH is global by default.
 Gradient significance reuses the fitted layer, graph, coordinates, smoothing and
 group definitions. It checks source fingerprints and rejects stale gradients or
 conflicting overrides. Undefined directional coherence has NaN significance.
+Grouped tests calibrate noise and shuffle expression using only the selected
+group's values and induced graph; excluded cells do not enter its null.
 The smooth surrogate null models graph-matched noise, not every biological null.
+
+`nhood_enrichment` shuffles cell-type labels within libraries by default,
+preserving each library's composition. `library_key='auto'` follows the graph's
+grouping; a column name overrides it, and `None` requests pooled shuffling.
+Missing labels and graph edges between the selected libraries are rejected.
+Zero-variance nulls have missing z-scores and `status='zero_variance'`.
+
+`colocation_quotient` excludes each focal cell by its index. Distinct cells at
+identical coordinates remain eligible neighbors. Distance ties follow the
+KD-tree query order, retaining exactly `k` other cells per focal cell.
 
 `ligrec` scores actual spatial edges, including when GPU routing is enabled.
 Missing/null zero-edge groups are excluded from valid permutation counts.
@@ -146,7 +172,11 @@ Neighborhood contrasts use each sample's mean contact fraction minus the
 finite-population target-type expectation, with equal sample weights. Conditions
 are permuted at sample level within optional blocks, or paired differences are
 sign-flipped at donor level. Confidence intervals resample biological units.
-Missing cell types yield untestable comparisons rather than zero scores.
+Each sample score requires both sender and receiver types; same-type scores
+require at least two cells of that type. Missing types produce missing scores.
+`n_tested` and `n_reference` count usable samples, or complete donor pairs for
+paired tests. Fewer than two usable biological units per condition yields
+`status='insufficient_replicates'`, missing inference, and `n_valid=0`.
 
 ## Complex-aware communication
 
@@ -190,12 +220,19 @@ coverage is reported. Select a library explicitly for multi-library data.
 
 Affine transforms move centroids, boundaries, Arrow transcripts and GeoDataFrame
 annotations together, including MuData parent stores. Image transforms compose
-once per descriptor. Derived spatial results/graphs are invalidated. Filtering
-refreshes parent MuData observation/variable indexes. Expression embeddings stay
-available.
-Derived spatial gene columns, including SVG scores, p-values and significance
-flags, are also cleared after a crop removes cells or coordinates are transformed.
-Unrelated gene annotations remain available.
+once per descriptor. Coordinate transforms and package cell-selection functions
+(including QC filters and crops) invalidate derived spatial results and graphs.
+This includes registered custom output keys, cohort contrasts, SVG gene columns,
+and matching MuData parent mirrors. Other modalities' results and unrelated
+annotations/embeddings remain available. A selection that keeps every cell
+preserves results; copy operations preserve the source object. Filtering also
+refreshes parent MuData observation/variable indexes.
+
+`io.concat_samples({'sample_A': a, 'sample_B': b})` uses the supplied aliases for
+cell IDs, observation labels, spatial descriptor keys, and transcript library
+labels. Each input must describe a single library; conflicting parent/modality
+spatial IDs and multi-library inputs are rejected. Descriptors are copied, so
+concatenation leaves the input metadata unchanged.
 
 `io.save` round-trips typed tables, including MultiIndex rows/columns, using
 Arrow IPC and typed axis metadata without pickle. It writes a sibling temporary
@@ -203,14 +240,104 @@ file and replaces the destination only after a complete write. Failed writes
 retain the prior file and original in-memory object. Referenced images remain
 relative to the output directory.
 
-The maintained calibration script is `benchmarks/statistical_calibration.py`.
-It reports independent-dataset null rejection, Wilson intervals and planted
-signal power. Synthetic calibration does not certify arbitrary tissues, GPU
-drivers, real vendor datasets, or every optional dependency version.
+## Tissue masks and measured panels
 
-`benchmarks/statistical_stress.py` adds unequal library sizes and expression
-baselines, uneven biological cohorts, missing cell types, sparse panels and
-label-dependent screening. It reports family discoveries and a preselected
-raw-p hypothesis separately, plus strong within-library and cohort controls.
-Sparse LR raw results are descriptive after screening; their small tested
-sample count cannot certify calibration. See `docs/validation.md` for results.
+`pp.set_tissue_masks(data, masks, library_key="slide", core_key="core_id")`
+registers Polygon/MultiPolygon observation masks in microns. Holes are unobserved;
+separate TMA cores cannot become neighbors even when their coordinates overlap.
+`tl.spatial_neighbors(data, radius=20)` respects those units and masks. Cores are
+physical units, not independent donors. Single-domain analyses require subsetting
+a core and rebuilding its graph.
+
+Outer concatenation records which genes each library measured. Use
+`pp.select_analysis_panel(data)` to select a common measured panel. Unmeasured
+entries are missing observations, not biological zeros. After external edits,
+`tl.validate_results(data)` identifies stale registered results.
+
+## Donor comparisons and sensitivity
+
+`tl.niche_abundance` pools technical sections within donor/condition.
+`tl.diff_niche_abundance` compares equally weighted donor fractions or densities
+using statsmodels OLS/HC3; for example, whether treated donors have eight percentage
+points more of a niche. Cells and repeated cores do not increase the donor count.
+`tl.niche_pseudobulk` supplies donor-level counts for the existing PyDESeq2 workflow.
+`tl.fit_niche_model` and `tl.map_niches` assign new samples using frozen centroids;
+distant profiles remain unassigned.
+
+`tl.diff_subcellular` compares donor means of supplied localization summaries
+using SciPy permutation tests and BCa bootstrap intervals. Paired analysis swaps
+conditions within complete donor pairs. It does not adjust for covariates.
+`tl.spatial_scale_sensitivity` repeats spatial tests at prespecified graph scales
+and adjusts across them; it does not select the most favorable scale.
+
+## Segmentation provenance and SpatialData
+
+`seg.record_segmentation` stores named fingerprints of counts, cell IDs,
+boundaries and transcripts. Names cannot be overwritten; retain alternative
+segmentations as separate datasets.
+
+Install `astrolabe[spatialdata]` for `io.to_spatialdata`/`io.from_spatialdata`.
+Only explicit conversion imports SpatialData. Counts, IDs, masks and transcripts
+round-trip in micron coordinates. Images remain lazy external references;
+pixels are not exported. Foreign imports need explicit units and coordinate frames.
+
+## Chunked computation
+
+Local Moran, bivariate Moran and Getis-Ord process permutation draws in chunks.
+`chunk_memory_bytes` sets a soft sizing target (256 MiB by default);
+`chunk_size` explicitly sets cells per chunk. If fixed arrays exceed the target,
+processing continues one cell at a time. Neither option rejects a call based on
+estimated memory use. Inputs, graphs and results still occupy RAM. Gene modules
+and the INLA backend use dense arrays and are not made chunked by this setting.
+
+## Conditional expression with BYM2/INLA
+
+This model asks, for example, whether T-cell expression changes with distance
+from a tumour boundary after accounting for supplied covariates, RNA exposure,
+spatial patches and donor differences. Separate tissue cores have disconnected
+spatial fields; cells from one donor can share a donor intercept. Results are
+log-expression effects, credible intervals and posterior sign probabilities.
+They do not establish causality or provide frequentist p-values.
+
+Install `astrolabe[spatial-inference]` on Python 3.12, or prepare a separate
+Python 3.12 environment with `pyinla==0.1.11` and select `python_executable`.
+The wrapper has separate proprietary licensing. Explicitly install its native
+engine from the prepared interpreter:
+
+```python
+from pathlib import Path
+from pyinla.binary import BinaryManager
+
+manager = BinaryManager()
+launcher = Path(manager.download_binary())
+legacy = launcher.parent / "inla"
+portable = launcher.parent / "bin" / "inla"
+if not manager.is_installed() and portable.is_file() and not legacy.exists():
+    legacy.symlink_to(Path("bin") / "inla")
+assert manager.is_installed()
+```
+
+The compatibility link handles portable Linux archives with pyINLA 0.1.11.
+Astrolabe never downloads or imports this backend during ordinary use.
+
+```python
+result = ab.tl.conditional_expression(
+    data, ["CXCL12"], predictor="distance_um", exposure_key="count_exposure",
+    covariates=["cell_area"], donor_key="donor_id",
+    cell_type_key="cell_type", cell_type="Fibroblast", layer="counts",
+    python_executable=".inla-env/Scripts/python.exe",
+)
+```
+
+Supply integer counts, positive exposures and a symmetric binary graph without
+cross-core or cross-donor edges. Categorical predictors need
+`contrast=(tested, reference)`. Choose exposures and covariates for the question.
+The explicit PC donor prior, `donor_sd_prior=(1, .01)`, assigns 1% probability to
+a donor SD above 1 on the log-expression scale; assess prior sensitivity.
+The method follows [BYM2](https://doi.org/10.1177/0962280216660421).
+
+The integration remains experimental: validation does not establish general
+nominal coverage, particularly for condition comparisons with few donors.
+Its dense prior calculations can consume substantial RAM; validation has focused
+on small datasets. Temporary engine files are cleaned unless `output_dir` is
+supplied. See [validation scope](validation.md#optional-spatial-inference).

@@ -365,6 +365,10 @@ def spatial_gene_modules(
         gene_names = list(adata.var_names)
 
     n_genes = len(gene_names)
+    from astrolabe._coverage import _require_measured
+    _require_measured(adata, gene_names)
+    from astrolabe.tl._spatial_stats import _permutation_blocks
+    blocks, library_key = _permutation_blocks(adata, neighbors_key)
     n_modules_eff = min(n_modules, n_genes)
     if clustering == "leiden":
         n_modules_eff = 0  # unused by leiden; count is data-determined
@@ -486,7 +490,9 @@ def spatial_gene_modules(
                 # independent and consumed in a fixed order, so the seed is
                 # identical regardless of n_jobs/thread scheduling.
                 perm_seed = int(rng.integers(0, 2**31 - 1))
-                perm = rng.permutation(Z_valid.shape[0])
+                perm = np.arange(Z_valid.shape[0])
+                for block in blocks:
+                    perm[block] = rng.permutation(block)
                 corr_p = _spatial_corr_matrix(Z_valid[perm], W_norm, correlation)
                 labels_p = _cluster_genes(
                     corr_p, n_modules_eff, clustering,

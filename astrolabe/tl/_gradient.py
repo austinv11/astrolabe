@@ -59,7 +59,8 @@ from joblib import Parallel, delayed
 from scipy.stats import false_discovery_control
 
 from astrolabe._statistics import permutation_p, adjust_p, annotate_permutation_resolution
-from astrolabe._utils import _check_single_library, _spawn_rngs, from_kwarg, with_adata
+from astrolabe._utils import _check_single_spatial_unit as _check_single_library
+from astrolabe._utils import _spawn_rngs, from_kwarg, with_adata
 from astrolabe.tl._spatial_stats import _extract_values
 
 __all__ = [
@@ -1221,6 +1222,12 @@ def gradient_significance(
         grad = adata.obsm[grad_key].astype(np.float64)[scope]
         obs_magnitude = float(np.linalg.norm(grad, axis=1).mean())
         obs_coherence = _mean_resultant_length(grad)
+        # Every null operation uses the induced group, including calibration
+        # and value-distribution matching. Excluded cells supply no null values.
+        group_indices = np.flatnonzero(in_group)
+        conn_mat = conn_mat[group_indices][:, group_indices]
+        group_coords = coords[group_indices]
+        group_scope = reliable[group_indices]
 
         # Reproduce exactly the smoothing/weighting this gradient was built
         # with, from its own stored provenance (never a global last-run dict).
@@ -1249,7 +1256,7 @@ def gradient_significance(
                 f"'{spatial_key}' — the null would use different coordinates."
             )
         src, dst, w = _edge_weights(
-            coords, adata, conn_key, weight_by_distance, conn_mat=conn_mat
+            group_coords, adata, conn_key, weight_by_distance, conn_mat=conn_mat
         )
 
         stored_layer = key_params.get("layer")
@@ -1257,7 +1264,7 @@ def gradient_significance(
             raise ValueError("layer conflicts with fitted gradient provenance")
         if key_params.get("neighbors_key", neighbors_key) != neighbors_key:
             raise ValueError("neighbors_key conflicts with fitted gradient provenance")
-        f = _extract_values(adata, key, stored_layer)
+        f = _extract_values(adata, key, stored_layer)[group_indices]
         if null == "smooth":
             n_smooth = _calibrate_surrogate_smoothing(f, conn_mat, rng)
             log.info(
@@ -1271,15 +1278,15 @@ def gradient_significance(
 
         def _one_surrogate(child_rng: "np.random.Generator") -> tuple[float, float]:
             if null == "smooth":
-                noise = child_rng.standard_normal(n_cells)
+                noise = child_rng.standard_normal(len(group_indices))
                 base = _diffuse_expression(noise, conn_mat, n_smooth)
                 surr = np.empty_like(f_sorted)
                 surr[np.argsort(base)] = f_sorted
-            else:  # csr: full label shuffle
-                surr = f[child_rng.permutation(n_cells)]
+            else:  # csr: shuffle within the selected group
+                surr = f[child_rng.permutation(len(group_indices))]
             if n_diffusion_steps > 0:
                 surr = _diffuse_expression(surr, conn_mat, n_diffusion_steps)
-            surr_grad = _mls_gradient(coords, surr, src, dst, w).astype(np.float64)[scope]
+            surr_grad = _mls_gradient(group_coords, surr, src, dst, w).astype(np.float64)[group_scope]
             magnitude = float(np.linalg.norm(surr_grad, axis=1).mean())
             coherence = _mean_resultant_length(surr_grad)
             return magnitude, coherence
@@ -1617,6 +1624,8 @@ def bearing_to_group(
     group: str,
     *,
     spatial_key: str = "spatial",
+    library_key: str | None = "auto",
+    core_key: str | None = "auto",
     key_added: str | None = None,
 ) -> None:
     """Per-cell bearing toward the **nearest** cell of a landmark group.
@@ -1658,8 +1667,6 @@ def bearing_to_group(
     """
     from scipy.spatial import cKDTree
 
-    _check_single_library(adata)
-
     if groupby not in adata.obs:
         raise KeyError(f"obs['{groupby}'] not found")
     labels = adata.obs[groupby].astype(str).to_numpy()
@@ -1671,13 +1678,18 @@ def bearing_to_group(
         )
 
     coords = np.asarray(adata.obsm[spatial_key][:, :2], dtype=np.float64)
-    tree = cKDTree(coords[member])
-    _, nearest = tree.query(coords[~member], k=1)
-    member_coords = coords[member]
-
     bearing = np.full(adata.n_obs, np.nan, dtype=np.float32)
-    delta = member_coords[nearest] - coords[~member]
-    bearing[~member] = np.arctan2(delta[:, 1], delta[:, 0]).astype(np.float32)
+    from astrolabe._spatial_units import _units
+    units, _ = _units(adata, library_key, core_key)
+    for _, indices in units:
+        landmarks = indices[member[indices]]
+        queries = indices[~member[indices]]
+        if not len(landmarks) or not len(queries):
+            continue
+        _, nearest = cKDTree(coords[landmarks]).query(coords[queries], k=1)
+        delta = coords[landmarks[nearest]] - coords[queries]
+        nonzero = np.linalg.norm(delta, axis=1) > 0
+        bearing[queries[nonzero]] = np.arctan2(delta[nonzero, 1], delta[nonzero, 0]).astype(np.float32)
 
     col = key_added or f"bearing_to_{group}"
     adata.obs[col] = bearing

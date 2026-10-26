@@ -83,6 +83,20 @@ def rank_genes_groups(
     implementation and logs a note.
     """
     method = method or "wilcoxon"
+    from astrolabe._coverage import _require_measured
+    use_raw = kwargs.get("use_raw")
+    source = adata.raw if (use_raw is True or (use_raw is None and adata.raw is not None)) else adata
+    if source is None:
+        raise ValueError("use_raw=True requires adata.raw")
+    features = source.var_names
+    mask = kwargs.get("mask_var")
+    if mask is not None:
+        import numpy as np
+        mask = adata.var[mask].to_numpy() if isinstance(mask, str) else np.asarray(mask)
+        if mask.dtype != bool or mask.shape != (len(features),):
+            raise ValueError("mask_var must be a boolean mask aligned to the analyzed feature axis")
+        features = features[mask]
+    _require_measured(adata, features, feature_names=source.var_names)
     if gpu_enabled():
         log.info(
             "rank_genes_groups: no GPU route for method=%r "
@@ -173,6 +187,13 @@ def score_genes(
     >>> ab.tl.score_genes(mdata, hallmark_prolif, score_name="proliferation_score")
     >>> ab.pl.points(mdata, color="proliferation_score").show()
     """
+    from astrolabe._coverage import _require_measured
+    raw_selected = use_raw is True or (use_raw is None and layer is None and adata.raw is not None)
+    source = adata.raw if raw_selected else adata
+    if source is None:
+        raise ValueError("use_raw=True requires adata.raw")
+    features = source.var_names if gene_pool is None else list(set(gene_pool) | set(gene_list))
+    _require_measured(adata, features, feature_names=source.var_names)
     if gpu_enabled():
         rsc = _require_rapids()
         with _gpu_X(adata):

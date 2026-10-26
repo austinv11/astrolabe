@@ -4,6 +4,8 @@ Summary plots for gradient/vector-field analysis results.
 
 from __future__ import annotations
 
+from astrolabe._dependencies import _get_result
+
 from typing import Sequence
 
 import anndata as ad
@@ -107,7 +109,7 @@ def flux_plot(
         raise KeyError(
             f"uns['{uns_key}'] not found. Run ab.tl.interface_flux() first."
         )
-    flux_data = adata.uns[uns_key]
+    flux_data = _get_result(adata, uns_key)
     if statistic not in ("integrated_flux", "mean_normal_derivative"):
         raise ValueError(
             "statistic must be 'integrated_flux' or 'mean_normal_derivative', "
@@ -677,7 +679,7 @@ def decay_length_plot(
         raise KeyError(
             f"uns['{resolved_key}'] not found. Run ab.tl.decay_length() first."
         )
-    res = adata.uns[resolved_key]
+    res = _get_result(adata, resolved_key)
 
     r = np.asarray(res["bin_centers"], dtype=float)
     y = np.asarray(res["bin_means"], dtype=float)

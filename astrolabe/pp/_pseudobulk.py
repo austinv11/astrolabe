@@ -19,7 +19,7 @@ def _count_matrix(adata, layer):
 
 @with_adata
 def pseudobulk(adata: ad.AnnData, *, sample_key, groupby=None, layer="counts",
-               metadata_keys=(), library_key="library_id", min_cells=10):
+               metadata_keys=(), library_key="auto", min_cells=10):
     """Sum raw counts per biological sample and optional type/niche/ROI.
 
     Technical sections should share ``sample_key``. Metadata must be constant
@@ -37,6 +37,15 @@ def pseudobulk(adata: ad.AnnData, *, sample_key, groupby=None, layer="counts",
     counts = _count_matrix(adata, layer)
     rows, metadata, coverage = [], [], []
     panel = adata.uns.get("measured_features")
+    if library_key == "auto":
+        library_key = adata.uns.get("measured_features_library_key", "library_id")
+    if panel is not None:
+        from astrolabe._coverage import _coverage
+        _coverage(adata, adata.var_names)  # Validate metadata without requiring a common panel.
+        if library_key not in adata.obs or adata.obs[library_key].isna().any():
+            raise ValueError("measured panel metadata requires complete library labels")
+        if not adata.obs[library_key].isin(panel.columns).all():
+            raise ValueError("measured panel metadata is missing selected libraries")
     for labels, idx in adata.obs.groupby(keys, observed=True, sort=False).indices.items():
         labels = labels if isinstance(labels, tuple) else (labels,)
         values = np.asarray(counts[idx].sum(axis=0)).ravel()

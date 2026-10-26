@@ -8,6 +8,8 @@ the transcripts-inside-outlines view (the raw evidence, one cell at a time).
 
 from __future__ import annotations
 
+from astrolabe._dependencies import _get_result
+
 import logging
 
 from typing import Sequence
@@ -420,7 +422,7 @@ def subcellular_enrichment_plot(
             raise KeyError(
                 f"uns['{key}'] not found. Run ab.tl.subcellular_enrichment() first"
             )
-        result = adata.uns[key]
+        result = _get_result(adata, key)
     res = pd.DataFrame(result).copy()
     if group is not None:
         if "group" not in res.columns:

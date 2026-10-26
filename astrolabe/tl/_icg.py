@@ -153,7 +153,7 @@ def interaction_changed_genes(
     expression_scale: Literal["linear", "log1p"],
     log_base: float | None = None,
     block_key: str | None = None,
-    library_key: str | None = "library_id",
+    library_key: str | None = "auto",
     method: Literal["wilcoxon", "t-test"] = "wilcoxon",
     min_cells: int = 10,
     fdr_scope: Literal["pair", "global"] = "global",
@@ -173,7 +173,7 @@ def interaction_changed_genes(
     remain diagnostics). Specify the expression scale for fold changes:
     ``log1p`` uses natural logs unless ``log_base`` is supplied.
     """
-    from astrolabe.tl._spatial_stats import _get_conn_matrix
+    from astrolabe.tl._spatial_stats import _get_conn_matrix, _permutation_blocks
     conn_key = adata.uns.get(neighbors_key, {}).get("connectivities_key", neighbors_key + "_connectivities")
     if conn_key not in adata.obsp:
         raise KeyError(
@@ -192,14 +192,18 @@ def interaction_changed_genes(
         raise ValueError("expression_scale must be linear or log1p")
     if log_base is not None and (not np.isfinite(log_base) or log_base <= 0 or log_base == 1):
         raise ValueError("log_base must be positive and different from one")
-    strata_keys = [k for k in (library_key, block_key) if k is not None and k in adata.obs]
+    blocks, library_key = _permutation_blocks(adata, neighbors_key, library_key=library_key)
+    spatial_strata = np.zeros(adata.n_obs, dtype=int)
+    for code, block in enumerate(blocks):
+        spatial_strata[block] = code
+    strata_keys = [block_key] if block_key is not None else []
     if block_key is not None and block_key not in adata.obs:
         raise KeyError(block_key)
     for k in strata_keys:
         if adata.obs[k].isna().any():
             raise ValueError(f"missing exchangeability labels in {k}")
-    strata = (pd.MultiIndex.from_frame(adata.obs[strata_keys]).factorize()[0]
-              if strata_keys else np.zeros(adata.n_obs, dtype=int))
+    strata = (pd.MultiIndex.from_arrays([spatial_strata, adata.obs[block_key]]).factorize()[0]
+              if strata_keys else spatial_strata)
     conn = _get_conn_matrix(adata, neighbors_key).tocsr(copy=True)
     conn.setdiag(0)
     conn.eliminate_zeros()
@@ -209,6 +213,8 @@ def interaction_changed_genes(
     # meaningful custom category order, e.g. Leiden's '0','1',...,'10').
     codes, categories = _category_codes(adata, groupby)
     gene_names = list(adata.var_names)
+    from astrolabe._coverage import _require_measured
+    _require_measured(adata, gene_names)
     n_genes = len(gene_names)
 
     # Keep X sparse; only the per-pair row subsets are densified.

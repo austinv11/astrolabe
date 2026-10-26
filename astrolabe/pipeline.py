@@ -20,6 +20,10 @@ filter_xenium
     Xenium-specific extension of filter_cells: adds probe-type breakdown
     and control-probe metrics before deferring to filter_cells for the
     shared steps.
+filter_atera
+    Atera-specific extension of filter_cells: delegates to filter_xenium
+    with ``xenium_key=atera_key`` for 10x probe-type breakdown and
+    control-probe filtering.
 filter_merscope
     MERSCOPE-specific extension of filter_cells: flags Blank-* control
     probes via var['is_control_probe'] before deferring to filter_cells.
@@ -37,7 +41,13 @@ import mudata as md
 
 from astrolabe._constants import UNS_DEFAULT_MODALITY_KEY
 
-__all__ = ["filter_cells", "filter_xenium", "filter_merscope", "filter_cosmx"]
+__all__ = [
+    "filter_cells",
+    "filter_xenium",
+    "filter_atera",
+    "filter_merscope",
+    "filter_cosmx",
+]
 
 log = logging.getLogger(__name__)
 
@@ -94,10 +104,10 @@ def filter_cells(
        (:func:`~astrolabe.pp.filter_isolated`).  Disabled by passing
        ``max_neighbor_dist_um=None`` and ``min_neighbor_dist_um=None``.
 
-    Works with any segmented spatial dataset: Xenium, MERSCOPE, CosMx, or
-    custom re-segmentations.  For Xenium data, use
-    :func:`filter_xenium` which runs probe-type breakdown first and then
-    defers to this function for the shared steps.
+    Works with any segmented spatial dataset: Xenium, Atera, MERSCOPE, CosMx,
+    or custom re-segmentations.  For Xenium or Atera data, use
+    :func:`filter_xenium` or :func:`filter_atera` which run probe-type
+    breakdown first and then defer to this function for the shared steps.
 
     Logs cell counts after each filter step at the INFO level.  When *data*
     is a :class:`~mudata.MuData`, ``data.update()`` is called at the end so
@@ -391,6 +401,48 @@ def filter_xenium(
     return None if inplace else mdata
 
 
+def filter_atera(
+    mdata: md.MuData,
+    *,
+    atera_key: str = "atera",
+    transcripts=None,
+    remove_controls: bool = True,
+    max_pct_control: float = 10.0,
+    min_counts: int = 10,
+    min_genes: int = 5,
+    min_cell_area: float | None = None,
+    max_cell_area: float | None = None,
+    isolation_k: int = 5,
+    max_neighbor_dist_um: float | None = 60.0,
+    min_neighbor_dist_um: float | None = 50.0,
+    spatial_key: str = "spatial",
+    min_cells: int = 5,
+    inplace: bool = True,
+) -> md.MuData | None:
+    """Atera-specific QC metrics and filtering.
+
+    Delegates to :func:`filter_xenium` with ``xenium_key=atera_key``, since
+    Atera shares 10x's exact control-probe feature types and QC schema.
+    """
+    return filter_xenium(
+        mdata,
+        xenium_key=atera_key,
+        transcripts=transcripts,
+        remove_controls=remove_controls,
+        max_pct_control=max_pct_control,
+        min_counts=min_counts,
+        min_genes=min_genes,
+        min_cell_area=min_cell_area,
+        max_cell_area=max_cell_area,
+        isolation_k=isolation_k,
+        max_neighbor_dist_um=max_neighbor_dist_um,
+        min_neighbor_dist_um=min_neighbor_dist_um,
+        spatial_key=spatial_key,
+        min_cells=min_cells,
+        inplace=inplace,
+    )
+
+
 def filter_merscope(
     mdata: md.MuData,
     *,
@@ -531,7 +583,8 @@ def filter_merscope(
         if max_volume is not None:
             keep &= volume <= max_volume
         n_before = adata.n_obs
-        adata._inplace_subset_obs(keep)
+        from astrolabe._state import _subset_cells
+        _subset_cells(adata, keep, inplace=True, parent=mdata, modality=merscope_key)
         _log_step("filter_volume", n_before, adata.n_obs)
 
     # Shared steps

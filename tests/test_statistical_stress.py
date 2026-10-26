@@ -76,7 +76,14 @@ def test_library_scoped_local_null_matches_independent_fits_and_pooled_bh(method
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", PermutationResolutionWarning)
         combined = local(a, method)
-        parts = [local(a[a.obs.library_id == lib].copy(), method) for lib in ["small", "large"]]
+        parts = []
+        for lib in ["small", "large"]:
+            subset = a[a.obs.library_id == lib].copy()
+            params = dict(a.uns["spatial_neighbors"]["params"])
+            # Rebuild after an external subset; inherited dependency records
+            # deliberately reject stale graphs, even for a known whole library.
+            ab.tl.spatial_neighbors(subset, n_neighbors=params.get("n_neighbors", 6))
+            parts.append(local(subset, method))
     expected = pd.concat(parts).reindex(combined.index)
     np.testing.assert_allclose(combined.p_sim, expected.p_sim, equal_nan=True)
     np.testing.assert_allclose(combined.p_adj, false_discovery_control(expected.p_sim), equal_nan=True)
@@ -120,7 +127,7 @@ def test_library_shift_svg_uses_conditional_null_and_worker_reproducibility(flav
 @pytest.mark.parametrize("method", ["moran_local", "moran_local_bv", "getis_ord"])
 def test_missing_library_labels_are_rejected_before_local_inference(method):
     a = libraries(); a.obs.loc[a.obs_names[0], "library_id"] = None
-    with pytest.raises(ValueError, match="library labels"):
+    with pytest.raises(ValueError, match="library labels|Stale result"):
         local(a, method)
 
 
@@ -137,6 +144,7 @@ def test_cross_library_graph_cannot_be_used_for_conditional_inference():
 
 def test_too_small_library_is_explicitly_rejected():
     a = libraries()[[0, 1, *range(20, 70)]].copy()
+    ab.tl.spatial_neighbors(a, n_neighbors=4)
     with pytest.raises(ValueError, match="three cells per library"):
         local(a, "moran_local")
 

@@ -1,10 +1,32 @@
 """Tests for seg._eval.evaluate_segmentation (batch-5 bugfix pass):
 rasterization dilation, optimal bipartite matching, image-origin offset."""
 import numpy as np
+import anndata as ad
 import pytest
 from skimage.draw import polygon2mask
 
 from astrolabe.seg._eval import evaluate_segmentation
+from astrolabe.seg import record_segmentation
+
+
+def test_segmentation_versions_preserve_fingerprints_and_reject_overwrite():
+    a = ad.AnnData(np.array([[2., 1.], [0., 3.]]))
+    a.obsm["cell_boundaries"] = np.array([
+        [[0., 0.], [1., 0.], [1., 1.]],
+        [[2., 0.], [3., 0.], [3., 1.]],
+    ])
+    first = record_segmentation(a, version="original", source="manual", layer=None)
+    saved = first.copy()
+    a.X[0, 0] += 1
+    a.obsm["cell_boundaries"][0, 0, 0] += .1
+    second = record_segmentation(a, version="adjusted", source="manual", layer=None)
+    assert first == saved
+    assert first["counts"] != second["counts"]
+    assert first["boundaries"] != second["boundaries"]
+    assert first["cell_ids"] == second["cell_ids"]
+    with pytest.raises(ValueError, match="already exists"):
+        record_segmentation(a, version="original", source="manual", layer=None)
+    assert a.uns["segmentation_versions"]["original"] == saved
 
 
 def _square_mask(shape, top, left, size, label):

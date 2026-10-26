@@ -50,6 +50,8 @@ estimate_stain_matrix
     Re-estimate the H&E stain deconvolution matrix for an already-loaded image.
 banksy_matrix
     Build the BANKSY spatially-augmented feature matrix (λ-weighted self + neighbor mean + optional AGF).
+set_tissue_masks
+    Register observed tissue polygons per library/core, preserving holes and fragments.
 harmony
     Harmony batch correction on a PCA or BANKSY embedding (requires harmonypy).
 """
@@ -99,5 +101,8 @@ __all__ = [
     "harmony",
 ]
 from astrolabe.pp._pseudobulk import pseudobulk
+from astrolabe.pp._coverage import select_analysis_panel
+from astrolabe.pp._tissue import set_tissue_masks
 from astrolabe.pp._image_features import extract_image_features
 __all__ += ["pseudobulk", "extract_image_features"]
+__all__ += ["select_analysis_panel", "set_tissue_masks"]

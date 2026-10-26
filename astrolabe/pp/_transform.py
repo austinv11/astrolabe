@@ -33,6 +33,7 @@ import numpy as np
 import pyarrow as pa
 
 from astrolabe._shapes import rectangle
+from astrolabe._state import _invalidate_spatial, _subset_cells
 from astrolabe._utils import (
     ImageFilter,
     ImageSpec,
@@ -211,36 +212,15 @@ def _transform_uns_coordinates(uns, M, seen=None):
             seen[id(value)] = moved
             uns[key] = moved
         elif isinstance(value, dict):
+            if value.get("units") == "micron" and "regions" in value and "wkb" in value["regions"]:
+                import shapely
+                table = value["regions"].copy()
+                coefficients = [M[0, 0], M[0, 1], M[1, 0], M[1, 1], M[0, 2], M[1, 2]]
+                geometries = [affine_transform(g, coefficients) for g in shapely.from_wkb(table.wkb.to_numpy())]
+                table["wkb"] = shapely.to_wkb(geometries, hex=True)
+                table["area_um2"] = shapely.area(geometries)
+                value["regions"] = table
             _transform_uns_coordinates(value, M, seen)
-
-
-def _invalidate_spatial(adata):
-    """Discard derived spatial outputs after moving their source geometry."""
-    for entry in adata.uns.pop("_astrolabe_spatial_results", {}).values():
-        for attr, keys in entry.items():
-            for key in keys:
-                if key in getattr(adata, attr):
-                    del getattr(adata, attr)[key]
-    for key, value in list(adata.uns.items()):
-        if isinstance(value, dict) and value.get("params", {}).get("spatial_key") is not None:
-            for name in ("connectivities_key", "distances_key"):
-                adata.obsp.pop(value.get(name, ""), None)
-            adata.uns.pop(key, None)
-    for key in list(adata.obsm):
-        if key.startswith(("gradient_", "niche_")):
-            del adata.obsm[key]
-    for key in list(adata.obs):
-        if key.startswith("gradient_"):
-            del adata.obs[key]
-    # Also cover loaded/pre-existing SVG columns that predate the registry.
-    for key in ("sv_score", "sv_pval", "sv_pval_adj", "sv_spatially_variable",
-                "sv_flavor", "sv_n_valid", "sv_p_min", "sv_resolution_limited"):
-        if key in adata.var:
-            del adata.var[key]
-    for key in ("gradient_params", "gradient_significance", "moran", "moran_local", "moran_bv",
-                "moran_local_bv", "getis_ord", "geary_c", "ripley_l", "ligrec", "nhood_enrichment",
-                "co_occurrence", "interaction_changed_genes", "spatially_variable_genes"):
-        adata.uns.pop(key, None)
 
 
 def _apply_coord_transform(
@@ -376,6 +356,13 @@ def crop(
     """
     region = np.asarray(region, dtype=np.float64)
 
+    import shapely
+    if region.ndim != 2 or region.shape[1] != 2 or len(region) < 3 or not np.isfinite(region).all():
+        raise ValueError("Crop region must be a finite polygon with at least three xy vertices")
+    polygon = shapely.Polygon(region)
+    if not polygon.is_valid or polygon.area <= 0:
+        raise ValueError("Crop region must be a valid polygon with positive area")
+
     # Bounding box stamped into uns['spatial_bounds'] for automatic plot zoom
     bounds = {
         "xmin": float(region[:, 0].min()),
@@ -400,16 +387,8 @@ def crop(
                     _crop_transcripts_uns(
                         mod.uns, region, transcripts_x_col, transcripts_y_col
                     )
-                if not mask.all():
-                    derived = {name for entry in mod.uns.get("_astrolabe_spatial_results", {}).values()
-                               for name in entry.get("uns", [])}
-                    for name in derived:
-                        if isinstance(target.uns.get(name), dict) and key in target.uns[name]:
-                            del target.uns[name][key]
-                            if not target.uns[name]:
-                                del target.uns[name]
-                    _invalidate_spatial(mod)
-                mod._inplace_subset_obs(mask)
+                _subset_cells(mod, mask, inplace=True, parent=target, modality=key)
+                _crop_tissue_support(mod.uns, region)
                 mod.uns["spatial_bounds"] = dict(bounds)
             elif "spatial" in mod.uns:
                 # Image-only modality (no rows to subset): the viewport hint
@@ -433,6 +412,7 @@ def crop(
         if crop_transcripts and "transcripts" in target.uns:
             _crop_transcripts_uns(target.uns, region, transcripts_x_col, transcripts_y_col)
         target.uns["spatial_bounds"] = dict(bounds)
+        _crop_tissue_support(target.uns, region)
         return None if inplace else target
 
     adata = data
@@ -450,18 +430,33 @@ def crop(
         adata.uns["spatial_bounds"] = bounds
         if crop_transcripts and "transcripts" in adata.uns:
             _crop_transcripts_uns(adata.uns, region, transcripts_x_col, transcripts_y_col)
-        if not mask.all():
-            _invalidate_spatial(adata)
-        adata._inplace_subset_obs(mask)
+        _subset_cells(adata, mask, inplace=True)
+        _crop_tissue_support(adata.uns, region)
         return None
     else:
-        subset = adata[mask].copy()
-        if not mask.all():
-            _invalidate_spatial(subset)
+        subset = _subset_cells(adata, mask, inplace=False)
+        _crop_tissue_support(subset.uns, region)
         subset.uns["spatial_bounds"] = bounds
         if crop_transcripts and "transcripts" in subset.uns:
             _crop_transcripts_uns(subset.uns, region, transcripts_x_col, transcripts_y_col)
         return subset
+
+
+def _crop_tissue_support(uns, region):
+    """Intersect the observation window, including holes, with a spatial crop."""
+    import shapely
+    keys = {"tissue_support", uns.get("spatial_units", {}).get("support_key")}
+    for key in keys:
+        support = uns.get(key)
+        if not isinstance(support, dict) or "regions" not in support:
+            continue
+        frame = support["regions"].copy()
+        geometry = shapely.intersection(shapely.from_wkb(frame.wkb.to_numpy()), shapely.Polygon(region))
+        keep = ~shapely.is_empty(geometry) & (shapely.area(geometry) > 0)
+        frame = frame.loc[keep].copy()
+        frame["wkb"] = shapely.to_wkb(geometry[keep], hex=True)
+        frame["area_um2"] = shapely.area(geometry[keep])
+        support["regions"] = frame.reset_index(drop=True)
 
 
 def auto_crop(

@@ -7,6 +7,10 @@ read_xenium
     Read a 10x Genomics Xenium output directory into MuData.
 read_xenium_transcripts
     Lazily stream and filter Xenium transcript detections.
+read_atera
+    Read a 10x Genomics Atera output directory into MuData.
+read_atera_transcripts
+    Load and filter Atera transcript detections from transcripts.zarr.zip.
 read_merscope
     Read a Vizgen MERSCOPE output directory into MuData.
 read_cosmx
@@ -44,6 +48,7 @@ from astrolabe.io._xenium import (
     extract_morphology_intensities,
     align_xenium_annotations,
 )
+from astrolabe.io._atera import read_atera, read_atera_transcripts
 from astrolabe.io._merscope import read_merscope
 from astrolabe.io._cosmx import read_cosmx
 from astrolabe.io._visium_hd import read_visium_hd
@@ -52,10 +57,15 @@ from astrolabe.io._he import read_he
 from astrolabe.io._concat import concat_samples
 from astrolabe.io._io import save, load, attach_modality
 from astrolabe.io._annotations import read_annotations
+from astrolabe.io._spatialdata import to_spatialdata, from_spatialdata
 
 __all__ = [
+    "to_spatialdata",
+    "from_spatialdata",
     "read_xenium",
     "read_xenium_transcripts",
+    "read_atera",
+    "read_atera_transcripts",
     "read_merscope",
     "read_cosmx",
     "read_visium_hd",

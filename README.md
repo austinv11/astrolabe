@@ -32,5 +32,12 @@ resolution. Spatial gene results are cleared after cropping or transforming.
 
 Optional backends can be installed with
 `pip install 'astrolabe[cohort,communication]'`. The core additions
-reuse the existing dependencies. Run `pytest -q` for regression checks and
-`python benchmarks/statistical_calibration.py` for seeded null/power calibration.
+reuse the existing dependencies. Run `pytest -q` for regression checks.
+
+Conditional count associations with disconnected tissue fields are available as
+the experimental `tl.conditional_expression` integration. Install
+`astrolabe[spatial-inference]` on Python 3.12, or select a separate prepared
+Python 3.12 backend environment. It uses published BYM2/INLA and reports Bayesian
+credible intervals and posterior sign probabilities. The backend is optional,
+has separate proprietary licensing, and is never imported or downloaded during
+ordinary use. See [installation and supported scope](docs/analysis.md#conditional-expression-with-bym2inla).

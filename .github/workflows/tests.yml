@@ -19,3 +19,71 @@ jobs:
       - run: uv sync --extra dev --extra cohort --extra communication
         if: matrix.extras != 'dev'
       - run: uv run --no-sync pytest -q
+
+  spatialdata:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - run: uv sync --extra dev --extra spatialdata
+      - run: uv run --no-sync pytest -q tests/test_spatialdata_interchange.py
+
+  spatial-inference-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --extra dev --extra spatial-inference
+      # Explicit CI setup; ordinary package imports/fits never download INLA.
+      - shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          from pyinla.binary import BinaryManager
+          manager = BinaryManager()
+          launcher = Path(manager.download_binary())
+          legacy = launcher.parent / "inla"
+          portable = launcher.parent / "bin" / "inla"
+          if not manager.is_installed() and portable.is_file() and not legacy.exists():
+              legacy.symlink_to(Path("bin") / "inla")
+          assert manager.is_installed(), "Downloaded engine is not recognized by pyINLA"
+          PY
+      - run: |
+          uv run --no-sync python -c "import os, sys; open(os.environ['GITHUB_ENV'], 'a').write('ASTROLABE_INLA_PYTHON=' + sys.executable + '\n')"
+      - run: uv run --no-sync pytest -q tests/test_conditional.py tests/test_he.py tests/test_if.py tests/test_correctness_roadmap.py
+
+  wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv build
+      - run: uv venv --python 3.12 .wheel-smoke
+      - run: uv pip install --python .wheel-smoke/bin/python dist/*.whl
+      - run: |
+          bin/python - <<'PY'
+          import sys
+          from pathlib import Path
+          import astrolabe as ab
+          assert Path(ab.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+          assert callable(ab.tl.conditional_expression)
+          assert "spatialdata" not in sys.modules and "pyinla" not in sys.modules
+          data = ab.io.read_xenium("../tests/data/xenium_4_tiny")
+          ab.pp.calculate_qc_metrics(data)
+          ab.tl.spatial_neighbors(data, radius=15)
+          PY
+        working-directory: .wheel-smoke

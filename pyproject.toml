@@ -41,6 +41,7 @@ dependencies = [
     "scanpy>=1.12.1",
     "scikit-image>=0.22",
     "scikit-learn>=1.5.0",
+    "statsmodels>=0.14.5",
     "scikit-misc>=0.5.1",
     "shapely>=2.1.2",
     "tifffile>=2024.1.1",
@@ -56,6 +57,14 @@ Repository    = "https://github.com/austinv11/astrolabe"
 "Bug Tracker" = "https://github.com/austinv11/astrolabe/issues"
 
 [project.optional-dependencies]
+spatialdata = ["spatialdata>=0.7,<0.9"]
+# Python 3.13+ hosts can select a separate Python 3.12 backend environment.
+spatial-inference = [
+    "pyinla==0.1.11; python_version == '3.12'",
+    # pyINLA requires NumPy <2.1, selecting tifffile <=2026.4.11.
+    # That TIFF reader imports RegularChunkGrid removed in Zarr 3.2.
+    "zarr<3.2; python_version == '3.12'",
+]
 cohort = ["pydeseq2>=0.5.4,<0.6"]
 communication = ["liana>=1.10,<2"]
 napari   = ["napari>=0.5.0"]
@@ -78,6 +87,18 @@ all      = ["astrolabe[napari,cellpose,stardist,harmony,som,cohort,communication
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/astrolabe",
+    "/tests",
+    "/docs",
+    "/examples",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+    "/uv.lock",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["astrolabe"]

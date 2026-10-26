@@ -13,7 +13,8 @@ import numpy as np
 import scanpy as sc
 import scipy.sparse as sp
 
-from astrolabe._utils import _check_single_library, with_adata
+from astrolabe._utils import _check_single_spatial_unit as _check_single_library
+from astrolabe._utils import with_adata
 
 __all__ = ["paga", "dpt"]
 

@@ -81,12 +81,14 @@ def read_merscope(
         directory name.
     load_boundaries
         If ``True`` (default), load cell and nucleus boundaries from the
-        ``cell_boundaries/`` subdirectory and store as ragged arrays in
+        root-level ``cell_boundaries.parquet`` or the ``cell_boundaries/``
+        subdirectory and store as ragged arrays in
         ``obsm['cell_boundaries']`` / ``obsm['nucleus_boundaries']``.
         Set ``False`` to skip for faster loading.
     z_level
-        Which z-slice boundary file to load (default 0).  MERSCOPE stores
-        boundaries per z-level as ``cell_boundaries/feature_data_{z}.parquet``.
+        Which integer ``ZIndex`` to load (default 0), not the physical
+        ``ZLevel`` in microns. Also selects ``feature_data_{z}.parquet``
+        for exports with one file per slice.
     dtype
         NumPy dtype for ``X``.  ``'float32'`` is the default.
 
@@ -137,7 +139,7 @@ def read_merscope(
     # ------------------------------------------------------------------ #
     if load_boundaries:
         bnd_dir = path / _BOUNDARIES_DIR
-        if bnd_dir.is_dir():
+        if bnd_dir.is_dir() or (path / "cell_boundaries.parquet").is_file():
             _attach_boundaries(adata, bnd_dir, z_level)
         else:
             log.warning(
@@ -266,7 +268,9 @@ def _attach_boundaries(adata: ad.AnnData, bnd_dir: Path, z_level: int) -> None:
     ``cell_boundaries/feature_data_{z}.parquet`` with columns:
     EntityID, ZIndex, Type ('Cell' | 'Nucleus'), Coordinates (list of [x, y]).
     """
-    parquet_path = bnd_dir / f"feature_data_{z_level}.parquet"
+    parquet_path = bnd_dir.parent / "cell_boundaries.parquet"
+    if not parquet_path.exists():
+        parquet_path = bnd_dir / f"feature_data_{z_level}.parquet"
     if not parquet_path.exists():
         # Try without z suffix (some versions)
         alt = bnd_dir / "feature_data.parquet"
@@ -280,6 +284,11 @@ def _attach_boundaries(adata: ad.AnnData, bnd_dir: Path, z_level: int) -> None:
 
     log.debug("Reading boundaries from %s", parquet_path)
     bnd_df = pd.read_parquet(parquet_path)
+    if "ZIndex" in bnd_df:
+        bnd_df = bnd_df.loc[bnd_df["ZIndex"] == z_level].copy()
+        if bnd_df.empty:
+            log.warning("No boundaries for ZIndex=%s in %s; choose an available z_level.", z_level, parquet_path)
+            return
 
     # Normalize entity ID column
     id_col = next((c for c in ("EntityID", "cell_id", "entity_id") if c in bnd_df.columns), None)
@@ -294,7 +303,7 @@ def _attach_boundaries(adata: ad.AnnData, bnd_dir: Path, z_level: int) -> None:
 
     for obsm_key, type_label in (("cell_boundaries", "Cell"), ("nucleus_boundaries", "Nucleus")):
         if type_col is not None:
-            subset = bnd_df[bnd_df[type_col] == type_label]
+            subset = bnd_df[bnd_df[type_col].astype(str).str.lower() == type_label.lower()]
         else:
             # If no Type column, treat all as cell boundaries
             subset = bnd_df if obsm_key == "cell_boundaries" else pd.DataFrame()
@@ -303,7 +312,7 @@ def _attach_boundaries(adata: ad.AnnData, bnd_dir: Path, z_level: int) -> None:
             continue
 
         coords_col = next(
-            (c for c in ("Coordinates", "coordinates", "geometry") if c in subset.columns),
+            (c for c in ("Coordinates", "coordinates", "Geometry", "GeometryWKT", "geometry") if c in subset.columns),
             None,
         )
         if coords_col is None:
@@ -337,7 +346,9 @@ def _build_awkward_boundaries(
         coords = _parse_coords(coords_raw)
         if coords is None or len(coords) == 0:
             continue
-        vertex_count[idx] += len(coords)
+        if vertex_count[idx]:
+            raise ValueError(f"Multiple boundary geometries for cell {cid!r} in one z-slice; cannot concatenate disconnected polygons")
+        vertex_count[idx] = len(coords)
         all_coords.append((idx, coords))
 
     np.cumsum(vertex_count, out=offsets[1:])
@@ -378,14 +389,16 @@ def _parse_coords(raw) -> np.ndarray | None:
             arr = arr.reshape(-1, 2)
         return arr if arr.ndim == 2 and arr.shape[1] == 2 else None
 
-    # WKT string fallback (rare but possible)
-    if isinstance(raw, str):
-        try:
-            from shapely import wkt
-            geom = wkt.loads(raw)
-            coords = np.array(list(geom.exterior.coords), dtype=np.float32)
-            return coords[:, :2]
-        except Exception:
+    # Vendor Parquet exports use WKB (Geometry) or WKT (GeometryWKT).
+    if isinstance(raw, (str, bytes, bytearray, memoryview)):
+        from shapely import from_wkb, from_wkt
+        geom = from_wkt(raw) if isinstance(raw, str) else from_wkb(bytes(raw))
+        if geom.is_empty:
             return None
+        if geom.geom_type == "MultiPolygon" and len(geom.geoms) == 1:
+            geom = geom.geoms[0]
+        if geom.geom_type != "Polygon" or geom.interiors:
+            raise ValueError("Boundary arrays cannot represent polygon holes or multiple disconnected parts; use load_boundaries=False and retain the source geometry separately")
+        return np.asarray(geom.exterior.coords, dtype=np.float32)[:, :2]
 
     return None
