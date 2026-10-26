@@ -25,6 +25,7 @@ subsequent calls.  Override with the ``cache_dir`` parameter.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import tarfile
 import urllib.request
@@ -69,6 +70,8 @@ _XENIUM_TINY_URL = (
     "Xenium_V1_Protein_Human_Kidney_tiny/"
     "Xenium_V1_Protein_Human_Kidney_tiny_outs.zip"
 )
+# MD5 published by 10x for the archive above (XOA 4.0.0, CC BY 4.0).
+_XENIUM_TINY_MD5 = "50c04dea5e751e1c7508ff24528242e8"
 
 _MERSCOPE_CBG_URL = (
     "https://zenodo.org/api/records/13835782/files/"
@@ -251,6 +254,33 @@ def xenium(cache_dir=None):
     return mdata
 
 
+def _xenium_tiny_outs(cache_dir=None) -> Path:
+    """Download (if needed), verify and extract the Xenium tiny archive.
+
+    Returns the extracted ``outs/`` directory.  The archive's MD5 is checked
+    against 10x's published value; a mismatch deletes the file and raises so a
+    truncated or tampered download is never silently read.  Shared by
+    :func:`xenium_tiny` and the test suite's ``xenium_tiny_dir`` fixture.
+    """
+    d = _cache_root(cache_dir) / "xenium_tiny"
+    zip_path = d / "xenium_tiny.zip"
+    _download(_XENIUM_TINY_URL, zip_path, "Xenium Human Kidney tiny (10x Genomics, 20 MB)")
+    digest = hashlib.md5(zip_path.read_bytes()).hexdigest()
+    if digest != _XENIUM_TINY_MD5:
+        zip_path.unlink()
+        raise RuntimeError(
+            f"Xenium tiny archive checksum mismatch (got {digest}, expected "
+            f"{_XENIUM_TINY_MD5}); the cached file was removed, re-run to re-download."
+        )
+    outs_dir = d / "outs"
+    if not outs_dir.exists():
+        log.info("Extracting Xenium archive ...")
+        _extract_zip(zip_path, d / "_extracted")
+        src = _find_xenium_outs(d / "_extracted")
+        src.rename(outs_dir)
+    return outs_dir
+
+
 def xenium_tiny(cache_dir=None):
     """Download and return the 10x Genomics Xenium Human Kidney tiny dataset.
 
@@ -264,17 +294,8 @@ def xenium_tiny(cache_dir=None):
         Directory to cache downloaded files.  Defaults to
         ``<cwd>/.astrolabe_cache/datasets/xenium_tiny/``.
     """
-    d = _cache_root(cache_dir) / "xenium_tiny"
-    zip_path = d / "xenium_tiny.zip"
-    _download(_XENIUM_TINY_URL, zip_path, "Xenium Human Kidney tiny (10x Genomics, 20 MB)")
-    outs_dir = d / "outs"
-    if not outs_dir.exists():
-        log.info("Extracting Xenium archive ...")
-        _extract_zip(zip_path, d / "_extracted")
-        src = _find_xenium_outs(d / "_extracted")
-        src.rename(outs_dir)
     from astrolabe import io
-    return io.read_xenium(str(outs_dir))
+    return io.read_xenium(str(_xenium_tiny_outs(cache_dir)))
 
 
 def merscope(cache_dir=None):

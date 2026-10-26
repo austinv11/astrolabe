@@ -1,7 +1,39 @@
 name: tests
 on: [push, pull_request]
+
+# The 10x "Xenium V1 Protein Human Kidney tiny" archive (CC BY 4.0, ~20 MB) is
+# never vendored.  One job fetches it (cached across runs by its MD5) and
+# publishes it as a run artifact; every job that needs it downloads the
+# artifact, so the 10x CDN is hit at most once per run.
+env:
+  XENIUM_TINY_DIR: .astrolabe_cache/datasets/xenium_tiny
+  XENIUM_TINY_MD5: 50c04dea5e751e1c7508ff24528242e8
+
 jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.XENIUM_TINY_DIR }}/xenium_tiny.zip
+          key: xenium-tiny-${{ env.XENIUM_TINY_MD5 }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$XENIUM_TINY_DIR"
+          curl -fsSL --retry 3 -A "astrolabe-ci" \
+            -o "$XENIUM_TINY_DIR/xenium_tiny.zip" \
+            https://cf.10xgenomics.com/samples/xenium/4.0.0/Xenium_V1_Protein_Human_Kidney_tiny/Xenium_V1_Protein_Human_Kidney_tiny_outs.zip
+          echo "$XENIUM_TINY_MD5  $XENIUM_TINY_DIR/xenium_tiny.zip" | md5sum -c -
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xenium-tiny
+          path: ${{ env.XENIUM_TINY_DIR }}/xenium_tiny.zip
+          retention-days: 1
+          if-no-files-found: error
+
   test:
+    needs: fixture
     strategy:
       fail-fast: false
       matrix:
@@ -11,6 +43,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: xenium-tiny
+          path: ${{ env.XENIUM_TINY_DIR }}
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
@@ -21,6 +57,7 @@ jobs:
       - run: uv run --no-sync pytest -q
 
   spatialdata:
+    needs: fixture
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +65,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: xenium-tiny
+          path: ${{ env.XENIUM_TINY_DIR }}
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.13'
@@ -65,9 +106,14 @@ jobs:
       - run: uv run --no-sync pytest -q tests/test_conditional.py tests/test_he.py tests/test_if.py tests/test_correctness_roadmap.py
 
   wheel:
+    needs: fixture
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: xenium-tiny
+          path: ${{ env.XENIUM_TINY_DIR }}
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.12'
@@ -82,7 +128,8 @@ jobs:
           assert Path(ab.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
           assert callable(ab.tl.conditional_expression)
           assert "spatialdata" not in sys.modules and "pyinla" not in sys.modules
-          data = ab.io.read_xenium("../tests/data/xenium_4_tiny")
+          # Zip already in place from the fixture artifact; this only extracts.
+          data = ab.datasets.xenium_tiny(cache_dir="../.astrolabe_cache/datasets")
           ab.pp.calculate_qc_metrics(data)
           ab.tl.spatial_neighbors(data, radius=15)
           PY

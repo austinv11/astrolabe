@@ -1,3 +1,0 @@
-# Vendor fixtures have published byte-level checksums. Preserve their bytes on
-# Windows checkouts as well as Unix, including JSON-like metadata files.
-tests/data/** -text

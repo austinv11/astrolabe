@@ -75,11 +75,9 @@ def test_custom_tissue_window_follows_spatialdata_transformation():
     ab.tl.spatial_neighbors(restored, radius=2)
 
 
-def test_real_cropped_xenium_spatialdata_roundtrip():
+def test_real_cropped_xenium_spatialdata_roundtrip(xenium_tiny_dir):
     pytest.importorskip("spatialdata")
-    from pathlib import Path
-    root = Path(__file__).parent / "data" / "xenium_4_tiny"
-    source = ab.io.read_xenium(root)["xenium"]
+    source = ab.io.read_xenium(xenium_tiny_dir)["xenium"]
     cropped = ab.pp.auto_crop(source, percentile=10, padding=0)
     assert 0 < cropped.n_obs < source.n_obs
     restored = ab.io.from_spatialdata(ab.io.to_spatialdata(cropped))

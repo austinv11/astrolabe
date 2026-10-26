@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -36,3 +39,33 @@ def small_mdata_two_mod(small_adata):
     mdata = md.MuData({"xenium": small_adata.copy(), "merscope": small_adata.copy()})
     mdata.uns["default_modality"] = "xenium"
     return mdata
+
+
+def _dataset_cache_root() -> Path:
+    """Shared download cache: ``$ASTROLABE_CACHE_DIR`` or ``<repo>/.astrolabe_cache/datasets``.
+
+    Anchored to the repo root rather than ``cwd`` so the suite shares one cache
+    with ``ab.datasets.*`` regardless of where pytest is invoked from.
+    """
+    env = os.environ.get("ASTROLABE_CACHE_DIR")
+    return Path(env) if env else Path(__file__).resolve().parent.parent / ".astrolabe_cache" / "datasets"
+
+
+@pytest.fixture(scope="session")
+def xenium_tiny_dir() -> Path:
+    """``outs/`` of the 10x Xenium V1 Protein Human Kidney tiny run (XOA 4.0.0, CC BY 4.0).
+
+    Nothing is vendored: the ~20 MB archive is downloaded from 10x on first use,
+    MD5-verified, extracted and cached (see :func:`_dataset_cache_root`).  In CI
+    a single ``fixture`` job downloads it once and hands the zip to every other
+    job as a run artifact, so this fixture only ever extracts there.  Offline
+    and outside CI the dependent tests are skipped rather than failed.
+    """
+    from astrolabe import datasets
+
+    try:
+        return datasets._xenium_tiny_outs(_dataset_cache_root())
+    except OSError as exc:  # urllib.error.URLError is an OSError
+        if os.environ.get("CI"):
+            raise
+        pytest.skip(f"Xenium tiny dataset not cached and could not be downloaded: {exc}")
